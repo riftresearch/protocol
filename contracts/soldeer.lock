@@ -1,41 +1,6 @@
 [[dependencies]]
-name = "@openzeppelin-contracts"
-version = "5.0.2"
-source = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/5_0_2_14-03-2024_06:11:59_contracts.zip"
-checksum = "8bc4f0acc7c187771b878d46f7de4bfad1acad2eb5d096d9d05d34035853f5c3"
-integrity = "55881f6114aa36158566ef52b486d9d96b217c3e47d0e24bbd4994a8cfb5ee7c"
-
-[[dependencies]]
-name = "@openzeppelin-contracts-upgradeable"
-version = "5.0.2"
-source = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts-upgradeable/5_0_2_14-03-2024_06:12:07_contracts-upgradeable.zip"
-checksum = "fb3f8db8541fc01636f91b0e7d9dd6f450f1bf7e2b4a17e96caf6e779ace8f5b"
-integrity = "4bded842e12902cca59a500494d26586b3baea76b59150fd4e2b1d29078a2e71"
-
-[[dependencies]]
-name = "forge-std"
-version = "1.9.3"
-source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_3_30-09-2024_08:27:09_forge-std-1.9.zip"
-checksum = "351b6f9cde3d9476cc07e48c1bca6b7fd93fa16dd9b450e5ad5d169d1dbd5938"
-integrity = "d53734fbd7201cd9e44de730ae045ed8958dd2c7b9493c30b322f6e6c21ca8b2"
-
-[[dependencies]]
-name = "openzeppelin-foundry-upgrades"
-version = "0.3.6"
-source = "https://soldeer-revisions.s3.amazonaws.com/openzeppelin-foundry-upgrades/0_3_6_24-09-2024_19:23:05_openzeppelin-foundry-upgrades.zip"
-checksum = "b1d80d9d925e1ac56dfaba7ec59fc6223073c846e71510e963ab1756ccc49ca7"
-integrity = "4c86e7d43ff517365dfb29362a1abc41f9556b65b97b753b1d2a1e0c6e63f513"
-
-[[dependencies]]
-name = "solmate"
-version = "6.7.0"
-source = "https://soldeer-revisions.s3.amazonaws.com/solmate/6_7_0_22-01-2024_13:21:00_solmate.zip"
-checksum = "dd0f08cdaaaad1de0ac45993d4959351ba89c2d9325a0b5df5570357064f2c33"
-integrity = "ec330877af853f9d34b2b1bf692fb33c9f56450625f5c4abdcf0d3405839730e"
-
-[[dependencies]]
-name = "sp1-contracts"
-version = "2.0.0"
-source = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v2.0.0.zip"
-checksum = "3f54d52ce1e173b2b73a7f5f455060aa643a5bccc0cb888bb8c5ac59af5ad0b4"
-integrity = "1b6678bd9488f1e51891fbfa1929543013a0be17e44f51c63596970f95f1cd2e"
+name = "solady"
+version = "0.0.259"
+url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_0_259_19-10-2024_10:30:34_solady.zip"
+checksum = "3fab02016eeb3e2d5710455faefc99fb6101d00bb95f5e96110cd301a39e2be7"
+integrity = "417cd0e1384c6a2716996d80b5628268af8a9b063d6c506b7506954c5ea42de6"

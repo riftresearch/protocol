@@ -122,18 +122,20 @@ contract DeployRiftExchange is Script {
                 );
         }
         // arbitrum
-        if (block.chainid == 42161) {
+        else if (block.chainid == 42161) {
             return
                 ChainSpecificAddresses(
                     address(0x3B6041173B80E77f038f3F2C0f9744f04837185e),
                     address(0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9)
                 );
         }
+        revert("Unsupported chain");
     }
 
     function run() external {
         vm.startBroadcast();
 
+        /*
         console.log("Deploying RiftExchange on chain with ID:", block.chainid);
 
         uint256 initialCheckpointHeight = fetchChainHeight() - 2;
@@ -155,8 +157,8 @@ contract DeployRiftExchange is Script {
 
         address owner = address(0x82bdA835Ab91D3F38Cb291030A5B0e6Dff086d44);
 
-
         console.log("Deploying RiftExchange...");
+        // TODO: Update deploy script for new contract
 
         // Deploy RiftExchange as a UUPS proxy
         bytes memory initializeData = abi.encodeCall(
@@ -180,6 +182,7 @@ contract DeployRiftExchange is Script {
         console.log("RiftExchange proxy deployed at:", proxy);
 
         console.log("Deployment script finished.");
+        */
 
         vm.stopBroadcast();
     }

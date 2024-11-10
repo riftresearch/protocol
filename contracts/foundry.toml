@@ -33,7 +33,8 @@ remappings = [
     "openzeppelin-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/",
     "openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/",
     "@sp1-contracts/=dependencies/sp1-contracts-2.0.0/contracts/src/",
-    "solmate/=dependencies/solmate-6.7.0/src/"
+    "solmate/=dependencies/solmate-6.7.0/src/",
+    "solady/=dependencies/solady-0.0.259/src/"
 ]
 auto_detect_remappings = true
 ffi = true
@@ -107,6 +108,7 @@ arbitrum = { key = "${ARBITRUM_SEPOLIA_ETHERSCAN_API_KEY}" }
 "openzeppelin-foundry-upgrades" = "0.3.6"
 "sp1-contracts" = { version = "2.0.0", url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v2.0.0.zip" }
 solmate = "6.7.0"
+solady = "0.0.259"
 
 [soldeer]
 recursive_deps = true

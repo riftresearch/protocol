@@ -245,6 +245,7 @@ impl Default for CircuitInput {
 }
 
 pub fn validate_rift_transaction(circuit_input: CircuitInput) -> CircuitPublicValues {
+    // TODO: Sync up contract public inputs + add logic to validate payment recipient + total swap output amount + aggregate vault hash
     let blocks = circuit_input.blocks[0..(circuit_input.utilized_blocks as usize)].to_vec();
     let txn_data_no_segwit = circuit_input.txn_data_no_segwit
         [0..(circuit_input.utilized_txn_data_size as usize)]

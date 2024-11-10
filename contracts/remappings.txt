@@ -1,6 +1,10 @@
-@openzeppelin-contracts-5.0.2/=dependencies/@openzeppelin-contracts-5.0.2/
-@openzeppelin-contracts-upgradeable-5.0.2/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/
-forge-std-1.9.3/=dependencies/forge-std-1.9.3/
-openzeppelin-foundry-upgrades-0.3.6/=dependencies/openzeppelin-foundry-upgrades-0.3.6/
-solmate-6.7.0/=dependencies/solmate-6.7.0/
-sp1-contracts-2.0.0/=dependencies/sp1-contracts-2.0.0/
+forge-std/=dependencies/forge-std-1.9.3/src/
+@openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.0.2/
+@openzeppelin-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/
+@openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/
+openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.0.2/
+openzeppelin-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/
+openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/
+@sp1-contracts/=dependencies/sp1-contracts-2.0.0/contracts/src/
+solmate/=dependencies/solmate-6.7.0/src/
+solady/=dependencies/solady-0.0.259/src/
