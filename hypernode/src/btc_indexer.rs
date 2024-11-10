@@ -1,6 +1,7 @@
 use alloy::primitives::U256;
 use futures::stream::{StreamExt, TryStreamExt};
 use futures_util::stream;
+use rift_core::constants::MAX_BLOCKS;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -364,7 +365,7 @@ pub async fn block_listener(
     let mut total_blocks_to_sync = current_height.saturating_sub(start_block_height);
     let mut fully_synced_logged = false;
 
-    const PROVE_BLOCKS_INTERVAL: Duration = Duration::from_secs(12 * 3600); // 12 hours
+    const PROVE_BLOCKS_INTERVAL: Duration = Duration::from_secs(1 * 3600); // 1 hour
     let mut last_prove_blocks_time = Instant::now() - PROVE_BLOCKS_INTERVAL;
 
     loop {
@@ -451,7 +452,6 @@ pub async fn block_listener(
                 })
                 .await;
             let latest_btc_block_height = rpc.get_block_count().await?;
-            // TODO: This is a rough heuristic, better solution would be to use something evm block based, not time based
             if latest_btc_block_height.saturating_sub(latest_contract_block_height)
                 > CHECKPOINT_BLOCK_INTERVAL
             {
@@ -462,7 +462,14 @@ pub async fn block_listener(
                         latest_contract_block_height
                     );
                     let safe_height = latest_contract_block_height;
-                    let confirmation_height = latest_btc_block_height;
+                    let mut confirmation_height = latest_btc_block_height;
+
+                    // If the gap between the latest BTC block height and contract block height exceeds MAX_BLOCKS,
+                    // we need to prove blocks in chunks of MAX_BLOCKS. For now, we'll prove only the most recent
+                    // MAX_BLOCKS and rely on subsequent proveBlocks calls to catch up the remaining blocks.
+                    if (MAX_BLOCKS as u64) < (confirmation_height - safe_height) {
+                        confirmation_height = safe_height + MAX_BLOCKS as u64 - 1;
+                    }
 
                     let blocks_with_heights = download_blocks(
                         &rpc,
