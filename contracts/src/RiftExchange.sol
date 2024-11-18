@@ -631,7 +631,7 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
 
     //--------- INTERNAL FUNCTIONS ---------//
 
-    function cleanUpDeadSwapReservations(uint256[] memory expiredSwapReservationIndexes) internal {
+    function cleanUpDeadSwapReservations(uint256[] memory expiredSwapReservationIndexes) public {
         verifyExpiredReservations(expiredSwapReservationIndexes);
 
         for (uint256 i = 0; i < expiredSwapReservationIndexes.length; i++) {
@@ -674,6 +674,27 @@ contract RiftExchange is BlockHashStorageUpgradeable, OwnableUpgradeable, UUPSUp
             return amount * (10 ** (18 - decimals));
         }
         return amount;
+    }
+
+    function refundLiquidityProviders() public onlyOwner {
+        // [0] Refund all deposit vaults
+        for (uint256 i = 0; i < depositVaults.length; i++) {
+            DepositVault storage vault = depositVaults[i];
+            uint256 unreservedBalance = vault.unreservedBalance;
+
+            if (unreservedBalance > 0) {
+                // Update vault state
+                vault.unreservedBalance = 0;
+                vault.withdrawnAmount += unreservedBalance;
+
+                // Transfer tokens back to vault owner
+                if (!depositToken.transfer(vault.owner, unreservedBalance)) {
+                    revert TransferFailed();
+                }
+
+                emit LiquidityWithdrawn(i, uint192(unreservedBalance), 0);
+            }
+        }
     }
 
     function updateCircuitVerificationKey(bytes32 newVerificationKey) public onlyOwner {
