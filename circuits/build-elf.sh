@@ -1,4 +1,4 @@
 cargo test -p tests
 cd program/
-cargo prove build --docker --tag v2.0.0
+cargo prove build --docker --tag v3.3.0
 cd ..
