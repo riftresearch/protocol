@@ -146,7 +146,7 @@ contract DeployRiftExchange is Script {
         // Define the constructor arguments
         address verifierContractAddress = addresses.verifierContractAddress;
         address depositTokenAddress = addresses.depositTokenAddress;
-        bytes32 verificationKeyHash = bytes32(0x00334569e4b8059d7b1a70c011d7d92b5d3ce28f2148b32cd2396aeda3ae5af1);
+        bytes32 verificationKeyHash = bytes32(0x0026f118dd6d51ff7245ac5e381cea61345cc87f817413e2930cf6a267dea411);
         address payable initialFeeRouterAddress = payable(address(0xfEe8d79961c529E06233fbF64F96454c2656BFEE)); // TODO: update this with the actual fee router address
 
         // Define initial permissioned hypernodes
