@@ -29,7 +29,7 @@ test-data-utils = { path = "test-data" }
 
 # SP1 dependencies
 sp1-helper = "3.4.0"
-sp1-sdk = { version = "3.4.0"}
+sp1-sdk = { version = "3.4.0", features = ["cuda"]}
 sp1-cuda = "3.4.0"
 sp1-zkvm = "3.4.0"
 

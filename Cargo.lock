@@ -6708,6 +6708,7 @@ dependencies = [
  "serde",
  "sp1-core-executor",
  "sp1-core-machine",
+ "sp1-cuda",
  "sp1-primitives",
  "sp1-prover",
  "sp1-stark",

@@ -5,7 +5,11 @@ cargo run --release benchmark
 
 
 ## Fresh Box Benchmark
+#### Dependencies 
+
 ```
+
+
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain 1.81.0
 source ~/.bashrc
 cargo
