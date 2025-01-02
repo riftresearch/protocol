@@ -28,10 +28,10 @@ rift-program = {path = "crates/rift-program"}
 test-data-utils = { path = "test-data" }
 
 # SP1 dependencies
-sp1-helper = "3.4.0"
-sp1-sdk = { version = "3.4.0", features = ["cuda"]}
-sp1-cuda = "3.4.0"
-sp1-zkvm = "3.4.0"
+sp1-helper = { git = "https://github.com/succinctlabs/sp1", tag = "v4.0.0-rc.1" }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1", tag = "v4.0.0-rc.1", features = ["cuda"]}
+sp1-cuda = { git = "https://github.com/succinctlabs/sp1", tag = "v4.0.0-rc.1" }
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1", tag = "v4.0.0-rc.1" }
 
 # External dependencies
 bitcoin-core-rs = { git = "https://github.com/alpinevm/bitcoin-core-rs", rev = "aa8c98756a0f2c448f882023e1bab7c4b7d77ed3"}
