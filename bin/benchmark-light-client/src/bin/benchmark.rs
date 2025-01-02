@@ -404,18 +404,28 @@ fn prove_chain_transition(
         BenchmarkType::ProveLocal | BenchmarkType::ProveNetwork => {
             let client = ProverClient::new();
             let (pk, _vk) = client.setup(RIFT_PROGRAM_ELF);
-            client.prove(&pk, stdin).groth16().run().unwrap();
-            let duration = start.elapsed();
-            let result = BenchmarkResult {
-                cycles: None,
-                duration,
-            };
-            println!(
-                "Completed {:?} in {}",
-                benchmark_type,
-                format_duration(result.duration)
-            );
-            result
+            match client.prove(&pk, stdin).groth16().run() {
+                Ok(_) => {
+                    let duration = start.elapsed();
+                    let result = BenchmarkResult {
+                        cycles: None,
+                        duration,
+                    };
+                    println!(
+                        "Completed {:?} in {}",
+                        benchmark_type,
+                        format_duration(result.duration)
+                    );
+                    result
+                }
+                Err(e) => {
+                    println!("CAUGHT Error during proving: {:?}", e);
+                    BenchmarkResult {
+                        cycles: None,
+                        duration: start.elapsed(),
+                    }
+                }
+            }
         }
     }
 }
