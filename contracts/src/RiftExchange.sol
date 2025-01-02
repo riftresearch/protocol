@@ -11,7 +11,7 @@ import {Errors} from "./libraries/Errors.sol";
 import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
 import {CommitmentVerificationLib} from "./libraries/CommitmentVerificationLib.sol";
-import {MarketLib} from "./libraries/MarketLib.sol";
+import {RiftUtils} from "./libraries/RiftUtils.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 
 /**
@@ -148,7 +148,7 @@ contract RiftExchange is BitcoinLightClient {
         if (!CommitmentVerificationLib.validateP2WPKHScriptPubKey(btcPayoutScriptPubKey))
             revert Errors.InvalidScriptPubKey();
 
-        uint256 depositFee = MarketLib.calculateFeeFromInitialDeposit(initialDepositAmount);
+        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(initialDepositAmount);
 
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,

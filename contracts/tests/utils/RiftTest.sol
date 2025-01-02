@@ -8,7 +8,7 @@ import {SP1MockVerifier} from "sp1-contracts/SP1MockVerifier.sol";
 import {Vm} from "forge-std/Vm.sol";
 import "forge-std/console.sol";
 
-import {MarketLib} from "../../src/libraries/MarketLib.sol";
+import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {Events} from "../../src/libraries/Events.sol";

@@ -6,7 +6,7 @@ import {Constants} from "../../src/libraries/Constants.sol";
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
 import "../../src/libraries/CommitmentVerificationLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
-import {MarketLib} from "../../src/libraries/MarketLib.sol";
+import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 import "forge-std/console.sol";
@@ -252,7 +252,7 @@ contract RiftExchangeUnitTest is RiftTest {
         numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint64).max));
         uint256 totalSwapAmount = depositAmount * numVaults;
-        uint256 totalSwapFee = MarketLib.calculateFeeFromInitialDeposit(totalSwapAmount) * 2;
+        uint256 totalSwapFee = RiftUtils.calculateFeeFromInitialDeposit(totalSwapAmount) * 2;
 
         // [1] create multiple deposit vaults
         Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
