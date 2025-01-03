@@ -13,9 +13,10 @@ library RiftUtils {
     /// @notice Calculates challenge period for a given amount of elapsed bitcoin blocks
     /// @param blocksElapsed The amount of elapsed bitcoin blocks
     /// @return challengePeriod The challenge period/delay, in seconds
-    function calculateChallengePeriod(uint32 blocksElapsed) internal pure returns (uint256 challengePeriod) {
+    function calculateChallengePeriod(uint64 blocksElapsed) internal pure returns (uint256 challengePeriod) {
         challengePeriod =
-            (Constants.SCALED_CHALLENGE_PERIOD_SLOPE * blocksElapsed + Constants.SCALED_CHALLENGE_PERIOD_INTERCEPT) /
-            100;
+            ((Constants.SCALED_PROOF_GEN_SLOPE * blocksElapsed + Constants.SCALED_PROOF_GEN_INTERCEPT) /
+                Constants.PROOF_GEN_SCALING_FACTOR) +
+            Constants.CHALLENGE_PERIOD_BUFFER;
     }
 }

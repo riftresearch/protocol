@@ -9,7 +9,7 @@ import {Vm} from "forge-std/Vm.sol";
 import "forge-std/console.sol";
 
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
-import {CommitmentVerificationLib} from "../../src/libraries/CommitmentVerificationLib.sol";
+import {VaultLib} from "../../src/libraries/VaultLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
@@ -474,8 +474,8 @@ contract RiftTest is Test, PRNG {
             _initialCheckpointLeaf: initialCheckpointLeaf,
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
-            _verifierContract: address(verifier),
-            _feeRouterAddress: address(0xfee)
+            _verifier: address(verifier),
+            _feeRouter: address(0xfee)
         });
 
         mockToken = MockToken(address(exchange.DEPOSIT_TOKEN()));
@@ -491,24 +491,6 @@ contract RiftTest is Test, PRNG {
 
     function _generateBtcPayoutScriptPubKey() internal returns (bytes22) {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
-    }
-
-    function _totalSwapOutputFromVaults(Types.DepositVault[] memory vaults) internal pure returns (uint256) {
-        uint256 totalSwapOutput = 0;
-        uint256 takerFee = 0;
-        for (uint256 i = 0; i < vaults.length; i++) {
-            totalSwapOutput += vaults[i].depositAmount;
-            takerFee += vaults[i].depositFee;
-        }
-        return totalSwapOutput - takerFee;
-    }
-
-    function _totalSwapFeeFromVaults(Types.DepositVault[] memory vaults) internal pure returns (uint256) {
-        uint256 totalSwapFee = 0;
-        for (uint256 i = 0; i < vaults.length; i++) {
-            totalSwapFee += vaults[i].depositFee * 2;
-        }
-        return totalSwapFee;
     }
 
     function _extractVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
@@ -543,6 +525,15 @@ contract RiftTest is Test, PRNG {
 
         bytes32 depositSalt = bytes32(keccak256(abi.encode(_random())));
 
+        Types.BlockLeaf memory tipBlockLeaf = Types.BlockLeaf({
+            blockHash: keccak256(abi.encodePacked("tip block hash")),
+            height: 100,
+            cumulativeChainwork: 100
+        });
+
+        bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
+        tipBlockInclusionProof[0] = bytes32(uint256(100));
+
         // [3] test deposit
         vm.recordLogs();
         exchange.depositLiquidity({
@@ -551,7 +542,9 @@ contract RiftTest is Test, PRNG {
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
             depositSalt: depositSalt,
-            confirmationBlocks: confirmationBlocks
+            confirmationBlocks: confirmationBlocks,
+            tipBlockLeaf: tipBlockLeaf,
+            tipBlockInclusionProof: tipBlockInclusionProof
         });
 
         // [4] grab the logs, find the vault
@@ -560,7 +553,7 @@ contract RiftTest is Test, PRNG {
         bytes32 commitment = exchange.getVaultCommitment(vaultIndex);
 
         // [5] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = CommitmentVerificationLib.hashDepositVault(createdVault);
+        bytes32 offchainCommitment = VaultLib.hashDepositVault(createdVault);
         assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
 
         // [6] verify vault index

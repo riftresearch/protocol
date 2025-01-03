@@ -33,6 +33,7 @@ library Types {
         address ownerAddress;
         bytes32 nonce;
         uint8 confirmationBlocks;
+        uint64 attestedBitcoinBlockHeight;
     }
 
     struct ProposedSwap {

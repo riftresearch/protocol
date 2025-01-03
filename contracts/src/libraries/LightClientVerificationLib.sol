@@ -27,6 +27,18 @@ library LightClientVerificationLib {
         return true;
     }
 
+    function proveBlockInclusionAtTip(
+        Types.BlockLeaf memory blockLeaf,
+        bytes32[] calldata inclusionProof,
+        bytes32 mmrRoot
+    ) internal pure returns (bool) {
+        // last element in inclusionProof is the height of the mmr
+        if (blockLeaf.height != uint32(uint256(inclusionProof[inclusionProof.length - 1]))) {
+            return false;
+        }
+        return proveBlockInclusion(blockLeaf, inclusionProof, mmrRoot);
+    }
+
     /**
      * @notice Builds a commitment leaf from a BlockLeaf struct
      * @param blockLeaf The block leaf to build a commitment for

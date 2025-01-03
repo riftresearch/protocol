@@ -49,10 +49,17 @@ abstract contract BitcoinLightClient {
         emit Events.BlockTreeUpdated(newMmrRoot);
     }
 
-    function proveBlockInclusion(
+    function _proveBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
         bytes32[] calldata inclusionProof
     ) public view returns (bool) {
         return LightClientVerificationLib.proveBlockInclusion(blockLeaf, inclusionProof, mmrRoot);
+    }
+
+    function _proveBlockInclusionAtTip(
+        Types.BlockLeaf memory blockLeaf,
+        bytes32[] calldata inclusionProof
+    ) public view returns (bool) {
+        return LightClientVerificationLib.proveBlockInclusionAtTip(blockLeaf, inclusionProof, mmrRoot);
     }
 }

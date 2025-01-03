@@ -23,6 +23,10 @@ library Errors {
     error InvalidVaultCommitment();
     error StillInChallengePeriod();
     error SwapNotProved();
-    error InvalidConfirmationBlocks();
     error InvalidConfirmationBlockDelta();
+    error NotEnoughConfirmationBlocks();
+    error NoVaults();
+    error PayoutAddressMismatch();
+    error InvalidSwapTotals();
+    error InvalidTipBlockInclusionProof();
 }
