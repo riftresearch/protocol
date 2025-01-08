@@ -263,8 +263,6 @@ contract RiftExchangeUnitTest is RiftTest {
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         numVaults = uint8(bound(numVaults, 1, 100)); // Reasonable max to avoid gas issues
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint64).max));
-        uint256 totalSwapAmount = depositAmount * numVaults;
-        uint256 totalSwapFee = RiftUtils.calculateFeeFromInitialDeposit(totalSwapAmount) * 2;
 
         // [1] create multiple deposit vaults
         Types.DepositVault[] memory vaults = new Types.DepositVault[](numVaults);
@@ -272,7 +270,10 @@ contract RiftExchangeUnitTest is RiftTest {
             vaults[i] = _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
         }
 
-        // [2] create dummy proof data
+        // [2] calculate correct swap totals from vaults
+        (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(vaults);
+
+        // [3] create dummy proof data
         bytes32 proposedBlockHash = keccak256("proposed block");
         uint64 proposedBlockHeight = 100;
         uint256 proposedBlockCumulativeChainwork = 1000;
@@ -289,7 +290,7 @@ contract RiftExchangeUnitTest is RiftTest {
         bytes32[] memory tipBlockInclusionProof = new bytes32[](1);
         tipBlockInclusionProof[0] = bytes32(uint256(110));
 
-        // [3] submit swap proof and capture logs
+        // [4] submit swap proof and capture logs
         vm.recordLogs();
         exchange.submitSwapProof({
             swapBitcoinTxid: swapBitcoinTxid,
@@ -300,26 +301,26 @@ contract RiftExchangeUnitTest is RiftTest {
             newMmrRoot: newMmrRoot,
             confirmationBlocks: confirmationBlocks,
             totalSwapFee: totalSwapFee,
-            totalSwapOutput: totalSwapAmount,
+            totalSwapOutput: totalSwapOutput,
             proof: proof,
             compressedBlockLeaves: compressedBlockLeaves,
             tipBlockLeaf: tipBlockLeaf,
             tipBlockInclusionProof: tipBlockInclusionProof
         });
 
-        // [4] extract swap from logs
+        // [5] extract swap from logs
         Types.ProposedSwap memory createdSwap = _extractSwapFromLogs(vm.getRecordedLogs());
         uint256 swapIndex = exchange.getSwapCommitmentsLength() - 1;
         bytes32 commitment = exchange.getSwapCommitment(swapIndex);
 
-        // [5] verify swap details
+        // [6] verify swap details
         assertEq(createdSwap.swapIndex, swapIndex, "Swap index should match");
         assertEq(createdSwap.specifiedPayoutAddress, address(this), "Payout address should match");
-        assertEq(createdSwap.totalSwapOutput, totalSwapAmount, "Swap amount should match");
+        assertEq(createdSwap.totalSwapOutput, totalSwapOutput, "Swap amount should match");
         assertEq(createdSwap.totalSwapFee, totalSwapFee, "Swap fee should match");
         assertEq(uint8(createdSwap.state), uint8(Types.SwapState.Proved), "Swap should be in Proved state");
 
-        // [6] verify commitment
+        // [7] verify commitment
         bytes32 offchainCommitment = VaultLib.hashSwap(createdSwap);
         assertEq(offchainCommitment, commitment, "Offchain swap commitment should match");
     }

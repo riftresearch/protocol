@@ -289,7 +289,7 @@ contract RiftExchange is BitcoinLightClient {
             swapBitcoinBlockHash: swapBitcoinBlockHash,
             confirmationBlocks: confirmationBlocks,
             liquidityUnlockTimestamp: uint64(
-                block.timestamp + RiftUtils.calculateChallengePeriod(oldestDepositorAttestedBitcoinBlockHeight)
+                block.timestamp + RiftUtils.calculateChallengePeriod(attestedBitcoinBlockHeightDelta)
             ),
             specifiedPayoutAddress: specifiedPayoutAddress,
             totalSwapFee: totalSwapFee,
