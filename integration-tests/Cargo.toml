@@ -5,4 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 exclude.workspace = true
 
+[lib]
+name = "integration_tests"
+path = "src/lib.rs"
+
 [dependencies]
+tokio.workspace = true
+data-engine.workspace = true
+devnet.workspace = true

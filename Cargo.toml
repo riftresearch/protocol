@@ -2,14 +2,15 @@
 members = [
   "bin/benchmark-light-client",
   "bin/devnet",
+  # "bin/data-engine",
   # "bin/hypernode",
   "crates/bitcoin-light-client-core",
   "crates/rift-sdk",
   "crates/rift-core", 
   "crates/rift-program",
   "test-data",
-  "integration-tests"
-]
+  # "integration-tests"
+  ]
 
 resolver = "2"
 
@@ -25,6 +26,8 @@ bitcoin-light-client-core = { path = "crates/bitcoin-light-client-core" }
 rift-core = { path = "crates/rift-core" }
 rift-sdk = { path = "crates/rift-sdk" }
 rift-program = {path = "crates/rift-program"}
+data-engine = { path = "bin/data-engine" }
+devnet = {path = "bin/devnet"}
 test-data-utils = { path = "test-data" }
 
 # SP1 dependencies
@@ -46,10 +49,12 @@ clap = { version = "4.0", features = ["derive", "env"] }
 hex = "0.4.3"
 once_cell = "1.18"
 prettytable = "0.10"
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "json"] }
 serde = { version = "1.0.200", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 thiserror = "1.0.63"
-tracing = "0.1.40"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 alloy-sol-types = { version = "0.8.0", features = ["json"] }
 alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }
@@ -57,12 +62,13 @@ alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }
 bitcoind = "0.36.0"
 
 eyre = "0.6.12"
-tokio = {version="1.40.0", features=["full"]}
+tokio = {version="1.40.0", features=["full", "rt-multi-thread", "macros"]}
 log = "0.4.22"
 env_logger = "0.11.5"
 chrono = "0.4.38"
 futures = "0.3.30"
 futures-util = "0.3.30"
+backoff = { version = "0.4.0", features=["tokio"] }
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", package= "crypto-bigint", branch = "patch-v0.5.5" }

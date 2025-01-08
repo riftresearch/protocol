@@ -62,13 +62,13 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Deposits new liquidity into a new vault
     /// @param specifiedPayoutAddress Address to receive swap proceeds
-    /// @param initialDepositAmount Amount of ERC20 tokens to deposit including fee
+    /// @param depositAmountInSmallestTokenUnit Amount of ERC20 tokens to deposit including fee
     /// @param expectedSats Expected BTC output in satoshis
     /// @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
     /// @param depositSalt User generated salt for vault nonce
     function depositLiquidity(
         address specifiedPayoutAddress,
-        uint256 initialDepositAmount,
+        uint256 depositAmountInSmallestTokenUnit,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         bytes32 depositSalt,
@@ -79,7 +79,7 @@ contract RiftExchange is BitcoinLightClient {
         // [0] create deposit liquidity request
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(
             specifiedPayoutAddress,
-            initialDepositAmount,
+            depositAmountInSmallestTokenUnit,
             expectedSats,
             btcPayoutScriptPubKey,
             vaultCommitments.length,
@@ -101,7 +101,7 @@ contract RiftExchange is BitcoinLightClient {
     /// @dev Identical to depositLiquidity, but allows for overwriting an existing empty vault
     function depositLiquidityWithOverwrite(
         address specifiedPayoutAddress,
-        uint256 initialDepositAmount,
+        uint256 depositAmountInSmallestTokenUnit,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         bytes32 depositSalt,
@@ -113,7 +113,7 @@ contract RiftExchange is BitcoinLightClient {
         // [0] create deposit liquidity request
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(
             specifiedPayoutAddress,
-            initialDepositAmount,
+            depositAmountInSmallestTokenUnit,
             expectedSats,
             btcPayoutScriptPubKey,
             overwriteVault.vaultIndex,
@@ -139,7 +139,7 @@ contract RiftExchange is BitcoinLightClient {
     /// @return Tuple of the new vault and its commitment hash
     function _prepareDeposit(
         address specifiedPayoutAddress,
-        uint256 initialDepositAmount,
+        uint256 depositAmountInSmallestTokenUnit,
         uint64 expectedSats,
         bytes22 btcPayoutScriptPubKey,
         uint256 depositVaultIndex,
@@ -149,7 +149,7 @@ contract RiftExchange is BitcoinLightClient {
         bytes32[] calldata tipBlockInclusionProof
     ) internal view returns (Types.DepositVault memory, bytes32) {
         // [0] ensure deposit amount is greater than min protocol fee
-        if (initialDepositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
+        if (depositAmountInSmallestTokenUnit < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
 
         // [1] ensure expected sat output is above minimum to prevent dust errors
         if (expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
@@ -157,16 +157,16 @@ contract RiftExchange is BitcoinLightClient {
         // [2] ensure scriptPubKey is valid
         if (!VaultLib.validateP2WPKHScriptPubKey(btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
 
-        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(initialDepositAmount);
-
         // [3] ensure tip block is part of the longest chain
         if (!_proveBlockInclusionAtTip(tipBlockLeaf, tipBlockInclusionProof))
             revert Errors.InvalidTipBlockInclusionProof();
 
+        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(depositAmountInSmallestTokenUnit);
+
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
-            depositAmount: initialDepositAmount - depositFee,
+            depositAmount: depositAmountInSmallestTokenUnit - depositFee,
             depositFee: depositFee,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
@@ -447,6 +447,7 @@ contract RiftExchange is BitcoinLightClient {
             updatedVault.depositAmount = 0;
             updatedVault.depositFee = 0;
             vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
+            emit Events.VaultUpdated(updatedVault);
         }
 
         // [9] update completed swap hash

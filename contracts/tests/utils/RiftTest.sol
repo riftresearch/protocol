@@ -538,7 +538,7 @@ contract RiftTest is Test, PRNG {
         vm.recordLogs();
         exchange.depositLiquidity({
             specifiedPayoutAddress: address(this),
-            initialDepositAmount: depositAmount,
+            depositAmountInSmallestTokenUnit: depositAmount,
             expectedSats: expectedSats,
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
             depositSalt: depositSalt,

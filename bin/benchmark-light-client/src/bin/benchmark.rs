@@ -11,7 +11,7 @@ use clap::Parser;
 use prettytable::{row, Table};
 use tokio::runtime::Runtime;
 
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use sp1_sdk::{include_elf, ProverClient, SP1ProvingKey, SP1Stdin};
 use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS};
 
 use bitcoin_light_client_core::hasher::{Digest, Hasher, Keccak256Hasher};
@@ -365,6 +365,8 @@ async fn create_bch_overwrite_chain_transition(
 fn prove_chain_transition(
     chain_transition: ChainTransition,
     benchmark_type: BenchmarkType,
+    prover_client: &ProverClient,
+    proving_key: &SP1ProvingKey,
 ) -> BenchmarkResult {
     println!("Starting {:?} for chain transition...", benchmark_type);
     let start = Instant::now();
@@ -387,8 +389,10 @@ fn prove_chain_transition(
 
     match benchmark_type {
         BenchmarkType::Execute => {
-            let client = ProverClient::new();
-            let (_output, report) = client.execute(RIFT_PROGRAM_ELF, stdin).run().unwrap();
+            let (_output, report) = prover_client
+                .execute(RIFT_PROGRAM_ELF, stdin)
+                .run()
+                .unwrap();
             let duration = start.elapsed();
             let result = BenchmarkResult {
                 cycles: Some(report.total_instruction_count()),
@@ -402,9 +406,11 @@ fn prove_chain_transition(
             result
         }
         BenchmarkType::ProveLocal | BenchmarkType::ProveNetwork => {
-            let client = ProverClient::new();
-            let (pk, _vk) = client.setup(RIFT_PROGRAM_ELF);
-            client.prove(&pk, stdin).groth16().run().unwrap();
+            prover_client
+                .prove(&proving_key, stdin)
+                .groth16()
+                .run()
+                .unwrap();
             let duration = start.elapsed();
             let result = BenchmarkResult {
                 cycles: None,
@@ -421,7 +427,12 @@ fn prove_chain_transition(
 }
 
 /// Runs the entire “dispose n BCH blocks and append n+1 BTC blocks” scenario with real MMR proofs.
-async fn prove_bch_overwrite(n: usize, benchmark_type: BenchmarkType) -> BenchmarkResult {
+async fn prove_bch_overwrite(
+    n: usize,
+    benchmark_type: BenchmarkType,
+    prover_client: &ProverClient,
+    proving_key: &SP1ProvingKey,
+) -> BenchmarkResult {
     // 1) Build the chain (and client MMR) up to block 478558
     let state = BchOverwriteMMRState::new().await;
 
@@ -429,7 +440,7 @@ async fn prove_bch_overwrite(n: usize, benchmark_type: BenchmarkType) -> Benchma
     let chain_transition = create_bch_overwrite_chain_transition(state, n).await;
 
     // 3) Execute or prove
-    prove_chain_transition(chain_transition, benchmark_type)
+    prove_chain_transition(chain_transition, benchmark_type, prover_client, proving_key)
 }
 
 // Optionally, you could also add a simpler “extend from genesis” scenario or others.
@@ -453,9 +464,24 @@ async fn main() {
         table.add_row(row!["n (BCH blocks)", "Time to Prove"]);
     }
 
+    match benchmark_type {
+        BenchmarkType::ProveLocal => {
+            std::env::set_var("SP1_PROVER", "local");
+        }
+        BenchmarkType::ProveNetwork => {
+            std::env::set_var("SP1_PROVER", "network");
+        }
+        BenchmarkType::Execute => {
+            std::env::set_var("SP1_PROVER", "mock");
+        }
+    }
+
+    let prover_client = ProverClient::new();
+    let (pk, _vk) = prover_client.setup(RIFT_PROGRAM_ELF);
+
     for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
-        let result = prove_bch_overwrite(n, benchmark_type).await;
+        let result = prove_bch_overwrite(n, benchmark_type, &prover_client, &pk).await;
         println!("Result: {:?}", result);
 
         if let Some(cycles) = result.cycles {
