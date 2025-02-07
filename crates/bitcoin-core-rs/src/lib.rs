@@ -17,6 +17,25 @@ const DIFFICULTY_ADJUSTMENT_INTERVAL: u32 = 2016;
 
 const TARGET_BLOCK_TIME: u32 = 1209600; // 2 weeks
 
+trait U256Ext {
+    // Convert U256 -> 128-bit pair
+    fn to_u128_pair(&self) -> (u128, u128);
+}
+
+impl U256Ext for U256 {
+    fn to_u128_pair(&self) -> (u128, u128) {
+        let bytes = self.to_le_bytes();
+
+        // The first 16 bytes are the least-significant bits (the "lower" 128)
+        let lower_128 = u128::from_le_bytes(bytes[0..16].try_into().unwrap());
+
+        // The last 16 bytes are the more-significant bits (the "upper" 128)
+        let upper_128 = u128::from_le_bytes(bytes[16..32].try_into().unwrap());
+
+        (lower_128, upper_128)
+    }
+}
+
 trait HeaderExtractor {
     fn time(&self) -> u32;
     fn bits(&self) -> [u8; 4];
@@ -43,21 +62,15 @@ impl HeaderExtractor for [u8; 80] {
     }
 }
 
-fn to_u128_pair(limbs: [u64; 4]) -> (u128, u128) {
-    let lower = (limbs[0] as u128) | ((limbs[1] as u128) << 64);
-    let upper = (limbs[2] as u128) | ((limbs[3] as u128) << 64);
-    (lower, upper)
-}
-
 // modified from https://github.com/rust-bitcoin/rust-bitcoin
 fn target_to_bits(target: U256) -> [u8; 4] {
     let mut size = (target.bits() + 7) / 8;
-    let (_, upper) = to_u128_pair(target.to_words());
+    let (_, upper) = target.to_u128_pair();
     let mut compact = if size <= 3 {
         ((upper as u64) << (8 * (3 - size))) as u32
     } else {
         let bn = target >> (8 * (size - 3));
-        let (lower, _) = to_u128_pair(bn.to_words());
+        let (lower, _) = bn.to_u128_pair();
         lower as u32
     };
 
