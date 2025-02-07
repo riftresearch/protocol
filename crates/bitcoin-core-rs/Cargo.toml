@@ -1,0 +1,20 @@
+[package]
+name = "bitcoin-core-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Bitcoin Core consensus Rust implementation."
+readme = "README.md"
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+eyre = {workspace = true} 
+thiserror = {workspace = true} 
+sha2 = {workspace = true} 
+crypto-bigint = {workspace = true} 
+
+
+[dev-dependencies]
+alloy-primitives = {workspace = true} 
