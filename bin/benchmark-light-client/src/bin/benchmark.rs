@@ -434,8 +434,7 @@ async fn main() {
     let prover_client = ProverClient::from_env();
     let (pk, _vk) = prover_client.setup(RIFT_PROGRAM_ELF);
 
-    // for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
-    for &n in &[1, 10, 100] {
+    for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
         let result = prove_bch_overwrite(n, benchmark_type, &prover_client, &pk).await;
         println!("Result: {:?}", result);

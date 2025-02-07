@@ -6,7 +6,7 @@ build: | sync
 
 test-contracts: | sync 
 	cargo build --release --bin test-utils 
-	cd contracts && forge test
+	cd contracts  && forge test
 
 test-crates: | build
 	cargo test --release --workspace --exclude rift-program
