@@ -276,16 +276,19 @@ pub mod tests {
 
     #[test]
     #[should_panic(expected = "Failed to validate work requirement")]
-    fn test_validate_header_chain_invalid_difficulty() {
+    fn test_validate_header_chain_invalid_difficulty_update() {
         let genesis_header = &Header(TEST_HEADERS[0].1);
-        let mut invalid_diff_header = Header(TEST_HEADERS[1].1);
+        let mut chain = TEST_HEADERS[1..2017]
+            .iter()
+            .map(|(_, header)| Header(*header))
+            .collect::<Vec<_>>();
 
-        // Modify bits field (bytes 72..=75)
-        let mut header_bytes = invalid_diff_header.as_bytes();
-        header_bytes[72..=75].copy_from_slice(&[0xff; 4]);
-        invalid_diff_header = Header(header_bytes.try_into().unwrap());
+        // Create a new modified header
+        let mut modified_bytes = chain[2015].as_bytes();
+        modified_bytes[72..=75].copy_from_slice(&[0xff; 4]);
+        chain[2015] = Header(modified_bytes);
 
-        validate_header_chain(0, genesis_header, genesis_header, &[invalid_diff_header]);
+        validate_header_chain(0, genesis_header, genesis_header, &chain);
     }
 
     #[test]
