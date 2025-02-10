@@ -164,6 +164,7 @@ contract RiftExchangeUnitTest is RiftTest {
         vm.recordLogs();
         Types.DepositLiquidityWithOverwriteParams memory args = Types.DepositLiquidityWithOverwriteParams({
             depositParams: Types.DepositLiquidityParams({
+                depositOwnerAddress: address(this),
                 specifiedPayoutAddress: address(this),
                 depositAmount: depositAmount,
                 expectedSats: expectedSats,

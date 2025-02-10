@@ -590,6 +590,7 @@ contract RiftTest is Test, PRNG {
         // [3] test deposit
         vm.recordLogs();
         Types.DepositLiquidityParams memory args = Types.DepositLiquidityParams({
+            depositOwnerAddress: address(this),
             specifiedPayoutAddress: address(this),
             depositAmount: depositAmount,
             expectedSats: expectedSats,

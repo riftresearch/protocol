@@ -239,7 +239,7 @@ contract RiftExchange is BitcoinLightClient {
             expectedSats: params.expectedSats,
             btcPayoutScriptPubKey: params.btcPayoutScriptPubKey,
             specifiedPayoutAddress: params.specifiedPayoutAddress,
-            ownerAddress: msg.sender,
+            ownerAddress: params.depositOwnerAddress,
             salt: EfficientHashLib.hash(
                 params.depositSalt,
                 bytes32(depositVaultIndex),
