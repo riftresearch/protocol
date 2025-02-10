@@ -144,8 +144,11 @@ contract RiftExchangeUnitTest is RiftTest {
             confirmationBlocks
         );
 
+        console.log("calculating lock up period with confirmation blocks", confirmationBlocks);
+        console.log("depositLockupPeriod", RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
+
         // [2] warp and withdraw to empty the vault
-        vm.warp(block.timestamp + Constants.DEPOSIT_LOCKUP_PERIOD);
+        vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
         vm.recordLogs();
         exchange.withdrawLiquidity({vault: fullVault});
         Types.DepositVault memory emptyVault = _extractVaultFromLogs(vm.getRecordedLogs());
@@ -201,14 +204,12 @@ contract RiftExchangeUnitTest is RiftTest {
     function testFuzz_withdrawLiquidity(
         uint256 depositAmount,
         uint64 expectedSats,
-        uint256 withdrawalDelay,
         uint8 confirmationBlocks,
         uint256
     ) public {
         // [0] bound inputs
         depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_AMOUNT, type(uint64).max);
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        withdrawalDelay = bound(withdrawalDelay, Constants.DEPOSIT_LOCKUP_PERIOD, 365 days);
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
 
         // [1] create initial deposit and get vault
@@ -221,7 +222,7 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 expectedWithdrawAmount = vault.depositAmount;
 
         // [2] warp to future time after lockup period
-        vm.warp(block.timestamp + withdrawalDelay);
+        vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks) + 1);
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();

@@ -2,9 +2,9 @@
 pragma solidity =0.8.28;
 
 library Constants {
-    // TODO: Deposit lock up should be aware of what the challenge period could be?
-    uint16 public constant DEPOSIT_LOCKUP_PERIOD = 8 hours;
-    uint64 public constant MIN_OUTPUT_SATS = 1000; // to prevent dust errors
+    // TODO: What is the security parameter for 2 hours per confirmation?
+    uint32 public constant DEPOSIT_LOCKUP_PERIOD_SCALAR = 2 hours; // 2 hours per confirmation block
+    uint16 public constant MIN_OUTPUT_SATS = 1000; // to prevent dust errors
     uint32 public constant MIN_DEPOSIT_AMOUNT = (10e3 / PROTOCOL_FEE_BP) + 1;
     uint8 public constant PROTOCOL_FEE_BP = 5; // maker + taker fee = 0.1%
     uint8 public constant MIN_CONFIRMATION_BLOCKS = 2;

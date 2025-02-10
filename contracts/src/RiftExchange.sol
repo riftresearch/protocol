@@ -106,9 +106,9 @@ contract RiftExchange is BitcoinLightClient {
     function withdrawLiquidity(Types.DepositVault calldata vault) external {
         VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
         if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
-        // TODO: lock up period needs to be a function how many confirmation blocks the deposit is locked for
-        // TODO: should be possible to create a deposit vault on behalf of another address
-        if (block.timestamp < vault.depositTimestamp + Constants.DEPOSIT_LOCKUP_PERIOD) {
+        if (
+            block.timestamp < vault.depositTimestamp + RiftUtils.calculateDepositLockupPeriod(vault.confirmationBlocks)
+        ) {
             revert Errors.DepositStillLocked();
         }
 

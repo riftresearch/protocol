@@ -19,4 +19,11 @@ library RiftUtils {
                 Constants.PROOF_GEN_SCALING_FACTOR) +
             Constants.CHALLENGE_PERIOD_BUFFER;
     }
+
+    /// @notice Calculates the deposit lockup period for a given number of confirmations
+    /// @param confirmations The number of confirmations
+    /// @return depositLockupPeriod The calculated deposit lockup period, in seconds
+    function calculateDepositLockupPeriod(uint8 confirmations) internal pure returns (uint64 depositLockupPeriod) {
+        depositLockupPeriod = Constants.DEPOSIT_LOCKUP_PERIOD_SCALAR * confirmations;
+    }
 }
