@@ -24,15 +24,7 @@ include_storage = true
 include_push_bytes = true
 
 [profile.default]
-remappings = [
-    "forge-std/=dependencies/forge-std-1.9.3/src/",
-    "openzeppelin/contracts/=dependencies/@openzeppelin-contracts-5.0.2/",
-    "openzeppelin-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.0.2/",
-    "openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/",
-    "sp1-contracts/=dependencies/sp1-contracts-3.0.0/contracts/src/",
-    "solmate/=dependencies/solmate-6.7.0/src/",
-    "solady/=dependencies/solady-0.0.259/src/"
-]
+
 auto_detect_remappings = true
 ffi = true
 ast = true
@@ -106,4 +98,21 @@ solmate = "6.7.0"
 solady = "0.0.259"
 
 [soldeer]
-recursive_deps = true
+# whether Soldeer manages remappings
+remappings_generate = true
+
+# whether Soldeer re-generates all remappings when installing, updating or uninstalling deps
+remappings_regenerate = true 
+
+# whether to suffix the remapping with the version requirement string: `name-a.b.c`
+remappings_version = false 
+
+# a prefix to add to the remappings ("@" would give `@name`)
+remappings_prefix = ""
+
+# where to store the remappings ("txt" for `remappings.txt` or "config" for `foundry.toml`)
+# ignored when `soldeer.toml` is used as config (uses `remappings.txt`)
+remappings_location = "txt"
+
+# whether to install sub-dependencies or not. If true this will install the dependencies of dependencies recursively.
+recursive_deps = true 

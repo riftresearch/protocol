@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Script.sol";
-import "forge-std/console.sol";
+import "forge-std/src/Script.sol";
+import "forge-std/src/console.sol";
 import "../src/RiftExchange.sol";
 
 contract DeployRiftExchange is Script {

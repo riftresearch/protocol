@@ -9,9 +9,9 @@ import {Types} from "../../src/libraries/Types.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
-import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
+import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
-import "forge-std/console.sol";
+import "forge-std/src/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
     // hacky way to get nice formatting for the vault in logs

@@ -120,6 +120,7 @@ library Types {
      * @param tipBlockPeaks MMR peaks for tip block inclusion
      */
     struct DepositLiquidityParams {
+        address depositOwnerAddress;
         address specifiedPayoutAddress;
         uint256 depositAmount;
         uint64 expectedSats;
@@ -134,15 +135,7 @@ library Types {
     /**
      * @notice Struct for depositLiquidityWithOverwrite parameters
      *
-     * @param specifiedPayoutAddress Address to receive swap proceeds
-     * @param depositAmount Amount of ERC20 tokens to deposit including fee
-     * @param expectedSats Expected BTC output in satoshis
-     * @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
-     * @param depositSalt User generated salt for vault nonce
-     * @param confirmationBlocks Number of Bitcoin blocks required for confirmation
-     * @param tipBlockLeaf The leaf node representing the current tip block
-     * @param tipBlockSiblings Merkle proof siblings for tip block inclusion
-     * @param tipBlockPeaks MMR peaks for tip block inclusion
+     * @param depositParams Deposit parameters defined above
      * @param overwriteVault Existing empty vault to overwrite
      */
     struct DepositLiquidityWithOverwriteParams {

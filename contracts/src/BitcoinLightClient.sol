@@ -5,8 +5,8 @@ import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
 
 import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
-import {MerkleProofLib} from "solady/utils/MerkleProofLib.sol";
-import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
+import {MerkleProofLib} from "solady/src/utils/MerkleProofLib.sol";
+import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
 /**
  * @title BitcoinLightClient

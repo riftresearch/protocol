@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
 
-import {console} from "forge-std/console.sol";
-import {ISP1Verifier} from "sp1-contracts/ISP1Verifier.sol";
-import {IERC20} from "openzeppelin/contracts/interfaces/IERC20.sol";
-import {IERC20Metadata} from "openzeppelin/contracts/interfaces/IERC20Metadata.sol";
-import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
+import {console} from "forge-std/src/console.sol";
+import {ISP1Verifier} from "sp1-contracts/contracts/src/ISP1Verifier.sol";
+import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin-contracts/interfaces/IERC20Metadata.sol";
+import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
 import {Constants} from "./libraries/Constants.sol";
 import {Errors} from "./libraries/Errors.sol";
@@ -145,6 +145,7 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Releases locked liquidity to the swap taker after the challenge period
     function releaseLiquidity(Types.ReleaseLiquidityParams calldata params) external {
+        // TODO: Batch releases like submitBatchSwapProof
         VaultLib.validateSwapCommitment(params.swap, swapCommitments);
         if (params.swap.state != Types.SwapState.Proved) revert Errors.SwapNotProved();
         if (block.timestamp < params.swap.liquidityUnlockTimestamp) revert Errors.StillInChallengePeriod();
@@ -338,12 +339,14 @@ contract RiftExchange is BitcoinLightClient {
         );
 
         _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.compressedBlockLeaves);
+        // TODO: someone could submit swap proof, locking in some given attested bitcoin block height, but then submit a large number of
+        // of blocks right after, affectively ddosing the light client. Make it impossible to submit a
+        // a block update that overwrites the previous fradulent. ~ reason about the exact conditions under which this could happen ~
 
         // TODO: This isn't ideal, this check requires _updateRoot to always succeed at updating to the new root which shouldn't
         // be a requirement for swap inclusion proofs to succeed (in the case someone updates the root mid proof gen -> that shouldn't
-        // down stream proof verification to fail).
-        // Could potentially relax this requirement, but then it's possible for swap proof submitters to submit proofs with arbitrary attested
-        // bitcoin block heights - which may not matter.
+        // cause down stream proof verification to fail).
+        // - Could store the current latest block height in the contract and use that value as the basis for their attested bitcoin block height [simplest]
         if (
             !_proveBlockInclusionAtTip(
                 blockProofParams.tipBlockLeaf,

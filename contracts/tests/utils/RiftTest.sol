@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
-import {Test} from "forge-std/Test.sol";
-import {IERC20} from "openzeppelin/contracts/interfaces/IERC20.sol";
-import {ERC1967Proxy} from "openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {SP1MockVerifier} from "sp1-contracts/SP1MockVerifier.sol";
-import {Vm} from "forge-std/Vm.sol";
-import {EfficientHashLib} from "solady/utils/EfficientHashLib.sol";
-import "forge-std/console.sol";
+import {Test} from "forge-std/src/Test.sol";
+import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
+import {ERC1967Proxy} from "@openzeppelin-contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
+import {Vm} from "forge-std/src/Vm.sol";
+import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
+import "forge-std/src/console.sol";
 
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";

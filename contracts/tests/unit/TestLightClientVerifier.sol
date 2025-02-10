@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.27;
 
-import {Test} from "forge-std/Test.sol";
+import {Test} from "forge-std/src/Test.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 
 import {Types} from "../../src/libraries/Types.sol";
