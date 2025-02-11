@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Unlicensed
+
 pragma solidity =0.8.28;
 
 import {console} from "forge-std/src/console.sol";
@@ -19,7 +20,7 @@ import {BitcoinLightClient} from "./BitcoinLightClient.sol";
  * @title RiftExchange
  * @author alpinevm <https://github.com/alpinevm>
  * @author spacegod <https://github.com/bruidbarrett>
- * @notice A decentralized exchange for cross-chain Bitcoin to ERC20 swaps
+ * @notice A decentralized exchange for cross-chain Bitcoin<>ERC20 swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
 contract RiftExchange is BitcoinLightClient {
@@ -47,8 +48,9 @@ contract RiftExchange is BitcoinLightClient {
         address _depositToken,
         bytes32 _circuitVerificationKey,
         address _verifier,
-        address _feeRouter
-    ) BitcoinLightClient(_mmrRoot) {
+        address _feeRouter,
+        Types.BlockLeaf memory _tipBlockLeaf
+    ) BitcoinLightClient(_mmrRoot, _tipBlockLeaf) {
         DEPOSIT_TOKEN = IERC20(_depositToken);
         TOKEN_DECIMALS = IERC20Metadata(_depositToken).decimals();
         CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
@@ -116,100 +118,146 @@ contract RiftExchange is BitcoinLightClient {
         updatedVault.depositAmount = 0;
         updatedVault.depositFee = 0;
 
-        vaultCommitments[vault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
+        vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
 
         if (!DEPOSIT_TOKEN.transfer(vault.ownerAddress, vault.depositAmount)) revert Errors.TransferFailed();
 
-        emit Events.VaultUpdated(updatedVault, Types.VaultUpdateContext.Withdraw);
+        Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
+        updatedVaults[0] = updatedVault;
+        emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Withdraw);
     }
 
     /// @notice Submits a a batch of swap proofs and adds them to swapCommitments or overwrites an existing completed swap commitment
-    function submitBatchSwapProof(
+    function submitBatchSwapProofWithLightClientUpdate(
         Types.SubmitSwapProofParams[] calldata swapParams,
         Types.BlockProofParams calldata blockProofParams,
         Types.ProposedSwap[] calldata overwriteSwaps,
         bytes calldata proof
     ) external {
-        (Types.ProposedSwap[] memory swaps, bytes32[] memory updatedSwapHashes) = _validateSwaps(
+        // optimistically update root, needed b/c we validate current inclusion in the chain for each swap
+        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
+
+        uint32 currentLightClientHeight = blockProofParams.tipBlockLeaf.height;
+
+        (Types.ProposedSwap[] memory swaps, Types.SwapPublicInput[] memory swapPublicInputs) = _validateSwaps(
+            currentLightClientHeight,
             swapParams,
-            blockProofParams,
-            overwriteSwaps,
+            overwriteSwaps
+        );
+
+        bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
+        _verifyZeroKnowledgeProof(
+            Types.ProofType.Combined,
+            swapPublicInputs,
+            Types.LightClientPublicInput({
+                previousMmrRoot: blockProofParams.priorMmrRoot,
+                newMmrRoot: blockProofParams.newMmrRoot,
+                compressedLeavesCommitment: compressedLeavesCommitment,
+                tipBlockLeaf: blockProofParams.tipBlockLeaf
+            }),
             proof
         );
 
-        for (uint256 i = 0; i < swaps.length; i++) {
-            swapCommitments.push(updatedSwapHashes[i]);
-        }
         emit Events.SwapsUpdated(swaps, Types.SwapUpdateContext.Created);
     }
 
-    /// @notice Releases locked liquidity to the swap taker after the challenge period
-    function releaseLiquidity(Types.ReleaseLiquidityParams calldata params) external {
-        // TODO: Batch releases like submitBatchSwapProof
-        VaultLib.validateSwapCommitment(params.swap, swapCommitments);
-        if (params.swap.state != Types.SwapState.Proved) revert Errors.SwapNotProved();
-        if (block.timestamp < params.swap.liquidityUnlockTimestamp) revert Errors.StillInChallengePeriod();
-
-        Types.BlockLeaf memory swapBlockLeaf = Types.BlockLeaf({
-            blockHash: params.swap.swapBitcoinBlockHash,
-            height: params.swapBlockHeight,
-            cumulativeChainwork: params.swapBlockChainwork
-        });
-        if (
-            !_proveBlockInclusion(
-                swapBlockLeaf,
-                params.bitcoinSwapBlockSiblings,
-                params.bitcoinSwapBlockPeaks,
-                params.tipBlockHeight
-            )
-        ) {
-            revert Errors.InvalidSwapBlockInclusionProof();
-        }
-
-        if (
-            !_proveBlockInclusion(
-                params.bitcoinConfirmationBlockLeaf,
-                params.bitcoinConfirmationBlockSiblings,
-                params.bitcoinConfirmationBlockPeaks,
-                params.tipBlockHeight
-            )
-        ) {
-            revert Errors.InvalidConfirmationBlockInclusionProof();
-        }
-
-        if (params.bitcoinConfirmationBlockLeaf.height != params.swapBlockHeight + params.swap.confirmationBlocks) {
-            revert Errors.InvalidConfirmationBlockDelta();
-        }
-
-        bytes32 depositVaultCommitment = VaultLib.validateDepositVaultCommitment(
-            params.utilizedVault,
-            vaultCommitments
+    /// @notice Submits a batch of swap proofs and adds them to swapCommitments, does not update the light client
+    function submitBatchSwapProof(
+        Types.SubmitSwapProofParams[] calldata swapParams,
+        Types.ProposedSwap[] calldata overwriteSwaps,
+        bytes calldata proof
+    ) external {
+        uint32 currentLightClientHeight = getLightClientHeight();
+        (Types.ProposedSwap[] memory swaps, Types.SwapPublicInput[] memory swapPublicInputs) = _validateSwaps(
+            currentLightClientHeight,
+            swapParams,
+            overwriteSwaps
         );
-        if (depositVaultCommitment != params.swap.depositVaultCommitment) {
-            revert Errors.InvalidVaultCommitment();
+
+        _verifyZeroKnowledgeProof(Types.ProofType.SwapOnly, swapPublicInputs, getNullLightClientPublicInput(), proof);
+
+        emit Events.SwapsUpdated(swaps, Types.SwapUpdateContext.Created);
+    }
+
+    /// @notice Releases locked liquidity for multiple swaps
+    function releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) external {
+        Types.ProposedSwap[] memory updatedSwaps = new Types.ProposedSwap[](paramsArray.length);
+        Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](paramsArray.length);
+
+        for (uint256 i = 0; i < paramsArray.length; i++) {
+            VaultLib.validateSwapCommitment(paramsArray[i].swap, swapCommitments);
+            if (paramsArray[i].swap.state != Types.SwapState.Proved) revert Errors.SwapNotProved();
+            if (block.timestamp < paramsArray[i].swap.liquidityUnlockTimestamp) revert Errors.StillInChallengePeriod();
+
+            bytes32 depositVaultCommitment = VaultLib.validateDepositVaultCommitment(
+                paramsArray[i].utilizedVault,
+                vaultCommitments
+            );
+            if (depositVaultCommitment != paramsArray[i].swap.depositVaultCommitment) {
+                revert Errors.InvalidVaultCommitment();
+            }
+
+            Types.BlockLeaf memory swapBlockLeaf = Types.BlockLeaf({
+                blockHash: paramsArray[i].swap.swapBitcoinBlockHash,
+                height: paramsArray[i].swapBlockHeight,
+                cumulativeChainwork: paramsArray[i].swapBlockChainwork
+            });
+
+            _ensureBitcoinInclusion(
+                swapBlockLeaf,
+                paramsArray[i].bitcoinSwapBlockSiblings,
+                paramsArray[i].bitcoinSwapBlockPeaks,
+                paramsArray[i].swap.confirmationBlocks
+            );
+
+            Types.DepositVault memory updatedVault = paramsArray[i].utilizedVault;
+            updatedVault.depositAmount = 0;
+            updatedVault.depositFee = 0;
+
+            vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
+
+            updatedVaults[i] = updatedVault;
+
+            Types.ProposedSwap memory updatedSwap = paramsArray[i].swap;
+            updatedSwap.state = Types.SwapState.Finalized;
+            swapCommitments[paramsArray[i].swap.swapIndex] = VaultLib.hashSwap(updatedSwap);
+
+            accumulatedFeeBalance += paramsArray[i].swap.totalSwapFee;
+
+            if (
+                !DEPOSIT_TOKEN.transfer(paramsArray[i].swap.specifiedPayoutAddress, paramsArray[i].swap.totalSwapOutput)
+            ) {
+                revert Errors.TransferFailed();
+            }
+
+            updatedSwaps[i] = updatedSwap;
         }
 
-        Types.DepositVault memory updatedVault = params.utilizedVault;
-        updatedVault.depositAmount = 0;
-        updatedVault.depositFee = 0;
-
-        vaultCommitments[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
-        emit Events.VaultUpdated(updatedVault, Types.VaultUpdateContext.Release);
-
-        Types.ProposedSwap memory updatedSwap = params.swap;
-        updatedSwap.state = Types.SwapState.Finalized;
-        swapCommitments[params.swap.swapIndex] = VaultLib.hashSwap(updatedSwap);
-
-        accumulatedFeeBalance += params.swap.totalSwapFee;
-
-        Types.ProposedSwap[] memory updatedSwaps = new Types.ProposedSwap[](1);
-        updatedSwaps[0] = updatedSwap;
-
+        // TODO: Does order of events matter here?
         emit Events.SwapsUpdated(updatedSwaps, Types.SwapUpdateContext.Complete);
+        emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Release);
+    }
 
-        if (!DEPOSIT_TOKEN.transfer(params.swap.specifiedPayoutAddress, params.swap.totalSwapOutput)) {
-            revert Errors.TransferFailed();
-        }
+    function updateLightClient(Types.BlockProofParams calldata blockProofParams, bytes calldata proof) external {
+        bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
+
+        VERIFIER.verifyProof(
+            CIRCUIT_VERIFICATION_KEY,
+            abi.encode(
+                Types.ProofPublicInput({
+                    proofType: Types.ProofType.LightClientOnly,
+                    swaps: new Types.SwapPublicInput[](0),
+                    lightClient: Types.LightClientPublicInput({
+                        previousMmrRoot: blockProofParams.priorMmrRoot,
+                        newMmrRoot: blockProofParams.newMmrRoot,
+                        compressedLeavesCommitment: compressedLeavesCommitment,
+                        tipBlockLeaf: blockProofParams.tipBlockLeaf
+                    })
+                })
+            ),
+            proof
+        );
+        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
     }
 
     // -----------------------------------------------------------------------
@@ -225,8 +273,8 @@ contract RiftExchange is BitcoinLightClient {
         if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
         if (!VaultLib.validateP2WPKHScriptPubKey(params.btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
 
-        if (!_proveBlockInclusionAtTip(params.tipBlockLeaf, params.tipBlockSiblings, params.tipBlockPeaks)) {
-            revert Errors.InvalidTipBlockInclusionProof();
+        if (!proveBlockInclusion(params.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks)) {
+            revert Errors.InvalidBlockInclusionProof();
         }
 
         uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(params.depositAmount);
@@ -246,7 +294,7 @@ contract RiftExchange is BitcoinLightClient {
                 bytes32(uint256(block.chainid))
             ),
             confirmationBlocks: params.confirmationBlocks,
-            attestedBitcoinBlockHeight: params.tipBlockLeaf.height
+            attestedBitcoinBlockHeight: params.safeBlockLeaf.height
         });
 
         return (vault, VaultLib.hashDepositVault(vault));
@@ -256,7 +304,9 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Internal function to finalize a deposit
     function _finalizeDeposit(Types.DepositVault memory vault) internal {
-        emit Events.VaultUpdated(vault, Types.VaultUpdateContext.Created);
+        Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
+        updatedVaults[0] = vault;
+        emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Created);
         if (!DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee)) {
             revert Errors.TransferFailed();
         }
@@ -264,16 +314,13 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Internal function to prepare and validate a batch of swap proofs
     function _validateSwaps(
+        uint32 currentLightClientHeight,
         Types.SubmitSwapProofParams[] calldata swapParams,
-        Types.BlockProofParams calldata blockProofParams,
-        Types.ProposedSwap[] calldata overwriteSwaps,
-        bytes calldata proof
-    ) internal returns (Types.ProposedSwap[] memory swaps, bytes32[] memory updatedSwapHashes) {
-        // if (swapParams.length == 0) revert Errors.NoSwapsToSubmit();
-        // TODO: explicit check for uint16 overflow on max swaps?
-        Types.SwapPublicInput[] memory swapPublicInputs = new Types.SwapPublicInput[](swapParams.length);
+        Types.ProposedSwap[] calldata overwriteSwaps
+    ) internal returns (Types.ProposedSwap[] memory swaps, Types.SwapPublicInput[] memory swapPublicInputs) {
+        if (swapParams.length == 0) revert Errors.NoSwapsToSubmit();
+        swapPublicInputs = new Types.SwapPublicInput[](swapParams.length);
         swaps = new Types.ProposedSwap[](swapParams.length);
-        updatedSwapHashes = new bytes32[](swapParams.length);
 
         uint256 swapIndexPointer = swapCommitments.length;
         for (uint256 i = 0; i < swapParams.length; i++) {
@@ -293,21 +340,28 @@ contract RiftExchange is BitcoinLightClient {
             bytes32 depositVaultCommitment = VaultLib.validateDepositVaultCommitment(params.vault, vaultCommitments);
 
             swapPublicInputs[i] = Types.SwapPublicInput({
-                swapBitcoinBlockHash: params.swapBitcoinBlockHash,
                 swapBitcoinTxid: params.swapBitcoinTxid,
+                swapBitcoinBlockHash: params.swapBitcoinBlockLeaf.blockHash,
                 depositVaultCommitment: depositVaultCommitment
             });
 
+            _ensureBitcoinInclusion(
+                params.swapBitcoinBlockLeaf,
+                params.swapBitcoinBlockSiblings,
+                params.swapBitcoinBlockPeaks,
+                params.vault.confirmationBlocks
+            );
+
             swaps[i] = Types.ProposedSwap({
                 swapIndex: swapIndex,
-                swapBitcoinBlockHash: params.swapBitcoinBlockHash,
+                swapBitcoinBlockHash: params.swapBitcoinBlockLeaf.blockHash,
                 confirmationBlocks: params.vault.confirmationBlocks,
                 liquidityUnlockTimestamp: uint64(
                     block.timestamp +
                         RiftUtils.calculateChallengePeriod(
                             // The challenge period is based on the worst case reorg which would be to the
                             // depositors originally attested bitcoin block height
-                            blockProofParams.tipBlockLeaf.height - params.vault.attestedBitcoinBlockHeight
+                            currentLightClientHeight - params.vault.attestedBitcoinBlockHeight
                         )
                 ),
                 specifiedPayoutAddress: params.vault.specifiedPayoutAddress,
@@ -317,45 +371,42 @@ contract RiftExchange is BitcoinLightClient {
                 depositVaultCommitment: depositVaultCommitment
             });
 
-            updatedSwapHashes[i] = VaultLib.hashSwap(swaps[i]);
+            bytes32 swapCommitment = VaultLib.hashSwap(swaps[i]);
+            if (params.storageStrategy == Types.StorageStrategy.Append) {
+                swapCommitments.push(swapCommitment);
+            } else if (params.storageStrategy == Types.StorageStrategy.Overwrite) {
+                swapCommitments[overwriteSwaps[params.localOverwriteIndex].swapIndex] = swapCommitment;
+            }
         }
+    }
 
-        bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
-
+    function _verifyZeroKnowledgeProof(
+        Types.ProofType proofType,
+        Types.SwapPublicInput[] memory swapPublicInputs,
+        Types.LightClientPublicInput memory lightClientPublicInput,
+        bytes calldata proof
+    ) internal view {
         VERIFIER.verifyProof(
             CIRCUIT_VERIFICATION_KEY,
             abi.encode(
                 Types.ProofPublicInput({
-                    proofType: Types.ProofType.Combined,
+                    proofType: proofType,
                     swaps: swapPublicInputs,
-                    lightClient: Types.LightClientPublicInput({
-                        previousMmrRoot: blockProofParams.priorMmrRoot,
-                        newMmrRoot: blockProofParams.newMmrRoot,
-                        compressedLeavesCommitment: compressedLeavesCommitment
-                    })
+                    lightClient: lightClientPublicInput
                 })
             ),
             proof
         );
+    }
 
-        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.compressedBlockLeaves);
-        // TODO: someone could submit swap proof, locking in some given attested bitcoin block height, but then submit a large number of
-        // of blocks right after, affectively ddosing the light client. Make it impossible to submit a
-        // a block update that overwrites the previous fradulent. ~ reason about the exact conditions under which this could happen ~
-
-        // TODO: This isn't ideal, this check requires _updateRoot to always succeed at updating to the new root which shouldn't
-        // be a requirement for swap inclusion proofs to succeed (in the case someone updates the root mid proof gen -> that shouldn't
-        // cause down stream proof verification to fail).
-        // - Could store the current latest block height in the contract and use that value as the basis for their attested bitcoin block height [simplest]
-        if (
-            !_proveBlockInclusionAtTip(
-                blockProofParams.tipBlockLeaf,
-                blockProofParams.tipBlockSiblings,
-                blockProofParams.tipBlockPeaks
-            )
-        ) {
-            revert Errors.InvalidTipBlockInclusionProof();
-        }
+    function getNullLightClientPublicInput() internal pure returns (Types.LightClientPublicInput memory) {
+        return
+            Types.LightClientPublicInput({
+                previousMmrRoot: bytes32(0),
+                newMmrRoot: bytes32(0),
+                compressedLeavesCommitment: bytes32(0),
+                tipBlockLeaf: Types.BlockLeaf({blockHash: bytes32(0), height: 0, cumulativeChainwork: 0})
+            });
     }
 
     // -----------------------------------------------------------------------

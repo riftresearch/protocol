@@ -68,6 +68,7 @@ library Types {
         bytes32 previousMmrRoot;
         bytes32 newMmrRoot;
         bytes32 compressedLeavesCommitment;
+        BlockLeaf tipBlockLeaf;
     }
 
     struct ProofPublicInput {
@@ -115,9 +116,9 @@ library Types {
      * @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
      * @param depositSalt User generated salt for vault nonce
      * @param confirmationBlocks Number of Bitcoin blocks required for confirmation
-     * @param tipBlockLeaf The leaf node representing the current tip block
-     * @param tipBlockSiblings Merkle proof siblings for tip block inclusion
-     * @param tipBlockPeaks MMR peaks for tip block inclusion
+     * @param safeBlockLeaf The leaf representing a block the depositor believes is highly unlikely to be reorged out of the chain
+     * @param safeBlockSiblings Merkle proof siblings for safe block inclusion
+     * @param safeBlockPeaks MMR peaks for safe block inclusion
      */
     struct DepositLiquidityParams {
         address depositOwnerAddress;
@@ -127,9 +128,9 @@ library Types {
         bytes22 btcPayoutScriptPubKey;
         bytes32 depositSalt;
         uint8 confirmationBlocks;
-        Types.BlockLeaf tipBlockLeaf;
-        bytes32[] tipBlockSiblings;
-        bytes32[] tipBlockPeaks;
+        Types.BlockLeaf safeBlockLeaf;
+        bytes32[] safeBlockSiblings;
+        bytes32[] safeBlockPeaks;
     }
 
     /**
@@ -158,8 +159,6 @@ library Types {
         bytes32 newMmrRoot;
         bytes compressedBlockLeaves;
         Types.BlockLeaf tipBlockLeaf;
-        bytes32[] tipBlockSiblings;
-        bytes32[] tipBlockPeaks;
     }
 
     enum StorageStrategy {
@@ -178,10 +177,12 @@ library Types {
      */
     struct SubmitSwapProofParams {
         bytes32 swapBitcoinTxid;
-        bytes32 swapBitcoinBlockHash;
         Types.DepositVault vault;
         StorageStrategy storageStrategy;
         uint16 localOverwriteIndex;
+        Types.BlockLeaf swapBitcoinBlockLeaf;
+        bytes32[] swapBitcoinBlockSiblings;
+        bytes32[] swapBitcoinBlockPeaks;
     }
 
     /**
@@ -204,10 +205,12 @@ library Types {
         uint32 swapBlockHeight;
         bytes32[] bitcoinSwapBlockSiblings;
         bytes32[] bitcoinSwapBlockPeaks;
-        Types.BlockLeaf bitcoinConfirmationBlockLeaf;
-        bytes32[] bitcoinConfirmationBlockSiblings;
-        bytes32[] bitcoinConfirmationBlockPeaks;
         Types.DepositVault utilizedVault;
         uint32 tipBlockHeight;
+    }
+
+    struct BitcoinCheckpoint {
+        bool established;
+        Types.BlockLeaf tipBlockLeaf;
     }
 }

@@ -471,7 +471,8 @@ contract RiftTest is Test, PRNG {
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
-            _feeRouter: address(0xfee)
+            _feeRouter: address(0xfee),
+            _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
         mockToken = MockToken(address(exchange.DEPOSIT_TOKEN()));
@@ -553,10 +554,10 @@ contract RiftTest is Test, PRNG {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
     }
 
-    function _extractVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
+    function _extractSingleVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.VaultUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.DepositVault));
+            if (logs[i].topics[0] == Events.VaultsUpdated.selector) {
+                return abi.decode(logs[i].data, (Types.DepositVault[]))[0];
             }
         }
         revert("Vault not found");
@@ -597,15 +598,15 @@ contract RiftTest is Test, PRNG {
             btcPayoutScriptPubKey: btcPayoutScriptPubKey,
             depositSalt: depositSalt,
             confirmationBlocks: confirmationBlocks,
-            tipBlockLeaf: mmr_proof.blockLeaf,
-            tipBlockSiblings: mmr_proof.siblings,
-            tipBlockPeaks: mmr_proof.peaks
+            safeBlockLeaf: mmr_proof.blockLeaf,
+            safeBlockSiblings: mmr_proof.siblings,
+            safeBlockPeaks: mmr_proof.peaks
         });
 
         exchange.depositLiquidity(args);
 
         // [4] grab the logs, find the vault
-        Types.DepositVault memory createdVault = _extractVaultFromLogs(vm.getRecordedLogs());
+        Types.DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
         uint256 vaultIndex = exchange.getVaultCommitmentsLength() - 1;
         bytes32 commitment = exchange.getVaultCommitment(vaultIndex);
 
