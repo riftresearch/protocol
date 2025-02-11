@@ -4,7 +4,6 @@ pub mod light_client;
 pub mod mmr;
 
 use crypto_bigint::U256;
-use hasher::DIGEST_BYTE_COUNT;
 use serde::{Deserialize, Serialize};
 use sol_types::Types::LightClientPublicInput;
 
@@ -284,6 +283,7 @@ impl ChainTransition {
             previousMmrRoot: self.previous_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesCommitment: new_leaves_commitment.into(),
+            tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
         }
     }
 }
@@ -293,10 +293,7 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
-    use accumulators::mmr::{
-        leaf_count_to_mmr_size, map_leaf_index_to_element_index, mmr_size_to_leaf_count,
-        MMR as ClientMMR,
-    };
+    use accumulators::mmr::MMR as ClientMMR;
     use bitcoin_core_rs::get_retarget_height;
     use hasher::Keccak256Hasher;
     use leaves::get_genesis_leaf;
@@ -480,13 +477,7 @@ mod tests {
     // Then validate the new MMR root and public inputs
     #[tokio::test]
     async fn test_bch_chain_extension_then_overwrite() {
-        let genesis_leaf = get_genesis_leaf();
-        let genesis_leaf_hash = genesis_leaf.hash::<Keccak256Hasher>();
-
-        let mut client_mmr_state = create_from_bch_fork().await;
-
-        let pre_bch_mmr_root = client_mmr_state.mmr.get_root();
-        let pre_bch_mmr_bagged_peak = client_mmr_state.mmr.bag_peaks().unwrap();
+        let client_mmr_state = create_from_bch_fork().await;
 
         let pre_bch_mmr_leaf_element_index = client_mmr_state.last_leaf_append_element_index;
 

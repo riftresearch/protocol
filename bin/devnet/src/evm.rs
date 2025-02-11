@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
 use rift_sdk::create_websocket_provider;
@@ -57,6 +58,7 @@ impl EthDevnet {
     pub async fn setup(
         circuit_verification_key_hash: [u8; 32],
         genesis_mmr_root: [u8; 32],
+        tip_block_leaf: BlockLeaf,
     ) -> Result<(Self, u64)> {
         let anvil = spawn_anvil().await?;
         info!(
@@ -67,8 +69,13 @@ impl EthDevnet {
 
         info!("Deploying RiftExchange & MockToken...");
         let t = Instant::now();
-        let (rift_exchange, token_contract, deployment_block_number) =
-            deploy_contracts(&anvil, circuit_verification_key_hash, genesis_mmr_root).await?;
+        let (rift_exchange, token_contract, deployment_block_number) = deploy_contracts(
+            &anvil,
+            circuit_verification_key_hash,
+            genesis_mmr_root,
+            tip_block_leaf,
+        )
+        .await?;
         info!("Deployed in {:?}", t.elapsed());
 
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();

@@ -46,6 +46,7 @@ impl<'de> Deserialize<'de> for Header {
 
 // parent_ variables are assumed to be valid in the context of the header chain
 // panics on any failures
+// TODO: No panics, return proper errors
 pub fn validate_header_chain(
     parent_height: u32,
     parent_header: &Header,

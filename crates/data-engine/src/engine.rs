@@ -1,10 +1,9 @@
 use alloy::{
     primitives::Address,
-    providers::{Provider, WsConnect},
-    pubsub::{ConnectionHandle, PubSubConnect, PubSubFrontend},
+    providers::Provider,
+    pubsub::PubSubFrontend,
     rpc::types::{BlockNumberOrTag, Filter, Log},
     sol_types::SolEvent,
-    transports::{impl_future, TransportResult},
 };
 use bitcoin_light_client_core::{
     hasher::{Digest, Keccak256Hasher},
@@ -199,7 +198,7 @@ pub async fn listen_for_events(
             .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
 
         match *topic {
-            RiftExchange::VaultUpdated::SIGNATURE_HASH => {
+            RiftExchange::VaultsUpdated::SIGNATURE_HASH => {
                 handle_vault_updated_event(&log, db_conn).await?;
             }
             RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
@@ -224,10 +223,10 @@ async fn handle_vault_updated_event(
     info!("Received VaultUpdated event...");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::VaultUpdated::decode_log(&log.inner, false)
+    let decoded = RiftExchange::VaultsUpdated::decode_log(&log.inner, false)
         .map_err(|e| eyre::eyre!("Failed to decode VaultUpdated event: {:?}", e))?;
 
-    let deposit_vault = decoded.data.vault;
+    let deposit_vaults = decoded.data.vaults;
     let log_txid = log
         .transaction_hash
         .ok_or_else(|| eyre::eyre!("Missing txid in VaultUpdated event"))?;
@@ -238,37 +237,39 @@ async fn handle_vault_updated_event(
         .block_hash
         .ok_or_else(|| eyre::eyre!("Missing block hash in VaultUpdated event"))?;
 
-    match VaultUpdateContext::try_from(decoded.data.context)
-        .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
-    {
-        VaultUpdateContext::Created => {
-            info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
-            add_deposit(
-                db_conn,
-                deposit_vault,
-                log_block_number,
-                log_block_hash.into(),
-                log_txid.into(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
+    for deposit_vault in deposit_vaults {
+        match VaultUpdateContext::try_from(decoded.data.context)
+            .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
+        {
+            VaultUpdateContext::Created => {
+                info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
+                add_deposit(
+                    db_conn,
+                    deposit_vault,
+                    log_block_number,
+                    log_block_hash.into(),
+                    log_txid.into(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
+            }
+            VaultUpdateContext::Withdraw => {
+                info!(
+                    "Withdrawing deposit for nonce: {:?}",
+                    deposit_vault.vaultIndex
+                );
+                update_deposit_to_withdrawn(
+                    db_conn,
+                    deposit_vault.salt.into(),
+                    log_txid.into(),
+                    log_block_number,
+                    log_block_hash.into(),
+                )
+                .await
+                .map_err(|e| eyre::eyre!("update_deposit_to_withdrawn failed: {:?}", e))?;
+            }
+            _ => {}
         }
-        VaultUpdateContext::Withdraw => {
-            info!(
-                "Withdrawing deposit for nonce: {:?}",
-                deposit_vault.vaultIndex
-            );
-            update_deposit_to_withdrawn(
-                db_conn,
-                deposit_vault.salt.into(),
-                log_txid.into(),
-                log_block_number,
-                log_block_hash.into(),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("update_deposit_to_withdrawn failed: {:?}", e))?;
-        }
-        _ => {}
     }
 
     Ok(())

@@ -71,6 +71,7 @@ pub async fn deploy_contracts(
     anvil: &AnvilInstance,
     circuit_verification_key_hash: [u8; 32],
     genesis_mmr_root: [u8; 32],
+    tip_block_leaf: BlockLeaf,
 ) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockTokenWebsocket>, u64)> {
     use alloy::{
         hex::FromHex,
@@ -113,6 +114,7 @@ pub async fn deploy_contracts(
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
 
+    let tip_block_leaf_sol: sol_types::Types::BlockLeaf = tip_block_leaf.into();
     // Deploy RiftExchange
     let exchange = RiftExchange::deploy(
         provider.clone(),
@@ -121,6 +123,12 @@ pub async fn deploy_contracts(
         circuit_verification_key_hash.into(),
         verifier_contract,
         deployer_address, // e.g. owner
+        // TODO: any way to not do this goofy conversion? need to deduplicate the types
+        rift_sdk::bindings::Types::BlockLeaf {
+            blockHash: tip_block_leaf_sol.blockHash,
+            height: tip_block_leaf_sol.height,
+            cumulativeChainwork: tip_block_leaf_sol.cumulativeChainwork,
+        },
     )
     .await?;
 
@@ -159,11 +167,17 @@ impl RiftDevnet {
             .get_leaves_from_block_range(0, 101, None)
             .await?;
 
+        let tip_block_leaf = checkpoint_leaves.last().unwrap();
+
         // 3) Start EVM side
         let circuit_verification_key_hash = get_rift_program_hash(); // or however you do it
         let genesis_mmr_root = [0u8; 32]; // fill with your actual root
-        let (ethereum_devnet, deployment_block_number) =
-            EthDevnet::setup(circuit_verification_key_hash, genesis_mmr_root).await?;
+        let (ethereum_devnet, deployment_block_number) = EthDevnet::setup(
+            circuit_verification_key_hash,
+            genesis_mmr_root,
+            *tip_block_leaf,
+        )
+        .await?;
 
         // 4) Data Engine
         info!("Seeding data engine with checkpoint leaves...");

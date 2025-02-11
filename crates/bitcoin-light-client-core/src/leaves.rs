@@ -1,3 +1,4 @@
+use alloy_sol_types::SolType;
 use crypto_bigint::{Encoding, U256};
 use hex_literal::hex;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,21 @@ pub struct BlockLeaf {
     pub height: u32,
     pub block_hash: [u8; 32],           // Stored in reverse byte order
     pub cumulative_chainwork: [u8; 32], // Stored in reverse byte order
+}
+
+impl From<BlockLeaf> for sol_types::Types::BlockLeaf {
+    fn from(leaf: BlockLeaf) -> Self {
+        // Chainwork is stored in reverse byte order, so we need to reverse it before converting to the Uint type
+        let mut cumulative_chainwork = leaf.cumulative_chainwork;
+        cumulative_chainwork.reverse();
+        sol_types::Types::BlockLeaf {
+            height: leaf.height,
+            blockHash: leaf.block_hash.into(),
+            cumulativeChainwork: alloy_sol_types::sol_data::Uint::<256>::detokenize(
+                leaf.cumulative_chainwork.into(),
+            ),
+        }
+    }
 }
 
 const SERIALIZED_LEAF_SIZE: usize = 68;

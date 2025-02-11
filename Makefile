@@ -12,3 +12,4 @@ test-crates: | build
 	cargo test --release --workspace --exclude rift-program
 
 test: | build test-contracts test-crates
+	@echo "All tests passed"
