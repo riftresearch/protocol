@@ -54,7 +54,14 @@ abstract contract BitcoinLightClient {
      *      2. The new root is different from the current root
      *      3. The chainwork of the updated chain is greater than or equal to the chainwork of the current checkpoint
      */
-    function _updateRoot(bytes32 priorMmrRoot, bytes32 newMmrRoot, Types.BlockLeaf memory tipBlockLeaf) internal {
+    // TODO: There is no need to pass the compressedBlockLeaves here, we can use trace_transaction to extract it from the calldata
+    // so this is temporary simplicity
+    function _updateRoot(
+        bytes32 priorMmrRoot,
+        bytes32 newMmrRoot,
+        Types.BlockLeaf memory tipBlockLeaf,
+        bytes calldata compressedBlockLeaves
+    ) internal {
         if (newMmrRoot == mmrRoot) {
             // TODO: No need to do anything if the chain is already like the caller expected?
             return;
@@ -73,7 +80,7 @@ abstract contract BitcoinLightClient {
         checkpoints[newMmrRoot] = Types.BitcoinCheckpoint({established: true, tipBlockLeaf: tipBlockLeaf});
 
         mmrRoot = newMmrRoot;
-        emit Events.BitcoinLightClientUpdated(newMmrRoot);
+        emit Events.BitcoinLightClientUpdated(newMmrRoot, compressedBlockLeaves);
     }
 
     function proveBlockInclusion(

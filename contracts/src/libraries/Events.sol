@@ -3,7 +3,7 @@ pragma solidity =0.8.28;
 import {Types} from "./Types.sol";
 
 library Events {
-    event BitcoinLightClientUpdated(bytes32 mmrRoot);
+    event BitcoinLightClientUpdated(bytes32 mmrRoot, bytes compressedBlockLeaves);
     event VaultsUpdated(Types.DepositVault[] vaults, Types.VaultUpdateContext context);
     event SwapsUpdated(Types.ProposedSwap[] swaps, Types.SwapUpdateContext context);
 }

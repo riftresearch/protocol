@@ -135,7 +135,12 @@ contract RiftExchange is BitcoinLightClient {
         bytes calldata proof
     ) external {
         // optimistically update root, needed b/c we validate current inclusion in the chain for each swap
-        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
+        _updateRoot(
+            blockProofParams.priorMmrRoot,
+            blockProofParams.newMmrRoot,
+            blockProofParams.tipBlockLeaf,
+            blockProofParams.compressedBlockLeaves
+        );
 
         uint32 currentLightClientHeight = blockProofParams.tipBlockLeaf.height;
 
@@ -257,7 +262,12 @@ contract RiftExchange is BitcoinLightClient {
             ),
             proof
         );
-        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
+        _updateRoot(
+            blockProofParams.priorMmrRoot,
+            blockProofParams.newMmrRoot,
+            blockProofParams.tipBlockLeaf,
+            blockProofParams.compressedBlockLeaves
+        );
     }
 
     // -----------------------------------------------------------------------
