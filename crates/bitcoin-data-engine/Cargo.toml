@@ -1,0 +1,16 @@
+[package]
+name = "bitcoin-data-engine"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+exclude.workspace = true
+
+[dependencies]
+bitcoincore-rpc-async = { workspace = true } 
+bitcoin-light-client-core = { workspace = true }
+rift-sdk = { workspace = true }
+tokio = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+corepc-node = { workspace = true }

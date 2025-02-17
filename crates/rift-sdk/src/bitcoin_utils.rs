@@ -159,7 +159,6 @@ impl AuthExt for Auth {
 
 pub struct AsyncBitcoinClient {
     client: BitcoinClient,
-    timeout: Duration,
 }
 
 // wrapper over the bitcoincore_rpc_async client w/ explicit timeout and retry logic
@@ -177,7 +176,7 @@ impl AsyncBitcoinClient {
             bitcoincore_rpc_async::jsonrpc::client::Client::with_transport(transport);
 
         let client = BitcoinClient::from_jsonrpc(json_rpc_client);
-        Ok(Self { client, timeout })
+        Ok(Self { client })
     }
 }
 
@@ -191,19 +190,63 @@ impl RpcApi for AsyncBitcoinClient {
         cmd: &str,
         args: &[serde_json::Value],
     ) -> bitcoincore_rpc_async::Result<T> {
-        for i in 0..RETRY_ATTEMPTS {
+        for _ in 0..RETRY_ATTEMPTS {
             match self.client.call(cmd, args).await {
                 Ok(ret) => return Ok(ret),
                 Err(bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
-                )) if rpcerr.code == -28 => {
+                )) if rpcerr.code == -32603 => {
                     ::std::thread::sleep(::std::time::Duration::from_millis(INTERVAL));
+                    println!("Retrying RPC call: {:?}", rpcerr);
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    eprintln!("Error calling RPC: {:?}", e);
+                    return Err(e);
+                }
             }
         }
         self.client.call(cmd, args).await
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainTip {
+    /// Block height of the chain tip
+    pub height: u32,
+    /// Block hash of the chain tip
+    pub hash: bitcoincore_rpc_async::bitcoin::BlockHash,
+    /// Length of the branch (0 for main chain)
+    pub branchlen: u32,
+    /// Status of the chain tip: "active", "valid-fork", "valid-headers", "headers-only", or "invalid"
+    pub status: ChainTipStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChainTipStatus {
+    /// The current best chain tip
+    Active,
+    /// Valid chain but not the best chain
+    ValidFork,
+    /// Valid headers but missing block data
+    ValidHeaders,
+    /// Headers only, validity not checked
+    HeadersOnly,
+    /// Invalid chain
+    Invalid,
+}
+
+impl fmt::Display for ChainTipStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ChainTipStatus::Active => write!(f, "active"),
+            ChainTipStatus::ValidFork => write!(f, "valid-fork"),
+            ChainTipStatus::ValidHeaders => write!(f, "valid-headers"),
+            ChainTipStatus::HeadersOnly => write!(f, "headers-only"),
+            ChainTipStatus::Invalid => write!(f, "invalid"),
+        }
     }
 }
 
@@ -215,10 +258,19 @@ pub trait BitcoinClientExt {
         end_block_height: u32,
         concurrency_limit: Option<usize>,
     ) -> crate::errors::Result<Vec<BlockLeaf>>;
+
+    async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>>;
 }
 
 #[async_trait::async_trait]
 impl BitcoinClientExt for AsyncBitcoinClient {
+    async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>> {
+        let chain_tips = self.call("getchaintips", &[]).await.map_err(|e| {
+            RiftSdkError::BitcoinRpcError(format!("Error getting chain tips: {}", e))
+        })?;
+        Ok(chain_tips)
+    }
+
     async fn get_leaves_from_block_range(
         &self,
         start_block_height: u32,
@@ -244,6 +296,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
             let t = Instant::now();
             let block = self.get_block_header_info(&block_hash).await;
+            // TODO: Include checks that the previous block hash in the MMR is the same as the previous block hash in the first block header
             let block = block.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block header info for height {} {}",

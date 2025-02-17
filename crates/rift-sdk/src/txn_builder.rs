@@ -12,7 +12,7 @@ use bitcoin::{
     transaction, Address, Amount, CompressedPublicKey, Network, OutPoint, PrivateKey, Script,
     ScriptBuf, Sequence, TxOut, Txid,
 };
-use bitcoincore_rpc_async::bitcoin::hashes::Hash;
+use rift_core::vaults::hash_deposit_vault;
 use tokio::time::Instant;
 
 use crate::errors::{Result, RiftSdkError};
@@ -45,8 +45,8 @@ impl P2WPKHBitcoinWallet {
         }
     }
 
-    pub fn from_secret_bytes(secret_key: [u8; 32], network: Network) -> Self {
-        let secret_key = SecretKey::from_slice(&secret_key).unwrap();
+    pub fn from_secret_bytes(secret_key: &[u8; 32], network: Network) -> Self {
+        let secret_key = SecretKey::from_slice(secret_key).unwrap();
         let secp = Secp256k1::new();
         let pk = PrivateKey::new(secret_key, network);
         let public_key = PublicKey::from_private_key(&secp, &pk);
@@ -86,15 +86,15 @@ pub fn serialize_no_segwit(tx: &Transaction) -> Vec<u8> {
 }
 
 pub fn build_rift_payment_transaction(
-    order_nonce: [u8; 32],
-    deposit_vaults: &[DepositVault],
-    in_txid: Txid,
+    deposit_vault: &DepositVault,
+    in_txid: &Txid,
     transaction: &Transaction,
     in_txvout: u32,
     wallet: &P2WPKHBitcoinWallet,
     fee_sats: u64,
-) -> Transaction {
-    let total_lp_sum_btc: u64 = deposit_vaults.iter().map(|lp| lp.expectedSats).sum();
+) -> Result<Transaction> {
+    let vault_commitment = hash_deposit_vault(deposit_vault);
+    let total_lp_sum_btc: u64 = deposit_vault.expectedSats;
 
     let vin_sats = transaction.output[in_txvout as usize].value.to_sat();
 
@@ -104,19 +104,17 @@ pub fn build_rift_payment_transaction(
     let mut tx_outs = Vec::new();
 
     // Add liquidity provider outputs
-    for lp in deposit_vaults {
-        let amount = lp.expectedSats;
-        let script = Script::from_bytes(&lp.btcPayoutScriptPubKey.0);
-        tx_outs.push(TxOut {
-            value: Amount::from_sat(amount),
-            script_pubkey: script.into(),
-        });
-    }
+    let amount = deposit_vault.expectedSats;
+    let script = Script::from_bytes(&deposit_vault.btcPayoutScriptPubKey.0);
+    tx_outs.push(TxOut {
+        value: Amount::from_sat(amount),
+        script_pubkey: script.into(),
+    });
 
     // Add OP_RETURN output
     let op_return_script = Builder::new()
         .push_opcode(OP_RETURN)
-        .push_slice(order_nonce)
+        .push_slice(vault_commitment)
         .into_script();
     tx_outs.push(TxOut {
         value: Amount::ZERO,
@@ -124,16 +122,19 @@ pub fn build_rift_payment_transaction(
     });
 
     // Add change output
-    let change_amount = vin_sats - total_lp_sum_btc - fee_sats;
+    let change_amount: i64 = vin_sats as i64 - total_lp_sum_btc as i64 - fee_sats as i64;
+    if change_amount < 0 {
+        return Err(RiftSdkError::InsufficientFunds);
+    }
     if change_amount > 0 {
         tx_outs.push(TxOut {
-            value: Amount::from_sat(change_amount),
+            value: Amount::from_sat(change_amount as u64),
             script_pubkey: wallet.get_p2wpkh_script(),
         });
     }
 
     // Create input
-    let outpoint = OutPoint::new(in_txid, in_txvout);
+    let outpoint = OutPoint::new(*in_txid, in_txvout);
     let tx_in = TxIn {
         previous_output: outpoint,
         script_sig: Script::new().into(),
@@ -149,7 +150,7 @@ pub fn build_rift_payment_transaction(
         output: tx_outs,
     };
 
-    sign_transaction(&mut tx, wallet, vin_sats)
+    Ok(sign_transaction(&mut tx, wallet, vin_sats))
 }
 
 fn sign_transaction(

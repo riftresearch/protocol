@@ -1301,6 +1301,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-data-engine"
+version = "0.1.0"
+dependencies = [
+ "bitcoin-light-client-core",
+ "bitcoincore-rpc-async",
+ "corepc-node",
+ "hex 0.4.3",
+ "rift-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "bitcoin-internals"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

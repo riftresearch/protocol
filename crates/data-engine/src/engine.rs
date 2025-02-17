@@ -167,6 +167,11 @@ impl DataEngine {
         let mmr = self.indexed_mmr.read().await;
         mmr.get_leaf_count().await.map_err(|e| eyre::eyre!(e))
     }
+
+    pub async fn get_mmr_root(&self) -> Result<Digest> {
+        let mmr = self.indexed_mmr.read().await;
+        mmr.get_root().await.map_err(|e| eyre::eyre!(e))
+    }
 }
 
 fn get_qualified_swaps_database_path(database_location: String) -> String {
@@ -204,8 +209,8 @@ pub async fn listen_for_events(
             RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
                 handle_swap_updated_event(&log, db_conn).await?;
             }
-            RiftExchange::BlockTreeUpdated::SIGNATURE_HASH => {
-                handle_block_tree_updated_event(&log, indexed_mmr.clone()).await?;
+            RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
+                handle_bitcoin_light_client_updated_event(&log, indexed_mmr.clone()).await?;
             }
             _ => {
                 warn!("Unknown event topic");
@@ -333,18 +338,18 @@ async fn handle_swap_updated_event(
     Ok(())
 }
 
-async fn handle_block_tree_updated_event(
+async fn handle_bitcoin_light_client_updated_event(
     log: &Log,
     indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
 ) -> Result<()> {
-    info!("Received BlockTreeUpdated event");
+    info!("Received BitcoinLightClientUpdated event");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::BlockTreeUpdated::decode_log(&log.inner, false)
-        .map_err(|e| eyre::eyre!("Failed to decode BlockTreeUpdated event: {:?}", e))?;
+    let decoded = RiftExchange::BitcoinLightClientUpdated::decode_log(&log.inner, false)
+        .map_err(|e| eyre::eyre!("Failed to decode BitcoinLightClientUpdated event: {:?}", e))?;
 
     let block_tree_data = &decoded.data;
-    let block_tree_root = block_tree_data.treeRoot.0;
+    let mmr_root = block_tree_data.mmrRoot.0;
     let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
     let block_leaves = decompress_block_leaves(&compressed_block_leaves);
 
@@ -360,11 +365,11 @@ async fn handle_block_tree_updated_event(
         .get_root()
         .await
         .map_err(|e| eyre::eyre!("get_root failed: {:?}", e))?;
-    if root != block_tree_root {
+    if root != mmr_root {
         return Err(eyre::eyre!(
             "Root mismatch: computed {:?} but expected {:?}",
             root,
-            block_tree_root
+            mmr_root
         ));
     }
 

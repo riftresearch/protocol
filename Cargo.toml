@@ -11,7 +11,7 @@ members = [
   "crates/rift-core", 
   "crates/rift-program",
   "crates/sol-types",
-  "test-data", "bin/test-utils",
+  "test-data", "bin/test-utils", "crates/bitcoin-data-engine",
   # "integration-tests"
   ]
 
@@ -86,6 +86,7 @@ futures-util = "0.3.30"
 backoff = { version = "0.4.0", features=["tokio"] }
 corepc-node = { version = "0.5.0", features = ["28_0"] }
 bitcoincore-rpc-async = "3.0.1"
+
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0-rc.3" }

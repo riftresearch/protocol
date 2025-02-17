@@ -1,17 +1,21 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
+use bitcoincore_rpc_async::bitcoin::Txid;
+use bitcoincore_rpc_async::json::GetRawTransactionResult;
 use eyre::{eyre, Result};
 use log::info;
 use tokio::time::Instant;
 
 use bitcoin::{Address as BitcoinAddress, Amount};
-use bitcoincore_rpc_async::{Auth, RpcApi};
-use corepc_node::{Client as BitcoinClient, Node as BitcoinRegtest};
+use bitcoincore_rpc_async::Auth;
+use bitcoincore_rpc_async::RpcApi;
+use corepc_node::{types::GetTransaction, Client as BitcoinClient, Node as BitcoinRegtest};
 
-use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
+use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
+    pub btc_rpc_client: AsyncBitcoinClient,
     pub bitcoin_regtest: BitcoinRegtest,
     pub miner_client: BitcoinClient,
     pub miner_address: BitcoinAddress,
@@ -27,7 +31,7 @@ impl BitcoinDevnet {
     /// with an optional `funded_address`.
     /// Returns `(BitcoinDevnet, AsyncBitcoinClient)` so we can
     /// also have an async RPC client if needed.
-    pub fn setup(funded_address: Option<String>) -> Result<(Self, AsyncBitcoinClient)> {
+    pub fn setup(funded_address: Option<String>) -> Result<Self> {
         info!("Instantiating Bitcoin Regtest...");
         let t = Instant::now();
         let bitcoin_regtest = BitcoinRegtest::from_downloaded().map_err(|e| eyre!(e))?;
@@ -49,7 +53,7 @@ impl BitcoinDevnet {
         // If user wants to fund a specific BTC address
         let mut funded_sats = 0;
         if let Some(addr_str) = funded_address {
-            funded_sats = 49_950_000_0; // for example, ~49.95 BTC in sats
+            funded_sats = 4_995_000_000; // for example, ~49.95 BTC in sats
             let external_address = BitcoinAddress::from_str(&addr_str)?.assume_checked();
             alice.send_to_address(&external_address, Amount::from_sat(funded_sats))?;
         }
@@ -57,13 +61,15 @@ impl BitcoinDevnet {
         let bitcoin_rpc_url = bitcoin_regtest.rpc_url_with_wallet("alice");
         info!("Creating async Bitcoin RPC client at {}", bitcoin_rpc_url);
 
-        let bitcoin_rpc_client = futures::executor::block_on(AsyncBitcoinClient::new(
-            bitcoin_rpc_url,
-            Auth::CookieFile(cookie.clone()),
-            Duration::from_millis(250),
-        ))?;
+        let bitcoin_rpc_client: AsyncBitcoinClient =
+            futures::executor::block_on(AsyncBitcoinClient::new(
+                bitcoin_rpc_url,
+                Auth::CookieFile(cookie.clone()),
+                Duration::from_millis(250),
+            ))?;
 
         let devnet = BitcoinDevnet {
+            btc_rpc_client: bitcoin_rpc_client,
             bitcoin_regtest,
             miner_client: alice,
             miner_address: alice_address,
@@ -71,16 +77,28 @@ impl BitcoinDevnet {
             funded_sats,
         };
 
-        Ok((devnet, bitcoin_rpc_client))
+        Ok(devnet)
     }
 
     /// Convenience method for handing out some BTC to a given address.
-    pub async fn deal_bitcoin(&self, address: BitcoinAddress, amount: Amount) -> Result<()> {
+    pub async fn deal_bitcoin(
+        &self,
+        address: BitcoinAddress,
+        amount: Amount,
+    ) -> Result<GetRawTransactionResult> {
         let blocks_to_mine = (amount.to_btc() / 50.0).ceil() as usize;
         self.bitcoin_regtest
             .client
             .generate_to_address(blocks_to_mine, &self.miner_address)?;
-        self.miner_client.send_to_address(&address, amount)?;
-        Ok(())
+        let txid = self.miner_client.send_to_address(&address, amount)?;
+        println!("TXID: {}", txid.clone().txid().unwrap());
+        let full_transaction = self
+            .btc_rpc_client
+            .get_raw_transaction_info(
+                &Txid::from_str(&txid.txid().unwrap().to_string()).unwrap(),
+                None,
+            )
+            .await?;
+        Ok(full_transaction)
     }
 }

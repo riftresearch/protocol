@@ -22,6 +22,9 @@ pub enum RiftSdkError {
 
     #[error("Failed to get block: {0}")]
     GetBlockError(String),
+
+    #[error("Insufficient funds")]
+    InsufficientFunds,
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;
