@@ -1,19 +1,21 @@
 //! `lib.rs` — central library code.
 
-mod bitcoin;
-mod evm;
+mod bitcoin_devnet;
+mod evm_devnet;
 
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };
-pub use bitcoin::BitcoinDevnet;
-pub use evm::EthDevnet;
+use bitcoin_data_engine::BitcoinDataEngine;
+pub use bitcoin_devnet::BitcoinDevnet;
+pub use evm_devnet::EthDevnet;
 
-use evm::EvmWebsocketProvider;
+use evm_devnet::EvmWebsocketProvider;
 use eyre::Result;
 use log::info;
 use rift_sdk::bindings::RiftExchange;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::Instant;
 
 use data_engine::engine::DataEngine;
@@ -30,7 +32,7 @@ use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
 const TOKEN_SYMBOL: &str = "cbBTC";
 const TOKEN_NAME: &str = "Coinbase Wrapped BTC";
 const TOKEN_DECIMALS: u8 = 8;
-const DATA_ENGINE_SERVER_PORT: u16 = 50100;
+const contract_data_engine_SERVER_PORT: u16 = 50100;
 
 use alloy::sol;
 
@@ -145,7 +147,7 @@ pub async fn deploy_contracts(
 pub struct RiftDevnet {
     pub bitcoin: BitcoinDevnet,
     pub ethereum: EthDevnet,
-    pub data_engine: Arc<DataEngine>,
+    pub contract_data_engine: Arc<DataEngine>,
     pub _data_engine_server: Option<DataEngineServer>,
 }
 
@@ -173,7 +175,7 @@ impl RiftDevnet {
         // 4) Data Engine
         info!("Seeding data engine with checkpoint leaves...");
         let t = Instant::now();
-        let mut data_engine =
+        let mut contract_data_engine =
             DataEngine::seed(DatabaseLocation::InMemory, checkpoint_leaves).await?;
         info!("Data engine seeded in {:?}", t.elapsed());
 
@@ -181,13 +183,13 @@ impl RiftDevnet {
         let circuit_verification_key_hash = get_rift_program_hash(); // or however you do it
         let (ethereum_devnet, deployment_block_number) = EthDevnet::setup(
             circuit_verification_key_hash,
-            data_engine.get_mmr_root().await.unwrap(),
+            contract_data_engine.get_mmr_root().await.unwrap(),
             *tip_block_leaf,
         )
         .await?;
 
         // Start listening for on-chain events from RiftExchange
-        data_engine
+        contract_data_engine
             .start_event_listener(
                 ethereum_devnet.funded_provider.clone(),
                 ethereum_devnet.rift_exchange_contract.address().to_string(),
@@ -195,12 +197,15 @@ impl RiftDevnet {
             )
             .await?;
 
-        let data_engine = Arc::new(data_engine);
+        let contract_data_engine = Arc::new(contract_data_engine);
 
         // Possibly run a local data-engine HTTP server
-        let data_engine_server = if interactive {
-            let server =
-                DataEngineServer::from_engine(data_engine.clone(), DATA_ENGINE_SERVER_PORT).await?;
+        let contract_data_engine_server = if interactive {
+            let server = DataEngineServer::from_engine(
+                contract_data_engine.clone(),
+                contract_data_engine_SERVER_PORT,
+            )
+            .await?;
             Some(server)
         } else {
             None
@@ -222,7 +227,7 @@ impl RiftDevnet {
             );
             println!(
                 "Data Engine HTTP URL:  http://localhost:{}",
-                DATA_ENGINE_SERVER_PORT
+                contract_data_engine_SERVER_PORT
             );
             println!(
                 "Bitcoin RPC URL:       {}",
@@ -271,8 +276,8 @@ impl RiftDevnet {
         let devnet = Self {
             bitcoin: bitcoin_devnet,
             ethereum: ethereum_devnet,
-            data_engine,
-            _data_engine_server: data_engine_server,
+            contract_data_engine,
+            _data_engine_server: contract_data_engine_server,
         };
 
         Ok((devnet, funding_sats))
@@ -285,7 +290,9 @@ mod tests {
     use crate::RiftDevnet;
     use ::bitcoin::consensus::{Decodable, Encodable};
     use ::bitcoin::hashes::serde::Serialize;
+    use ::bitcoin::hashes::Hash;
     use ::bitcoin::{Amount, Transaction};
+    use accumulators::mmr::map_leaf_index_to_element_index;
     use alloy::eips::eip6110::DEPOSIT_REQUEST_TYPE;
     use alloy::hex;
     use alloy::primitives::utils::{format_ether, format_units};
@@ -294,16 +301,25 @@ mod tests {
     use alloy::providers::{ProviderBuilder, WalletProvider, WsConnect};
     use alloy::signers::local::LocalSigner;
     use alloy::sol_types::{SolEvent, SolValue};
+    use bitcoin::hashes::serde::Deserialize;
     use bitcoin_light_client_core::hasher::Keccak256Hasher;
     use bitcoin_light_client_core::leaves::BlockLeaf as CoreBlockLeaf;
+    use bitcoin_light_client_core::light_client::Header;
     use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
+    use bitcoin_light_client_core::{BlockPosition, ChainTransition};
+    use bitcoincore_rpc_async::bitcoin::hashes::Hash as BitcoinHash;
     use bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize as AsyncSerialize;
+    use bitcoincore_rpc_async::bitcoin::BlockHash;
+    use rift_core::giga::RiftProgramInput;
     use rift_core::vaults::hash_deposit_vault;
     use rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf;
     use rift_sdk::bindings::non_artifacted_types::Types::MMRProof;
     use rift_sdk::mmr::client_mmr_proof_to_circuit_mmr_proof;
     use rift_sdk::txn_builder::{self, P2WPKHBitcoinWallet};
-    use rift_sdk::{create_websocket_provider, DatabaseLocation};
+    use rift_sdk::{
+        create_websocket_provider, get_retarget_height_from_block_height, DatabaseLocation,
+        ProofGeneratorType, RiftProofGenerator,
+    };
     use tokio::signal;
 
     /// Test the end-to-end swap flow, fully simulated:
@@ -355,6 +371,10 @@ mod tests {
         println!("Taker BTC wallet: {:?}", taker_btc_wallet.address);
         println!("Maker EVM wallet: {:?}", maker_evm_address);
         println!("Taker EVM wallet: {:?}", taker_evm_address);
+
+        // create the proof generator
+        let proof_generator_handle =
+            tokio::task::spawn_blocking(|| RiftProofGenerator::new(ProofGeneratorType::Execute));
 
         // fund maker evm wallet, and taker btc wallet
         let (devnet, _funded_sats) = RiftDevnet::setup(
@@ -426,9 +446,9 @@ mod tests {
         // We can skip real MMR proofs; for dev/test, we can pass dummy MMR proof data or a known "safe block."
         // For example, we'll craft a dummy "BlockLeaf" that the contract won't reject:
         let (safe_leaf, safe_siblings, safe_peaks) =
-            devnet.data_engine.get_tip_proof().await.unwrap();
+            devnet.contract_data_engine.get_tip_proof().await.unwrap();
 
-        let mmr_root = devnet.data_engine.get_mmr_root().await.unwrap();
+        let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
         let safe_leaf: sol_types::Types::BlockLeaf = safe_leaf.into();
 
@@ -615,6 +635,13 @@ mod tests {
 
         let payment_tx_serialized = payment_tx_serialized.as_slice();
 
+        let current_block_height = devnet
+            .bitcoin
+            .btc_rpc_client
+            .get_block_count()
+            .await
+            .unwrap();
+
         // broadcast it
         let broadcast_tx = devnet
             .bitcoin
@@ -622,44 +649,31 @@ mod tests {
             .send_raw_transaction(payment_tx_serialized)
             .await
             .unwrap();
+        println!("Bitcoin tx sent");
 
         let payment_tx_id = payment_tx.compute_txid();
+        let bitcoin_txid: [u8; 32] = payment_tx_id.as_raw_hash().to_byte_array();
 
-        // wait for the tx to be confirmed
-        // TODO: build a bitcoin-native variant of the data engine that stores all blocks
-        // an indexed mmr
+        let swap_block_height = current_block_height + 1;
 
+        // now mine enough blocks for confirmations (1 + 1 additional)
+        devnet.bitcoin.mine_blocks(2).await.unwrap();
+
+        // wait for the block height to be included in the data engine
+        let swap_leaf = devnet
+            .bitcoin
+            .bitcoin_data_engine
+            .wait_for_block_height(swap_block_height as u32)
+            .await
+            .unwrap();
+
+        println!("Swap block height (mined): {:?}", swap_block_height);
         println!("Broadcast tx: {:?}", broadcast_tx);
 
         println!("Payment tx: {:?}", payment_tx);
 
         // ---5) Generate a "swap proof" referencing that Bitcoin transaction + block inclusion---
         //    In real usage, you'd do a ZK proof. We'll just do a "fake" MMR proof:
-        let fake_swap_proof = MMRProof {
-            blockLeaf: BlockLeaf {
-                blockHash: [0u8; 32].into(),
-                height: 1234,
-                cumulativeChainwork: U256::from(1000),
-            },
-            siblings: vec![],
-            peaks: vec![],
-            leafCount: 1235,
-            mmrRoot: [0u8; 32].into(),
-        };
-
-        /*
-        // We also pretend there's a "tipBlockLeaf" MMR proof for updating the light client
-        let fake_tip_proof = MMRProof {
-            blockLeaf: BlockLeaf {
-                blockHash: [1u8; 32].into(),
-                height: 1235,
-                cumulativeChainwork: U256::from(2000),
-            },
-            siblings: vec![],
-            peaks: vec![],
-            leafCount: 1236,
-            mmrRoot: [0u8; 32].into(),
-        };
 
         // You'd pass these proofs into e.g. `submitBatchSwapProofWithLightClientUpdate(...)`
         // or just `submitBatchSwapProof(...)` if the chain is already updated. We'll do
@@ -667,34 +681,201 @@ mod tests {
 
         // We'll craft the needed "ProposedSwap" data.
         // See the contract's `SubmitSwapProofParams`.
-        use rift_sdk::bindings::non_artifacted_types::Types::{
+        use rift_sdk::bindings::Types::{
             DepositVault, ProposedSwap, StorageStrategy, SubmitSwapProofParams,
         };
-        let deposit_vault_commitment = [0xaa; 32]; // placeholder
-                                                   // In real usage, you'd get the actual deposit vault commitment from logs or from the same
-                                                   // hashing as the contract does.
+        // Now we build the Light client update and swap proof
 
+        // TODO: For each MMR update on the contract, store the leaf hash of the tip at that point in the data engine in a new index/table
+        // so mmr_hash -> tip_leaf_hash
+
+        // TODO: Build the light client update first
+        // 1. Grab the current MMR root from the data engine
+        // 2. Find the tip leaf associated with this MMR
+        // 3. Validate inclusion in the Bitcoin data engine
+        // 4. If not included, jump to step 1. instead grabbing the second to last MMR root, doing this recursively until we find a leaf that is included in the Bitcoin data engine
+        // 5. Once we find a leaf that is included, build the light client proof with that leaf as the parent
+
+        let proof_generator = proof_generator_handle.await.unwrap();
+
+        /*
+        #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+        pub struct BlockPosition {
+            pub header: Header,
+            pub leaf: BlockLeaf,
+            pub inclusion_proof: MMRProof,
+        }
+                   // Previous MMR state
+            pub previous_mmr_root: Digest,
+            pub previous_mmr_bagged_peak: Digest, // bagged peak of the old MMR, when hashed with the leaf count gives the previous MMR root
+
+            // Block positions
+            pub parent: BlockPosition,          // parent of the new chain
+            pub parent_retarget: BlockPosition, // retarget block of the parent
+            pub previous_tip: BlockPosition,    // previous tip of the old MMR
+
+            // New chain data
+            pub parent_leaf_peaks: Vec<Digest>, // peaks of the MMR with parent as the tip
+            pub disposed_leaf_hashes: Vec<Digest>, // leaves that are being removed from the old MMR => all of the leaves after parent in the old MMR
+            pub new_headers: Vec<Header>,
+
+                 */
+
+        let (parent_leaf, parent_leaf_index) = {
+            let mmr = devnet.contract_data_engine.indexed_mmr.read().await;
+            let leaf_index = mmr.get_leaf_count().await.unwrap() - 1;
+            let leaf = mmr
+                .get_leaf_by_leaf_index(leaf_index)
+                .await
+                .unwrap()
+                .unwrap();
+            (leaf, leaf_index)
+        };
+        let parent_header: Header = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
+            &devnet
+                .bitcoin
+                .btc_rpc_client
+                .get_block_header(
+                    &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(&parent_leaf.block_hash)
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .try_into()
+        .unwrap();
+        let parent_inclusion_proof = devnet
+            .contract_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_circuit_proof(parent_leaf_index, None)
+            .await
+            .unwrap();
+
+        let parent_leaf_peaks = devnet
+            .contract_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_peaks(Some(map_leaf_index_to_element_index(parent_leaf_index) + 1))
+            .await
+            .unwrap();
+
+        let parent_retarget_leaf_index = get_retarget_height_from_block_height(parent_leaf.height);
+        let parent_retarget_leaf = devnet
+            .bitcoin
+            .bitcoin_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_leaf_by_leaf_index(parent_retarget_leaf_index as usize)
+            .await
+            .unwrap()
+            .unwrap();
+        let parent_retarget_header = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
+            &devnet
+                .bitcoin
+                .btc_rpc_client
+                .get_block_header(
+                    &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
+                        &parent_retarget_leaf.block_hash,
+                    )
+                    .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .try_into()
+        .unwrap();
+        let parent_retarget_inclusion_proof = devnet
+            .contract_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_circuit_proof(parent_retarget_leaf_index as usize, None)
+            .await
+            .unwrap();
+
+        let first_download_height = parent_leaf.height + 1;
+        let last_download_height = devnet
+            .bitcoin
+            .bitcoin_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_leaf_count()
+            .await
+            .unwrap()
+            - 1;
+
+        println!(
+            "Downloading headers from {:?} to {:?} [inclusive]",
+            first_download_height, last_download_height
+        );
+
+        let new_headers = devnet
+            .bitcoin
+            .btc_rpc_client
+            .get_headers_from_block_range(first_download_height, last_download_height as u32, None)
+            .await
+            .unwrap()
+            .iter()
+            .map(|h| {
+                let header = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(h);
+                header.try_into().unwrap()
+            })
+            .collect::<Vec<Header>>();
+
+        let chain_transition = ChainTransition {
+            previous_mmr_root: devnet.contract_data_engine.get_mmr_root().await.unwrap(),
+            previous_mmr_bagged_peak: devnet
+                .contract_data_engine
+                .get_mmr_bagged_peak()
+                .await
+                .unwrap(),
+
+            // the current tip
+            parent: BlockPosition {
+                header: parent_header,
+                leaf: parent_leaf,
+                inclusion_proof: parent_inclusion_proof.clone(),
+            },
+            parent_retarget: BlockPosition {
+                header: parent_retarget_header,
+                leaf: parent_retarget_leaf,
+                inclusion_proof: parent_retarget_inclusion_proof,
+            },
+            previous_tip: BlockPosition {
+                header: parent_header,
+                leaf: parent_leaf,
+                inclusion_proof: parent_inclusion_proof,
+            },
+            parent_leaf_peaks,
+            disposed_leaf_hashes: vec![],
+            new_headers,
+        };
+
+        let rift_program_input = RiftProgramInput::builder()
+            .proof_type(rift_core::giga::RustProofType::LightClientOnly)
+            .light_client_input(chain_transition)
+            .build()
+            .unwrap();
+
+        let proof = proof_generator.prove(&rift_program_input).await.unwrap();
+
+        println!("Proof: {:?}", proof);
+
+        /*
         // We'll do a single-swap array:
         let swap_params = vec![SubmitSwapProofParams {
-            swapBitcoinTxid: [0x77; 32].into(),
-            vault: DepositVault {
-                vaultIndex: 0,
-                depositTimestamp: 0,
-                depositAmount: deposit_amount,
-                depositFee: deposit_fee,
-                expectedSats: expected_sats as u64,
-                btcPayoutScriptPubKey: [0; 22],
-                specifiedPayoutAddress: maker_address,
-                ownerAddress: maker_address,
-                salt: [0x44; 32].into(),
-                confirmationBlocks: 6,
-                attestedBitcoinBlockHeight: 1,
-            },
-            storageStrategy: StorageStrategy::Append,
+            swapBitcoinTxid: bitcoin_txid.into(),
+            vault: new_vault.clone(),
+            storageStrategy: 0.into(), // Append
             localOverwriteIndex: 0,
-            swapBitcoinBlockLeaf: fake_swap_proof.blockLeaf,
-            swapBitcoinBlockSiblings: fake_swap_proof.siblings.clone(),
-            swapBitcoinBlockPeaks: fake_swap_proof.peaks.clone(),
+            swapBitcoinBlockLeaf: swapBitcoinProof.blockLeaf,
+            swapBitcoinBlockSiblings: swapBitcoinProof.siblings,
+            swapBitcoinBlockPeaks: swapBitcoinProof.peaks,
         }];
 
         // We also pass an empty "overwriteSwaps"

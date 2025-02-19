@@ -17,7 +17,7 @@ crypto-bigint = { workspace = true }
 sp1-sdk = { workspace = true }
 tokio = { workspace = true }
 backoff.workspace = true
-bitcoincore-rpc-async = { workspace = true }
+bitcoincore-rpc-async2 = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
 reqwest = {workspace = true } 

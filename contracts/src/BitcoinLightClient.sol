@@ -73,14 +73,14 @@ abstract contract BitcoinLightClient {
         }
 
         // TODO: Do we want to allow updates to the chain if the chainwork is equal? giving priority to an older chain seems arbitrary
-        if (priorCheckpoint.tipBlockLeaf.cumulativeChainwork > tipBlockLeaf.cumulativeChainwork) {
+        if (checkpoints[mmrRoot].tipBlockLeaf.cumulativeChainwork > tipBlockLeaf.cumulativeChainwork) {
             revert Errors.ChainworkTooLow();
         }
 
         checkpoints[newMmrRoot] = Types.BitcoinCheckpoint({established: true, tipBlockLeaf: tipBlockLeaf});
 
         mmrRoot = newMmrRoot;
-        emit Events.BitcoinLightClientUpdated(newMmrRoot, compressedBlockLeaves);
+        emit Events.BitcoinLightClientUpdated(priorMmrRoot, newMmrRoot, compressedBlockLeaves);
     }
 
     function proveBlockInclusion(

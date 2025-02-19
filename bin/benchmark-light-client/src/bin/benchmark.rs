@@ -9,59 +9,19 @@ use std::time::Instant;
 
 use clap::Parser;
 use prettytable::{row, Table};
-use rift_sdk::DatabaseLocation;
-use rift_sdk::{mmr::digest_to_hex, mmr::IndexedMMR, RIFT_PROGRAM_ELF};
+use rift_sdk::mmr::IndexedMMR;
+use rift_sdk::{format_duration, DatabaseLocation, Proof, ProofGeneratorType, RiftProofGenerator};
 
-use tokio::runtime::Runtime;
-
-use sp1_sdk::{include_elf, EnvProver, ProverClient, SP1ProvingKey, SP1Stdin};
 use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS};
 
-use bitcoin_light_client_core::hasher::{Digest, Hasher, Keccak256Hasher};
+use bitcoin_light_client_core::hasher::{Digest, Keccak256Hasher};
 use bitcoin_light_client_core::leaves::{create_new_leaves, get_genesis_leaf, BlockLeaf};
 use bitcoin_light_client_core::light_client::Header;
 
-use bitcoin_light_client_core::mmr::{CompactMerkleMountainRange, MMRProof};
+use bitcoin_light_client_core::mmr::MMRProof;
 use bitcoin_light_client_core::{validate_chainwork, BlockPosition, ChainTransition};
 
-use accumulators::mmr::{
-    element_index_to_leaf_index, elements_count_to_leaf_count, map_leaf_index_to_element_index,
-    Proof as ClientMMRProof,
-};
-use accumulators::{
-    hasher::keccak::KeccakHasher as ClientKeccakHasher, mmr::MMR as ClientMMR,
-    store::memory::InMemoryStore,
-};
-
-use std::sync::Arc;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BenchmarkType {
-    Execute,
-    ProveCPU,
-    ProveCUDA,
-    ProveNetwork,
-}
-
-#[derive(Debug)]
-struct BenchmarkResult {
-    cycles: Option<u64>,
-    duration: std::time::Duration,
-}
-
-/// Format a `Duration` for pretty printing in results.
-fn format_duration(duration: std::time::Duration) -> String {
-    if duration.as_secs() == 0 {
-        return format!("{} ms", duration.as_millis());
-    }
-    if duration.as_secs() < 60 {
-        return format!("{:.2} s", duration.as_secs_f64());
-    }
-    if duration.as_secs() < 3600 {
-        return format!("{:.2} min", duration.as_secs_f64() / 60.0);
-    }
-    format!("{:.2} h", duration.as_secs_f64() / 3600.0)
-}
+use accumulators::mmr::{element_index_to_leaf_index, map_leaf_index_to_element_index};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -74,11 +34,12 @@ struct Args {
 /// Holds a “circuit MMR” (used for building the final root) and a “client MMR” (for real proofs),
 /// plus metadata about the chain at block #478558.
 struct BchOverwriteMMRState {
-    circuit_mmr: CompactMerkleMountainRange<Keccak256Hasher>,
     indexed_mmr: IndexedMMR<Keccak256Hasher>, // used to fetch real proofs
+    base_leaf_index: usize,
 
     /// Mapping height -> element_index in the client MMR
     height_to_index: HashMap<u32, usize>,
+    base_height_to_index: HashMap<u32, usize>,
 
     /// parent data
     parent_header: Header,
@@ -91,8 +52,8 @@ struct BchOverwriteMMRState {
     parent_retarget_element_index: usize,
 
     /// MMR root/bagged peak right after 478558
-    pre_bch_mmr_root: Digest,
-    pre_bch_mmr_bagged_peak: Digest,
+    _pre_bch_mmr_root: Digest,
+    _pre_bch_mmr_bagged_peak: Digest,
     pre_bch_peaks: Vec<Digest>,
 }
 
@@ -104,11 +65,8 @@ impl BchOverwriteMMRState {
 
         // 1) Genesis
         let genesis_leaf = get_genesis_leaf();
-        let genesis_leaf_hash = genesis_leaf.hash::<Keccak256Hasher>();
 
         // 2) Create both MMRs:
-        let mut circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::new();
-        circuit_mmr.append(&genesis_leaf_hash);
 
         let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory)
             .await
@@ -127,10 +85,7 @@ impl BchOverwriteMMRState {
         let (chain_works, _) = validate_chainwork(&genesis_leaf, &genesis_leaf, &headers);
         let leaves = create_new_leaves(&genesis_leaf, &headers, &chain_works);
 
-        for (i, leaf) in leaves.iter().enumerate() {
-            let leaf_hash = leaf.hash::<Keccak256Hasher>();
-            circuit_mmr.append(&leaf_hash);
-
+        for leaf in leaves.iter() {
             let result = indexed_mmr
                 .append(leaf)
                 .await
@@ -138,9 +93,9 @@ impl BchOverwriteMMRState {
             height_to_index.insert(leaf.height, result.element_index);
         }
 
-        let pre_bch_mmr_root = circuit_mmr.get_root();
-        let pre_bch_mmr_bagged_peak = circuit_mmr.bag_peaks().unwrap();
-        let pre_bch_peaks = circuit_mmr.peaks.clone();
+        let pre_bch_mmr_root = indexed_mmr.get_root().await.unwrap();
+        let pre_bch_mmr_bagged_peak = indexed_mmr.get_bagged_peak().await.unwrap();
+        let pre_bch_peaks = indexed_mmr.get_peaks(None).await.unwrap();
 
         // The parent is block #478558
         let parent_leaf = *leaves.last().unwrap();
@@ -168,8 +123,11 @@ impl BchOverwriteMMRState {
             "Initial MMR state built in {}",
             format_duration(start.elapsed())
         );
+
+        let base_height_to_index = height_to_index.clone();
+        let base_leaf_index = indexed_mmr.get_leaf_count().await.unwrap() - 1;
+
         Self {
-            circuit_mmr,
             indexed_mmr,
             height_to_index,
             parent_header,
@@ -178,10 +136,23 @@ impl BchOverwriteMMRState {
             parent_retarget_header,
             parent_retarget_leaf,
             parent_retarget_element_index,
-            pre_bch_mmr_root,
-            pre_bch_mmr_bagged_peak,
+            _pre_bch_mmr_root: pre_bch_mmr_root,
+            _pre_bch_mmr_bagged_peak: pre_bch_mmr_bagged_peak,
             pre_bch_peaks,
+            base_height_to_index,
+            base_leaf_index,
         }
+    }
+
+    async fn reset_to_base(&mut self) {
+        println!("Resetting to base chain state...");
+
+        let start = Instant::now();
+
+        self.indexed_mmr.rewind(self.base_leaf_index).await.unwrap();
+        self.height_to_index = self.base_height_to_index.clone();
+
+        println!("Reset to base in {}", format_duration(start.elapsed()));
     }
 }
 
@@ -205,15 +176,13 @@ async fn extend_with_bch_blocks(
 
     // append them
     for leaf in bch_leaves.iter() {
-        let leaf_hash = leaf.hash::<Keccak256Hasher>();
-        state.circuit_mmr.append(&leaf_hash);
         let res = state.indexed_mmr.append(leaf).await.unwrap();
         state.height_to_index.insert(leaf.height, res.element_index);
     }
 
     // the new tip
     let previous_tip_leaf = *bch_leaves.last().unwrap();
-    let previous_tip_header = bch_headers.last().unwrap().clone();
+    let previous_tip_header = bch_headers.last().unwrap();
     let previous_tip_element_index = *state
         .height_to_index
         .get(&previous_tip_leaf.height)
@@ -231,7 +200,7 @@ async fn extend_with_bch_blocks(
     println!("Chain extended in {}", format_duration(start.elapsed()));
     (
         previous_tip_leaf,
-        previous_tip_header,
+        *previous_tip_header,
         previous_tip_proof,
         bch_leaves,
     )
@@ -239,7 +208,7 @@ async fn extend_with_bch_blocks(
 
 /// Build a single chain transition that disposes of `n` BCH blocks and appends `n+1` BTC blocks.
 async fn create_bch_overwrite_chain_transition(
-    mut state: BchOverwriteMMRState,
+    state: &mut BchOverwriteMMRState,
     n: usize,
 ) -> ChainTransition {
     println!("Creating chain transition...");
@@ -247,7 +216,7 @@ async fn create_bch_overwrite_chain_transition(
 
     // 1) Append n BCH blocks
     let (previous_tip_leaf, previous_tip_header, previous_tip_proof, bch_leaves) =
-        extend_with_bch_blocks(&mut state, n).await;
+        extend_with_bch_blocks(state, n).await;
 
     // 2) Collect their leaf hashes (to "dispose" them)
     let disposed_leaf_hashes = bch_leaves
@@ -274,8 +243,8 @@ async fn create_bch_overwrite_chain_transition(
         .unwrap();
 
     // 4) The previous MMR root is the chain after we appended n BCH blocks
-    let previous_mmr_root = state.circuit_mmr.get_root();
-    let previous_mmr_bagged_peak = state.circuit_mmr.bag_peaks().unwrap();
+    let previous_mmr_root = state.indexed_mmr.get_root().await.unwrap();
+    let previous_mmr_bagged_peak = state.indexed_mmr.get_bagged_peak().await.unwrap();
 
     // 5) Next gather n+1 BTC headers
     let start_idx = 478559;
@@ -293,12 +262,12 @@ async fn create_bch_overwrite_chain_transition(
         previous_mmr_root,
         previous_mmr_bagged_peak,
         parent: BlockPosition {
-            header: state.parent_header.clone(),
+            header: state.parent_header,
             leaf: state.parent_leaf,
             inclusion_proof: parent_inclusion_proof,
         },
         parent_retarget: BlockPosition {
-            header: state.parent_retarget_header.clone(),
+            header: state.parent_retarget_header,
             leaf: state.parent_retarget_leaf,
             inclusion_proof: parent_retarget_inclusion_proof,
         },
@@ -307,7 +276,7 @@ async fn create_bch_overwrite_chain_transition(
             leaf: previous_tip_leaf,
             inclusion_proof: previous_tip_proof,
         },
-        parent_leaf_peaks: state.pre_bch_peaks,
+        parent_leaf_peaks: state.pre_bch_peaks.clone(),
         disposed_leaf_hashes,
         new_headers: btc_headers,
     };
@@ -320,14 +289,12 @@ async fn create_bch_overwrite_chain_transition(
 }
 
 /// Actually prove or execute the chain transition in the RIFT VM
-fn prove_chain_transition(
+async fn prove_chain_transition(
     chain_transition: ChainTransition,
-    benchmark_type: BenchmarkType,
-    prover_client: &EnvProver,
-    proving_key: &SP1ProvingKey,
-) -> BenchmarkResult {
+    benchmark_type: ProofGeneratorType,
+    proof_generator: &RiftProofGenerator,
+) -> Proof {
     println!("Starting {:?} for chain transition...", benchmark_type);
-    let start = Instant::now();
 
     let program_input = rift_core::giga::RiftProgramInput::builder()
         .proof_type(rift_core::giga::RustProofType::LightClientOnly)
@@ -335,63 +302,21 @@ fn prove_chain_transition(
         .build()
         .unwrap();
 
-    let mut stdin = SP1Stdin::new();
-    stdin.write(&program_input);
-
-    match benchmark_type {
-        BenchmarkType::Execute => {
-            let (_output, report) = prover_client
-                .execute(RIFT_PROGRAM_ELF, &stdin)
-                .run()
-                .unwrap();
-            let duration = start.elapsed();
-            let result = BenchmarkResult {
-                cycles: Some(report.total_instruction_count()),
-                duration,
-            };
-            println!(
-                "Completed {:?} in {}",
-                benchmark_type,
-                format_duration(result.duration)
-            );
-            result
-        }
-        BenchmarkType::ProveCPU | BenchmarkType::ProveCUDA | BenchmarkType::ProveNetwork => {
-            prover_client
-                .prove(&proving_key, &stdin)
-                .groth16()
-                .run()
-                .unwrap();
-            let duration = start.elapsed();
-            let result = BenchmarkResult {
-                cycles: None,
-                duration,
-            };
-            println!(
-                "Completed {:?} in {}",
-                benchmark_type,
-                format_duration(result.duration)
-            );
-            result
-        }
-    }
+    proof_generator.prove(&program_input).await.unwrap()
 }
 
 /// Runs the entire “dispose n BCH blocks and append n+1 BTC blocks” scenario with real MMR proofs.
 async fn prove_bch_overwrite(
     n: usize,
-    benchmark_type: BenchmarkType,
-    prover_client: &EnvProver,
-    proving_key: &SP1ProvingKey,
-) -> BenchmarkResult {
-    // 1) Build the chain (and client MMR) up to block 478558
-    let state = BchOverwriteMMRState::new().await;
-
-    // 2) Create a single chain transition that disposes of `n` BCH blocks and appends `n+1` BTC blocks
-    let chain_transition = create_bch_overwrite_chain_transition(state, n).await;
+    base_state: &mut BchOverwriteMMRState,
+    benchmark_type: ProofGeneratorType,
+    proof_generator: &RiftProofGenerator,
+) -> Proof {
+    // 1) Create a single chain transition that disposes of `n` BCH blocks and appends `n+1` BTC blocks
+    let chain_transition = create_bch_overwrite_chain_transition(base_state, n).await;
 
     // 3) Execute or prove
-    prove_chain_transition(chain_transition, benchmark_type, prover_client, proving_key)
+    prove_chain_transition(chain_transition, benchmark_type, proof_generator).await
 }
 
 // Optionally, you could also add a simpler “extend from genesis” scenario or others.
@@ -402,42 +327,38 @@ async fn main() {
 
     let args = Args::parse();
     let benchmark_type = match args.r#type.to_lowercase().as_str() {
-        "execute" => BenchmarkType::Execute,
-        "prove-cpu" => BenchmarkType::ProveCPU,
-        "prove-cuda" => BenchmarkType::ProveCUDA,
-        "prove-network" => BenchmarkType::ProveNetwork,
+        "execute" => ProofGeneratorType::Execute,
+        "prove-cpu" => ProofGeneratorType::ProveCPU,
+        "prove-cuda" => ProofGeneratorType::ProveCUDA,
+        "prove-network" => ProofGeneratorType::ProveNetwork,
         _ => panic!("Invalid benchmark type. Must be 'execute', 'prove-cpu', 'prove-cuda', or 'prove-network'"),
     };
 
     let mut table = Table::new();
-    if matches!(benchmark_type, BenchmarkType::Execute) {
+    if matches!(benchmark_type, ProofGeneratorType::Execute) {
         table.add_row(row!["n (BCH blocks)", "Cycle Count", "Time"]);
     } else {
         table.add_row(row!["n (BCH blocks)", "Time to Prove"]);
     }
 
-    match benchmark_type {
-        BenchmarkType::ProveCPU => {
-            std::env::set_var("SP1_PROVER", "cpu");
-        }
-        BenchmarkType::ProveCUDA => {
-            std::env::set_var("SP1_PROVER", "cuda");
-        }
-        BenchmarkType::ProveNetwork => {
-            std::env::set_var("SP1_PROVER", "network");
-        }
-        BenchmarkType::Execute => {
-            std::env::set_var("SP1_PROVER", "mock");
-        }
-    }
+    let proof_generator = RiftProofGenerator::new(benchmark_type);
 
-    let prover_client = ProverClient::from_env();
-    let (pk, _vk) = prover_client.setup(RIFT_PROGRAM_ELF);
+    println!("Initializing base state (syncing 478558 BCH blocks)...");
+    let start = Instant::now();
+    let mut base_state = BchOverwriteMMRState::new().await;
+    println!(
+        "Base state initialized in {}",
+        format_duration(start.elapsed())
+    );
 
     for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
-        let result = prove_bch_overwrite(n, benchmark_type, &prover_client, &pk).await;
+        let result =
+            prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
         println!("Result: {:?}", result);
+
+        // reset the state so we can run the next benchmark
+        base_state.reset_to_base().await;
 
         if let Some(cycles) = result.cycles {
             table.add_row(row![n, cycles, format_duration(result.duration)]);

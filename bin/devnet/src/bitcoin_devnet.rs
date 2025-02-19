@@ -1,9 +1,12 @@
+use std::sync::Arc;
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
+use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoincore_rpc_async::bitcoin::Txid;
 use bitcoincore_rpc_async::json::GetRawTransactionResult;
 use eyre::{eyre, Result};
 use log::info;
+use rift_sdk::DatabaseLocation;
 use tokio::time::Instant;
 
 use bitcoin::{Address as BitcoinAddress, Amount};
@@ -15,7 +18,8 @@ use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
-    pub btc_rpc_client: AsyncBitcoinClient,
+    pub bitcoin_data_engine: Arc<BitcoinDataEngine>,
+    pub btc_rpc_client: Arc<AsyncBitcoinClient>,
     pub bitcoin_regtest: BitcoinRegtest,
     pub miner_client: BitcoinClient,
     pub miner_address: BitcoinAddress,
@@ -61,14 +65,22 @@ impl BitcoinDevnet {
         let bitcoin_rpc_url = bitcoin_regtest.rpc_url_with_wallet("alice");
         info!("Creating async Bitcoin RPC client at {}", bitcoin_rpc_url);
 
-        let bitcoin_rpc_client: AsyncBitcoinClient =
-            futures::executor::block_on(AsyncBitcoinClient::new(
+        let bitcoin_rpc_client: Arc<AsyncBitcoinClient> =
+            Arc::new(futures::executor::block_on(AsyncBitcoinClient::new(
                 bitcoin_rpc_url,
                 Auth::CookieFile(cookie.clone()),
                 Duration::from_millis(250),
-            ))?;
+            ))?);
+
+        let bitcoin_data_engine = futures::executor::block_on(BitcoinDataEngine::new(
+            DatabaseLocation::InMemory,
+            bitcoin_rpc_client.clone(),
+            100,
+            Duration::from_millis(250),
+        ));
 
         let devnet = BitcoinDevnet {
+            bitcoin_data_engine: Arc::new(bitcoin_data_engine),
             btc_rpc_client: bitcoin_rpc_client,
             bitcoin_regtest,
             miner_client: alice,
@@ -78,6 +90,13 @@ impl BitcoinDevnet {
         };
 
         Ok(devnet)
+    }
+
+    pub async fn mine_blocks(&self, blocks: usize) -> Result<()> {
+        self.bitcoin_regtest
+            .client
+            .generate_to_address(blocks, &self.miner_address)?;
+        Ok(())
     }
 
     /// Convenience method for handing out some BTC to a given address.

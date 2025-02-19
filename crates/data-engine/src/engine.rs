@@ -150,7 +150,7 @@ impl DataEngine {
         let mmr = self.indexed_mmr.read().await;
         let leaves_count = mmr.client_mmr().leaves_count.get().await?;
         let leaf_index = leaves_count - 1;
-        let leaf = mmr.find_leaf_by_leaf_index(leaf_index).await?;
+        let leaf = mmr.get_leaf_by_leaf_index(leaf_index).await?;
         match leaf {
             Some(leaf) => {
                 let proof = mmr.get_circuit_proof(leaf_index, None).await?;
@@ -171,6 +171,11 @@ impl DataEngine {
     pub async fn get_mmr_root(&self) -> Result<Digest> {
         let mmr = self.indexed_mmr.read().await;
         mmr.get_root().await.map_err(|e| eyre::eyre!(e))
+    }
+
+    pub async fn get_mmr_bagged_peak(&self) -> Result<Digest> {
+        let mmr = self.indexed_mmr.read().await;
+        mmr.get_bagged_peak().await.map_err(|e| eyre::eyre!(e))
     }
 }
 
@@ -349,9 +354,11 @@ async fn handle_bitcoin_light_client_updated_event(
         .map_err(|e| eyre::eyre!("Failed to decode BitcoinLightClientUpdated event: {:?}", e))?;
 
     let block_tree_data = &decoded.data;
-    let mmr_root = block_tree_data.mmrRoot.0;
+    let prior_mmr_root = block_tree_data.priorMmrRoot.0;
+    let new_mmr_root = block_tree_data.newMmrRoot.0;
     let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
     let block_leaves = decompress_block_leaves(&compressed_block_leaves);
+    // TODO: Reorg the MMR based on the prior root
 
     {
         let mut mmr = indexed_mmr.write().await;
@@ -365,11 +372,11 @@ async fn handle_bitcoin_light_client_updated_event(
         .get_root()
         .await
         .map_err(|e| eyre::eyre!("get_root failed: {:?}", e))?;
-    if root != mmr_root {
+    if root != new_mmr_root {
         return Err(eyre::eyre!(
             "Root mismatch: computed {:?} but expected {:?}",
             root,
-            mmr_root
+            new_mmr_root
         ));
     }
 

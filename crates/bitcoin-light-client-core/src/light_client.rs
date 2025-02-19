@@ -44,6 +44,19 @@ impl<'de> Deserialize<'de> for Header {
     }
 }
 
+impl TryFrom<Vec<u8>> for Header {
+    type Error = &'static str;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        if value.len() != 80 {
+            return Err("Header must be exactly 80 bytes");
+        }
+        let mut array = [0u8; 80];
+        array.copy_from_slice(&value);
+        Ok(Header(array))
+    }
+}
+
 // parent_ variables are assumed to be valid in the context of the header chain
 // panics on any failures
 // TODO: No panics, return proper errors

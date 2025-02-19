@@ -29,6 +29,7 @@ exclude = [".github/"]
 sol-types = { path = "crates/sol-types" }
 bitcoin-core-rs = { path = "crates/bitcoin-core-rs"}
 bitcoin-light-client-core = { path = "crates/bitcoin-light-client-core" }
+bitcoin-data-engine = { path = "crates/bitcoin-data-engine" }
 rift-core = { path = "crates/rift-core" }
 rift-sdk = { path = "crates/rift-sdk" }
 rift-program = {path = "crates/rift-program"}
@@ -85,7 +86,8 @@ futures = "0.3.30"
 futures-util = "0.3.30"
 backoff = { version = "0.4.0", features=["tokio"] }
 corepc-node = { version = "0.5.0", features = ["28_0"] }
-bitcoincore-rpc-async = "3.0.1"
+# bitcoincore-rpc-async2 = "3.0.1"
+bitcoincore-rpc-async2 = { git = "https://github.com/turbofish-org/rust-bitcoincore-rpc-async.git", rev = "5ff63dada9b538f54645ccd3b64980661986751f" }
 
 
 [patch.crates-io]

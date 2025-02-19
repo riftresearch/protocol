@@ -8,29 +8,21 @@ use alloy::providers::{ProviderBuilder, WsConnect};
 use alloy::pubsub::{ConnectionHandle, PubSubConnect};
 use alloy::rpc::client::ClientBuilder;
 use alloy::transports::{impl_future, TransportResult};
-use alloy::{
-    primitives::Address,
-    providers::Provider,
-    pubsub::PubSubFrontend,
-    rpc::types::{BlockNumberOrTag, Filter},
-    sol_types::SolEvent,
-};
+use alloy::{providers::Provider, pubsub::PubSubFrontend};
 use backoff::exponential::ExponentialBackoff;
 use bitcoin::hashes::hex::FromHex;
-use bitcoin_light_client_core::{
-    hasher::{Digest, Keccak256Hasher},
-    leaves::{decompress_block_leaves, BlockLeaf},
-};
-use sp1_sdk::client::ProverClientBuilder;
-use sp1_sdk::HashableKey;
-use sp1_sdk::Prover;
-use sp1_sdk::{include_elf, ProverClient};
+use rift_core::giga::RiftProgramInput;
+use sp1_sdk::{include_elf, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
+use sp1_sdk::{EnvProver, HashableKey};
+use sp1_sdk::{Prover, SP1ProvingKey};
 use std::fmt::Write;
 use std::str::FromStr;
+use std::time::Instant;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
 
+/// This is expensive to compute, so if you have a proof generator, use that instead.
 pub fn get_rift_program_hash() -> [u8; 32] {
     let client = ProverClient::builder().mock().build();
     let (_, vk) = client.setup(RIFT_PROGRAM_ELF);
@@ -50,7 +42,7 @@ pub fn to_hex_string(bytes: &[u8]) -> String {
     s
 }
 
-pub fn get_retarget_height_from_block_height(block_height: u64) -> u64 {
+pub fn get_retarget_height_from_block_height(block_height: u32) -> u32 {
     block_height - (block_height % 2016)
 }
 
@@ -107,4 +99,137 @@ pub async fn create_websocket_provider(
         .on_client(client);
 
     Ok(provider)
+}
+
+pub struct RiftProofGenerator {
+    pub pk: SP1ProvingKey,
+    pub vk: SP1VerifyingKey,
+    pub circuit_verification_key_hash: [u8; 32],
+    pub prover_type: ProofGeneratorType,
+    pub prover_client: EnvProver,
+}
+
+impl RiftProofGenerator {
+    /// Constructs a new `ProofGenerator` with the given prover type,
+    /// sets up the SP1 environment, loads the proving/verifying keys,
+    /// and stores the verification key hash.
+    pub fn new(prover_type: ProofGeneratorType) -> Self {
+        match prover_type {
+            ProofGeneratorType::ProveCPU => {
+                std::env::set_var("SP1_PROVER", "cpu");
+            }
+            ProofGeneratorType::ProveCUDA => {
+                std::env::set_var("SP1_PROVER", "cuda");
+            }
+            ProofGeneratorType::ProveNetwork => {
+                std::env::set_var("SP1_PROVER", "network");
+            }
+            ProofGeneratorType::Execute => {
+                std::env::set_var("SP1_PROVER", "mock");
+            }
+        }
+
+        let prover_client = ProverClient::from_env();
+        let (pk, vk) = prover_client.setup(RIFT_PROGRAM_ELF);
+        let circuit_verification_key_hash = vk.bytes32_raw();
+
+        RiftProofGenerator {
+            pk,
+            vk,
+            circuit_verification_key_hash,
+            prover_type,
+            prover_client,
+        }
+    }
+
+    /// Executes or proves the program with the given configuration for the provided `RiftProgramInput`.
+    /// This method now runs on a dedicated thread (using `spawn_blocking`) so it does not
+    /// block the async executor's main threads.
+    pub async fn prove(
+        &self,
+        input: &RiftProgramInput,
+    ) -> Result<Proof, Box<dyn std::error::Error + Send + Sync>> {
+        let pk = self.pk.clone();
+        let vk = self.vk.clone();
+        let circuit_verification_key_hash = self.circuit_verification_key_hash;
+        let prover_type = self.prover_type;
+        let prover_client = ProverClient::from_env();
+        let input = input.clone();
+
+        // Spawn a blocking task on the Tokio thread pool dedicated to blocking calls.
+        let proof_result = tokio::task::spawn_blocking(move || {
+            let start = Instant::now();
+
+            // Prepare the SP1Stdin for the proving/execute call
+            let mut stdin = SP1Stdin::new();
+            stdin.write(&input);
+
+            // Perform the CPU-intensive operation synchronously
+            let proof_outcome = match prover_type {
+                ProofGeneratorType::Execute => {
+                    let (_output, report) =
+                        prover_client.execute(RIFT_PROGRAM_ELF, &stdin).run()?;
+                    Proof {
+                        proof_type: ProofGeneratorType::Execute,
+                        proof: None,
+                        cycles: Some(report.total_instruction_count()),
+                        duration: start.elapsed(),
+                    }
+                }
+                ProofGeneratorType::ProveCPU
+                | ProofGeneratorType::ProveCUDA
+                | ProofGeneratorType::ProveNetwork => {
+                    let sp1_proof = prover_client.prove(&pk, &stdin).groth16().run()?;
+                    Proof {
+                        proof_type: prover_type,
+                        proof: Some(sp1_proof),
+                        cycles: None,
+                        duration: start.elapsed(),
+                    }
+                }
+            };
+
+            println!(
+                "Completed {:?} in {}",
+                proof_outcome.proof_type,
+                format_duration(proof_outcome.duration)
+            );
+
+            Ok::<Proof, Box<dyn std::error::Error + Send + Sync>>(proof_outcome)
+        })
+        .await?; // first `?` handles JoinError from the spawned task
+
+        // The returned value is `Result<Proof, Box<dyn std::error::Error + Send + Sync>>`
+        proof_result
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofGeneratorType {
+    Execute,
+    ProveCPU,
+    ProveCUDA,
+    ProveNetwork,
+}
+
+#[derive(Debug)]
+pub struct Proof {
+    pub proof_type: ProofGeneratorType,
+    pub proof: Option<SP1ProofWithPublicValues>,
+    pub cycles: Option<u64>,
+    pub duration: std::time::Duration,
+}
+
+/// Format a `Duration` for pretty printing in results.
+pub fn format_duration(duration: std::time::Duration) -> String {
+    if duration.as_secs() == 0 {
+        return format!("{} ms", duration.as_millis());
+    }
+    if duration.as_secs() < 60 {
+        return format!("{:.2} s", duration.as_secs_f64());
+    }
+    if duration.as_secs() < 3600 {
+        return format!("{:.2} min", duration.as_secs_f64() / 60.0);
+    }
+    format!("{:.2} h", duration.as_secs_f64() / 3600.0)
 }

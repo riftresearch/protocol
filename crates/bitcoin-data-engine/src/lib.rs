@@ -45,14 +45,22 @@ Bitcoin Data Engine
 //!   - Thread 2 (ZMQ listener) sees new block announcements and sets a `block_notif` flag.
 //!   - Thread 1 (sync thread) detects that flag and re-syncs the local MMR by comparing our best tip
 //!     to bitcoind's best chain, performing `reorg` or new `append`s as needed.
+//!
+//! This file now also demonstrates how to watch for a specific block height:
+//!   - We maintain a map of (block_height -> Vec<oneshot::Sender<BlockLeaf>>).
+//!   - `wait_for_block_height` checks if the height is already in the MMR. If yes, short-circuits. If not,
+//!     it registers a watcher (oneshot sender) into that map.
+//!   - After each sync pass in the watchtower, we fulfill watchers for any height that became available.
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
+use bitcoincore_rpc_async::bitcoin::BlockHash;
 use tokio::signal;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
@@ -69,6 +77,10 @@ use rift_sdk::DatabaseLocation; // assumed to be defined in your code base
 /// Our async Bitcoin Data Engine.
 /// This struct spawns its own tasks:
 ///   - The publisher ("Bitcoin Block Watch Tower") sends new-block signals via a channel.
+///
+///   - We also hold a watchers map that allows consumers to wait on specific heights.
+///     Each entry is (height -> vec of oneshot::Sender<BlockLeaf>). Once we discover that
+///     height is in the MMR, we fulfill all watchers for that height.
 pub struct BitcoinDataEngine {
     /// Our local MMR of the best chain
     pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
@@ -79,6 +91,8 @@ pub struct BitcoinDataEngine {
     bitcoin_rpc: Arc<AsyncBitcoinClient>,
     /// JoinHandle for our block watchtower task.
     block_watchtower_handle: JoinHandle<()>,
+    /// Map of (block_height -> oneshot Senders), for tasks waiting on that height.
+    watchers: Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
 }
 
 impl BitcoinDataEngine {
@@ -98,9 +112,13 @@ impl BitcoinDataEngine {
 
         let (blocks_to_analyze_tx, blocks_to_analyze_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        // Create a watchers map for waiting on specific heights
+        let watchers = Arc::new(Mutex::new(HashMap::new()));
+
         // Spawn the block watchtower in a separate task
         let block_watchtower_handle = tokio::spawn(block_watchtower(
             mmr.clone(),
+            watchers.clone(),
             bitcoin_rpc.clone(),
             download_chunk_size,
             block_search_interval,
@@ -112,71 +130,40 @@ impl BitcoinDataEngine {
             blocks_to_analyze_rx,
             bitcoin_rpc,
             block_watchtower_handle,
+            watchers,
         }
     }
-}
 
-async fn download_and_sync(
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
-    bitcoin_rpc: Arc<AsyncBitcoinClient>,
-    start_block_height: u32,
-    end_block_height: u32,
-    chunk_size: usize,
-) {
-    let total_blocks = end_block_height.saturating_sub(start_block_height) + 1;
-    let start_time = std::time::Instant::now();
-    let mut blocks_processed = 0;
-    let mut current_height = start_block_height;
+    /// Wait for a certain block height to arrive in the MMR. Returns the corresponding `BlockLeaf`.
+    pub async fn wait_for_block_height(&self, height: u32) -> eyre::Result<BlockLeaf> {
+        // 1. Check if the MMR already has the leaf for this height:
+        if let Some(leaf) = {
+            // Assume you have a method like `find_leaf_by_block_height` in your MMR or a trait extension:
+            let mmr_guard = self.indexed_mmr.read().await;
+            mmr_guard.get_leaf_by_leaf_index(height as usize).await?
+        } {
+            // If it's already there, we can short-circuit immediately.
+            return Ok(leaf);
+        }
 
-    while current_height <= end_block_height {
-        let end_height = std::cmp::min(current_height + chunk_size as u32, end_block_height);
-        let leaves = bitcoin_rpc
-            .get_leaves_from_block_range(current_height, end_height, None)
-            .await
-            .expect("Failed to get leaves");
+        // 2. Otherwise, create a oneshot channel and store the Sender in our watchers map.
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut watchers_map = self.watchers.lock().await;
+            watchers_map.entry(height).or_default().push(tx);
+        }
 
-        // Apply the headers to the local mmr
-        indexed_mmr
-            .write()
-            .await
-            .batch_append(&leaves)
-            .await
-            .unwrap();
-
-        blocks_processed += leaves.len();
-
-        // Calculate estimated time remaining
-        let elapsed = start_time.elapsed();
-
-        display_progress(blocks_processed, total_blocks as usize, elapsed);
-
-        current_height = end_height + 1; // +1 because we want to start at the next block
+        // 3. Return the receiving end of the channel. When the watchtower loop
+        //    sees that this height arrived, it will send the corresponding `BlockLeaf`.
+        rx.await.map_err(|_| eyre::eyre!("oneshot canceled"))
     }
 }
 
-async fn rollback_to_common_ancestor(
-    local_best_block_hash: [u8; 32],
-    local_best_block_height: u32,
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
-    bitcoin_rpc: Arc<AsyncBitcoinClient>,
-) {
-    // Start at the local best block and query its header to ensure its confirmations are >= 0.
-    // If the confirmations are < 0, we need to roll back the local MMR by the number of missing confirmations.
-    // The most efficient strategy is to first download the local best block header; in most cases,
-    // its confirmations will be >= 0 and we can simply return the local best block as the common ancestor.
-    // However, if the confirmations are insufficient, download a chunk of block headers by hash (of size `n`)
-    // from the indexed MMR in reverse order until you find a block with confirmations >= 0.
-    // This block is the common ancestor to which we should roll back.
-
-    let common_ancestor = bitcoin_rpc
-        .get_common_ancestor(local_best_block_hash, remote_best_block_hash)
-        .await
-        .unwrap();
-    common_ancestor
-}
-
+/// This function is responsible for re-syncing the local MMR with the remote node's best chain
+/// on a periodic basis, and then fulfilling watchers for any heights that are now in the MMR.
 async fn block_watchtower(
     indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    watchers: Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
     bitcoin_rpc: Arc<AsyncBitcoinClient>,
     // number of blocks to download at a time before applying to the local mmr
     download_chunk_size: usize,
@@ -184,7 +171,6 @@ async fn block_watchtower(
     block_search_interval: Duration,
 ) {
     loop {
-        // Scope the lock to automatically drop it when we're done
         let (local_best_block_hash, local_leaf_count): (Option<[u8; 32]>, u32) = {
             let local_indexed_mmr = indexed_mmr.read().await;
             let local_leaf_count = local_indexed_mmr.get_leaf_count().await.unwrap();
@@ -194,7 +180,7 @@ async fn block_watchtower(
                 (
                     Some(
                         local_indexed_mmr
-                            .find_leaf_by_leaf_index(local_leaf_count - 1)
+                            .get_leaf_by_leaf_index(local_leaf_count - 1)
                             .await
                             .unwrap()
                             .unwrap()
@@ -207,12 +193,26 @@ async fn block_watchtower(
             }
         };
 
-        let chain_tips = bitcoin_rpc.get_chain_tips().await.unwrap();
+        let chain_tips = match bitcoin_rpc.get_chain_tips().await {
+            Ok(tips) => tips,
+            Err(e) => {
+                eprintln!("Error getting chain tips: {e}");
+                sleep(block_search_interval).await;
+                continue;
+            }
+        };
 
-        let best_block = chain_tips
+        let best_block = match chain_tips
             .iter()
             .find(|tip| tip.status == ChainTipStatus::Active)
-            .expect("No active chain tip found");
+        {
+            Some(tip) => tip,
+            None => {
+                eprintln!("No active chain tip found");
+                sleep(block_search_interval).await;
+                continue;
+            }
+        };
 
         println!("Best chain tip: {:?}", best_block);
 
@@ -227,21 +227,221 @@ async fn block_watchtower(
             // determine if we need to reorg any local blocks
             // at this point all we know is the local block hash and the remote best block hash are different
             // so we need to find the common ancestor
-            let common_ancestor = bitcoin_rpc
-                .get_common_ancestor(local_best_block_hash.unwrap(), remote_best_block_hash)
-                .await
-                .unwrap();
-            // Get the headers for the blocks since the local best block
+
+            // this is the leaf that we know about on the local chain, start from here when downloading + syncing
+            let common_ancestor_leaf = if local_leaf_count > 0 {
+                Some(
+                    find_common_ancestor_leaf(indexed_mmr.clone(), bitcoin_rpc.clone())
+                        .await
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+
+            let download_start_height = common_ancestor_leaf.map_or(0, |leaf| leaf.height + 1);
+
+            // Get the headers for the blocks since the common ancestor
             download_and_sync(
                 indexed_mmr.clone(),
                 bitcoin_rpc.clone(),
-                local_leaf_count,
+                download_start_height,
                 remote_best_block_height as u32,
                 download_chunk_size,
+                common_ancestor_leaf,
             )
             .await;
         }
+
+        // **After** re-syncing, check if any watchers can now be fulfilled.
+        fulfill_watchers(&indexed_mmr, &watchers).await;
+
         tokio::time::sleep(block_search_interval).await;
+    }
+}
+
+/// Once we've updated our MMR, we look to see if any watchers can now be fulfilled.
+async fn fulfill_watchers(
+    indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    watchers: &Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
+) {
+    let mut watchers_map = watchers.lock().await;
+    let mut fulfilled_heights = Vec::new();
+
+    // We'll gather all watchers that can be fulfilled now.
+    for (height, senders) in watchers_map.iter_mut() {
+        // If the MMR already has this block, send it!
+        if let Some(leaf) = indexed_mmr
+            .read()
+            .await
+            .get_leaf_by_leaf_index(*height as usize)
+            .await
+            .unwrap()
+        {
+            // Fulfill all watchers for this height.
+            for tx in senders.drain(..) {
+                let _ = tx.send(leaf);
+            }
+            // We'll remove this entry afterward.
+            fulfilled_heights.push(*height);
+        }
+    }
+
+    // Remove the fulfilled heights from the map so we don't keep them around.
+    for h in fulfilled_heights {
+        watchers_map.remove(&h);
+    }
+}
+
+/// Download and sync new blocks starting from `start_block_height` to `end_block_height`.
+async fn download_and_sync(
+    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    bitcoin_rpc: Arc<AsyncBitcoinClient>,
+    start_block_height: u32,
+    end_block_height: u32,
+    chunk_size: usize,
+    parent_leaf: Option<BlockLeaf>,
+) {
+    if parent_leaf.is_some() {
+        assert!(start_block_height == parent_leaf.unwrap().height + 1);
+    }
+    println!(
+        "Mega Downloading from {:?} to {:?}",
+        start_block_height, end_block_height
+    );
+    let total_blocks = end_block_height.saturating_sub(start_block_height) + 1;
+    let start_time = std::time::Instant::now();
+    let mut blocks_processed = 0;
+    let mut current_height = start_block_height;
+
+    let mut first_write = true;
+
+    while current_height <= end_block_height {
+        println!("[1] iter: {:?}", current_height);
+        let end_height = std::cmp::min(current_height + chunk_size as u32, end_block_height);
+        println!(
+            "[1.5] Getting leaves from {:?} to {:?}",
+            current_height, end_height
+        );
+        let leaves = match bitcoin_rpc
+            .get_leaves_from_block_range(current_height, end_height, None)
+            .await
+        {
+            Ok(ls) => ls,
+            Err(e) => {
+                eprintln!("Failed to get leaves: {e}");
+                return;
+            }
+        };
+        println!("[2] iter: {:?}", current_height);
+
+        blocks_processed += leaves.len();
+
+        println!(
+            "Downloading from {:?} to {:?} [inclusive]",
+            current_height, end_height
+        );
+
+        // TODO: Include safety check to ensure that each leaf's prev_hash is the same as the previous leaf's block_hash
+        // before appending to the MMR
+
+        if first_write && parent_leaf.is_some() {
+            // do a reorg and write for the first chunk
+            // Apply the headers to the local mmr
+            let mut combined = vec![parent_leaf.unwrap()];
+            combined.extend(leaves);
+            indexed_mmr
+                .write()
+                .await
+                .append_or_reorg_based_on_parent(&combined)
+                .await
+                .unwrap();
+            first_write = false;
+        } else {
+            // do a normal append
+            indexed_mmr
+                .write()
+                .await
+                .batch_append(&leaves)
+                .await
+                .unwrap();
+        }
+        println!("[3] iter: {:?}", current_height);
+
+        // Calculate estimated time remaining
+        let elapsed = start_time.elapsed();
+
+        display_progress(blocks_processed, total_blocks as usize, elapsed);
+
+        current_height = end_height + 1; // +1 because we want to start at the next block
+    }
+
+    println!(
+        "Final indexed height after this sync: {:?}",
+        (indexed_mmr.read().await.get_leaf_count().await.unwrap() - 1) as u32
+    );
+}
+
+enum BlockStatus {
+    InChain(BlockLeaf),
+    NotInChain,
+}
+
+/// Find the highest local block that is still in the remote chain, i.e. a common ancestor.
+async fn find_common_ancestor_leaf(
+    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    bitcoin_rpc: Arc<AsyncBitcoinClient>,
+) -> Result<BlockLeaf, eyre::Report> {
+    // Start at the local best block and query its header to ensure its confirmations are >= 0.
+    // If the confirmations are < 0, we need to roll back the local MMR by continuing to search backwards.
+    let local_leaf_count = indexed_mmr.read().await.get_leaf_count().await.unwrap();
+    assert!(local_leaf_count > 0);
+
+    let mut current_leaf_index = local_leaf_count - 1;
+
+    loop {
+        let best_block_leaf = indexed_mmr
+            .read()
+            .await
+            .get_leaf_by_leaf_index(current_leaf_index)
+            .await
+            .unwrap()
+            .ok_or_else(|| eyre::eyre!("Could not find leaf @ index {current_leaf_index}"))?;
+
+        let header_request = bitcoin_rpc
+            .get_block_header_info(&BlockHash::from_slice(&best_block_leaf.block_hash).unwrap())
+            .await;
+
+        let header_status = match header_request {
+            Ok(header_info) => {
+                if header_info.confirmations == -1 {
+                    Ok(BlockStatus::NotInChain)
+                } else {
+                    Ok(BlockStatus::InChain(best_block_leaf))
+                }
+            }
+            Err(bitcoincore_rpc_async::Error::JsonRpc(
+                bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
+            )) if rpcerr.code == -5 => {
+                // if the error is -5 rpc error then it means the block does not exist on the remote, so continue searching
+                Ok(BlockStatus::NotInChain)
+            }
+            _ => Err(header_request.unwrap_err()),
+        }
+        .map_err(|e| eyre::eyre!("Get block header info failed: {e}"))?;
+
+        match header_status {
+            BlockStatus::InChain(block_leaf) => {
+                return Ok(block_leaf);
+            }
+            BlockStatus::NotInChain => {
+                // continue searching backwards
+                if current_leaf_index == 0 {
+                    return Err(eyre::eyre!("No common ancestor found at all!"));
+                }
+                current_leaf_index -= 1;
+            }
+        }
     }
 }
 
@@ -290,7 +490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_and_sync() {
+    async fn test_wait_for_block_height() {
         let db_loc = DatabaseLocation::InMemory;
         let (bitcoin_regtest, bitcoin_rpc, bitcoin_address) =
             setup_bitcoin_regtest_and_client().await;
@@ -298,7 +498,7 @@ mod tests {
         // mine some blocks
         bitcoin_regtest
             .client
-            .generate_to_address(15, &bitcoin_address)
+            .generate_to_address(5, &bitcoin_address) // 5 is the new tip after this
             .unwrap();
 
         println!("Workdir: {:?}", bitcoin_regtest.workdir());
@@ -310,6 +510,43 @@ mod tests {
             Duration::from_millis(250),
         )
         .await;
+        println!("Waiting for block height 6");
+        let tip_leaf = data_engine.wait_for_block_height(5).await.unwrap();
+        println!("[post]Tip leaf: {:?}", tip_leaf);
+        let leaf_count = data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_leaf_count()
+            .await
+            .unwrap();
+        println!("[post]Leaf count: {:?}", leaf_count);
+    }
+
+    #[tokio::test]
+    async fn test_call_get_block_header_info_non_existant_header() {
+
+        /*
+        let (bitcoin_regtest, bitcoin_rpc, _) = setup_bitcoin_regtest_and_client().await;
+
+        println!("Bitcoin rpc: {:?}", bitcoin_regtest.rpc_url());
+        println!("Cookie: {:?}", bitcoin_regtest.params.cookie_file);
+        let mut cookie = String::new();
+        File::open(bitcoin_regtest.params.cookie_file.clone())
+            .await
+            .unwrap()
+            .read_to_string(&mut cookie)
+            .await
+            .unwrap();
+
+        println!("curl -X POST --user \"{}\" --data-binary '{{\"jsonrpc\":\"1.0\",\"id\":\"curl\",\"method\":\"getblockheader\",\"params\":[\"00000000c937983704a73af28acdec37b049d214adbda81d7e2a3dd146f6ed00\"]}}' -H 'content-type: text/plain;' http://127.0.0.1:61386/ | jq", cookie);
+        println!("Press ctrl+c to continue");
         signal::ctrl_c().await.unwrap();
+
+        let resp = bitcoin_rpc
+            .get_block_header_info(&BlockHash::from_slice(&[0u8; 32]).unwrap())
+            .await;
+        println!("{:?}", resp);
+        */
     }
 }

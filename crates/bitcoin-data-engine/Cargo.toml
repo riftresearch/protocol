@@ -6,11 +6,11 @@ edition.workspace = true
 exclude.workspace = true
 
 [dependencies]
-bitcoincore-rpc-async = { workspace = true } 
+bitcoincore-rpc-async2 = { workspace = true } 
 bitcoin-light-client-core = { workspace = true }
 rift-sdk = { workspace = true }
 tokio = { workspace = true }
 hex = { workspace = true }
-
+eyre = { workspace = true }
 [dev-dependencies]
 corepc-node = { workspace = true }
