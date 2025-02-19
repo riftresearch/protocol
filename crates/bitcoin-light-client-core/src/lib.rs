@@ -26,7 +26,12 @@ fn validate_leaf_block_hashes(
             &bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
                 .expect("Failed to get parent header block hash")
         ),
-        "Parent leaf block hash does not match parent header block hash"
+        "Parent leaf block hash {} does not match parent header block hash {}",
+        hex::encode(parent_leaf.block_hash),
+        hex::encode(
+            bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
+                .expect("Failed to get parent header block hash")
+        )
     );
 
     assert!(

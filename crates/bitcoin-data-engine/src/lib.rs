@@ -58,7 +58,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
-use bitcoincore_rpc_async::bitcoin::BlockHash;
+use bitcoincore_rpc_async::bitcoin::{BlockHash, BlockHeader};
 use tokio::signal;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -90,7 +90,7 @@ pub struct BitcoinDataEngine {
     /// Async RPC client for bitcoind.
     bitcoin_rpc: Arc<AsyncBitcoinClient>,
     /// JoinHandle for our block watchtower task.
-    block_watchtower_handle: JoinHandle<()>,
+    block_watchtower_handle: JoinHandle<Result<(), eyre::Report>>,
     /// Map of (block_height -> oneshot Senders), for tasks waiting on that height.
     watchers: Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
 }
@@ -169,7 +169,7 @@ async fn block_watchtower(
     download_chunk_size: usize,
     // how often to check for a new best block
     block_search_interval: Duration,
-) {
+) -> Result<(), eyre::Report> {
     loop {
         let (local_best_block_hash, local_leaf_count): (Option<[u8; 32]>, u32) = {
             let local_indexed_mmr = indexed_mmr.read().await;
@@ -241,6 +241,11 @@ async fn block_watchtower(
 
             let download_start_height = common_ancestor_leaf.map_or(0, |leaf| leaf.height + 1);
 
+            println!(
+                "[watchtower] Downloading from {:?} to {:?}",
+                download_start_height, remote_best_block_height
+            );
+
             // Get the headers for the blocks since the common ancestor
             download_and_sync(
                 indexed_mmr.clone(),
@@ -250,7 +255,8 @@ async fn block_watchtower(
                 download_chunk_size,
                 common_ancestor_leaf,
             )
-            .await;
+            .await
+            .unwrap();
         }
 
         // **After** re-syncing, check if any watchers can now be fulfilled.
@@ -301,53 +307,54 @@ async fn download_and_sync(
     end_block_height: u32,
     chunk_size: usize,
     parent_leaf: Option<BlockLeaf>,
-) {
+) -> Result<(), eyre::Report> {
     if parent_leaf.is_some() {
         assert!(start_block_height == parent_leaf.unwrap().height + 1);
     }
-    println!(
-        "Mega Downloading from {:?} to {:?}",
-        start_block_height, end_block_height
-    );
+
     let total_blocks = end_block_height.saturating_sub(start_block_height) + 1;
     let start_time = std::time::Instant::now();
     let mut blocks_processed = 0;
     let mut current_height = start_block_height;
-
     let mut first_write = true;
 
     while current_height <= end_block_height {
-        println!("[1] iter: {:?}", current_height);
         let end_height = std::cmp::min(current_height + chunk_size as u32, end_block_height);
-        println!(
-            "[1.5] Getting leaves from {:?} to {:?}",
-            current_height, end_height
-        );
+
+        let expected_parent = if first_write && parent_leaf.is_some() {
+            Some(parent_leaf.unwrap().block_hash)
+        } else {
+            let mmr = indexed_mmr.read().await;
+            let leaf_count = mmr.get_leaf_count().await?;
+            if leaf_count == 0 {
+                None
+            } else {
+                Some(
+                    mmr.get_leaf_by_leaf_index(leaf_count - 1)
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("Failed to get tip leaf"))?
+                        .block_hash,
+                )
+            }
+        };
+
         let leaves = match bitcoin_rpc
-            .get_leaves_from_block_range(current_height, end_height, None)
+            .get_leaves_from_block_range(current_height, end_height, None, expected_parent)
             .await
         {
             Ok(ls) => ls,
             Err(e) => {
-                eprintln!("Failed to get leaves: {e}");
-                return;
+                return Err(eyre::eyre!("Failed to get leaves: {e}"));
             }
         };
-        println!("[2] iter: {:?}", current_height);
 
         blocks_processed += leaves.len();
-
-        println!(
-            "Downloading from {:?} to {:?} [inclusive]",
-            current_height, end_height
-        );
 
         // TODO: Include safety check to ensure that each leaf's prev_hash is the same as the previous leaf's block_hash
         // before appending to the MMR
 
         if first_write && parent_leaf.is_some() {
             // do a reorg and write for the first chunk
-            // Apply the headers to the local mmr
             let mut combined = vec![parent_leaf.unwrap()];
             combined.extend(leaves);
             indexed_mmr
@@ -358,7 +365,6 @@ async fn download_and_sync(
                 .unwrap();
             first_write = false;
         } else {
-            // do a normal append
             indexed_mmr
                 .write()
                 .await
@@ -366,20 +372,16 @@ async fn download_and_sync(
                 .await
                 .unwrap();
         }
-        println!("[3] iter: {:?}", current_height);
 
-        // Calculate estimated time remaining
-        let elapsed = start_time.elapsed();
-
-        display_progress(blocks_processed, total_blocks as usize, elapsed);
-
-        current_height = end_height + 1; // +1 because we want to start at the next block
+        display_progress(
+            blocks_processed,
+            total_blocks as usize,
+            start_time.elapsed(),
+        );
+        current_height = end_height + 1;
     }
 
-    println!(
-        "Final indexed height after this sync: {:?}",
-        (indexed_mmr.read().await.get_leaf_count().await.unwrap() - 1) as u32
-    );
+    Ok(())
 }
 
 enum BlockStatus {
@@ -408,8 +410,11 @@ async fn find_common_ancestor_leaf(
             .unwrap()
             .ok_or_else(|| eyre::eyre!("Could not find leaf @ index {current_leaf_index}"))?;
 
+        let mut block_hash = best_block_leaf.block_hash;
+        block_hash.reverse();
+
         let header_request = bitcoin_rpc
-            .get_block_header_info(&BlockHash::from_slice(&best_block_leaf.block_hash).unwrap())
+            .get_block_header_info(&BlockHash::from_slice(&block_hash).unwrap())
             .await;
 
         let header_status = match header_request {
@@ -494,22 +499,23 @@ mod tests {
         let db_loc = DatabaseLocation::InMemory;
         let (bitcoin_regtest, bitcoin_rpc, bitcoin_address) =
             setup_bitcoin_regtest_and_client().await;
+        let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
         // mine some blocks
         bitcoin_regtest
             .client
-            .generate_to_address(5, &bitcoin_address) // 5 is the new tip after this
+            .generate_to_address(101, &bitcoin_address) // 5 is the new tip after this
             .unwrap();
 
         println!("Workdir: {:?}", bitcoin_regtest.workdir());
 
-        let data_engine = BitcoinDataEngine::new(
-            db_loc,
-            Arc::new(bitcoin_rpc),
-            100,
-            Duration::from_millis(250),
-        )
-        .await;
+        let data_engine =
+            BitcoinDataEngine::new(db_loc, bitcoin_rpc.clone(), 100, Duration::from_millis(250))
+                .await;
+        println!(
+            "Current height according to regtest: {:?}",
+            (bitcoin_rpc.get_block_count().await.unwrap())
+        );
         println!("Waiting for block height 6");
         let tip_leaf = data_engine.wait_for_block_height(5).await.unwrap();
         println!("[post]Tip leaf: {:?}", tip_leaf);

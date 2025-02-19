@@ -1,6 +1,7 @@
 use alloy::signers::k256;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
-use bitcoincore_rpc_async::bitcoin::BlockHeader;
+use bitcoincore_rpc_async::bitcoin::{BlockHash, BlockHeader};
+use bitcoincore_rpc_async::json::GetBlockHeaderResult;
 use tokio::time::Instant;
 
 use crate::errors::RiftSdkError;
@@ -16,6 +17,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use backoff::{Error as BackoffError, ExponentialBackoff};
 use reqwest::{Client as ReqwestClient, Url};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -192,24 +194,59 @@ impl RpcApi for AsyncBitcoinClient {
         cmd: &str,
         args: &[serde_json::Value],
     ) -> bitcoincore_rpc_async::Result<T> {
-        for _ in 0..RETRY_ATTEMPTS {
+        let backoff = ExponentialBackoff {
+            initial_interval: std::time::Duration::from_millis(100),
+            max_interval: std::time::Duration::from_secs(10),
+            max_elapsed_time: Some(std::time::Duration::from_secs(30)),
+            ..Default::default()
+        };
+
+        backoff::future::retry(backoff, || async {
             match self.client.call(cmd, args).await {
-                Ok(ret) => return Ok(ret),
+                Ok(ret) => Ok(ret),
                 Err(bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
                 )) if rpcerr.code == -32603 => {
-                    // TODO: Use async sleep
-                    ::std::thread::sleep(::std::time::Duration::from_millis(INTERVAL));
-                    println!("Retrying RPC call: {:?}", rpcerr);
-                    continue;
+                    println!("Retrying RPC call due to error: {:?}", rpcerr);
+                    Err(BackoffError::transient(
+                        bitcoincore_rpc_async::Error::JsonRpc(
+                            bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
+                        ),
+                    ))
                 }
                 Err(e) => {
-                    eprintln!("Error calling RPC: {:?}", e);
-                    return Err(e);
+                    println!("Real RPC error: {:?}", e);
+                    Err(BackoffError::permanent(e))
                 }
             }
+        })
+        .await
+    }
+}
+
+pub trait HeaderChainValidator {
+    fn validate_header_chain(&self) -> Result<(), RiftSdkError>;
+}
+
+impl HeaderChainValidator for Vec<BlockHeader> {
+    fn validate_header_chain(&self) -> Result<(), RiftSdkError> {
+        for i in 1..self.len() {
+            if self[i].prev_blockhash != self[i - 1].block_hash() {
+                return Err(RiftSdkError::HeaderChainValidationFailed);
+            }
         }
-        self.client.call(cmd, args).await
+        Ok(())
+    }
+}
+
+impl HeaderChainValidator for Vec<GetBlockHeaderResult> {
+    fn validate_header_chain(&self) -> Result<(), RiftSdkError> {
+        for i in 1..self.len() {
+            if self[i].previous_block_hash.unwrap() != self[i - 1].hash {
+                return Err(RiftSdkError::HeaderChainValidationFailed);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -255,11 +292,13 @@ impl fmt::Display for ChainTipStatus {
 
 #[async_trait::async_trait]
 pub trait BitcoinClientExt {
+    // safely get leaves from a block range
     async fn get_leaves_from_block_range(
         &self,
         start_block_height: u32,
         end_block_height: u32,
         concurrency_limit: Option<usize>,
+        expected_parent: Option<[u8; 32]>,
     ) -> crate::errors::Result<Vec<BlockLeaf>>;
 
     async fn get_headers_from_block_range(
@@ -267,14 +306,33 @@ pub trait BitcoinClientExt {
         start_block_height: u32,
         end_block_height: u32,
         concurrency_limit: Option<usize>,
+        expected_parent: Option<[u8; 32]>,
     ) -> crate::errors::Result<Vec<BlockHeader>>;
 
     async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>>;
+    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<BlockHeader>;
 }
 
 // TODO: Use RPC batched requests for much faster throughput
 #[async_trait::async_trait]
 impl BitcoinClientExt for AsyncBitcoinClient {
+    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<BlockHeader> {
+        let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
+            RiftSdkError::BitcoinRpcError(format!(
+                "Error getting block hash for height {}: {}",
+                height, e
+            ))
+        })?;
+
+        let header = self.get_block_header(&block_hash).await.map_err(|e| {
+            RiftSdkError::BitcoinRpcError(format!(
+                "Error getting block header for height {}: {}",
+                height, e
+            ))
+        })?;
+
+        Ok(header)
+    }
     async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>> {
         let chain_tips = self.call("getchaintips", &[]).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!("Error getting chain tips: {}", e))
@@ -287,62 +345,81 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         start_block_height: u32,
         end_block_height: u32,
         concurrency_limit: Option<usize>,
+        expected_parent: Option<[u8; 32]>,
     ) -> crate::errors::Result<Vec<BlockLeaf>> {
-        // Set to max concurrency limit if not provided.
         let concurrency_limit =
-            concurrency_limit.unwrap_or((end_block_height - start_block_height) as usize);
+            concurrency_limit.unwrap_or((end_block_height - start_block_height) as usize) + 1;
 
-        // Create a stream of block heights.
         let block_heights = start_block_height..=end_block_height;
         let leaves_stream = futures::stream::iter(block_heights).map(|height| async move {
-            let t = Instant::now();
-
-            println!("[a.1] Getting block hash for height {:?}", height);
-            let block_hash = self.get_block_hash(height as u64).await;
-            println!("[a.2] Got block hash for height {:?}", height);
-            let block_hash = block_hash.map_err(|e| {
+            let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block hash for height {} {}",
                     height, e
                 ))
             })?;
-            println!("[a.3] Got block hash for height {:?}", height);
 
-            let t = Instant::now();
-            let block = self.get_block_header_info(&block_hash).await;
-            println!("[a.4] Got block header info for height {:?}", height);
-            // TODO: Include checks that the previous block hash in the MMR is the same as the previous block hash in the first block header
-            let block = block.map_err(|e| {
+            let block = self.get_block_header_info(&block_hash).await.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block header info for height {} {}",
                     height, e
                 ))
             })?;
-            println!("[a.5] Got block header info for height {:?}", height);
-            let block_hash: [u8; 32] = block_hash.as_hash().into_inner();
+
+            let mut explorer_block_hash: [u8; 32] = block_hash.as_hash().into_inner();
+            explorer_block_hash.reverse();
+
             let chainwork: [u8; 32] = block
                 .chainwork
                 .as_slice()
                 .try_into()
                 .expect("Chainwork is not 32 bytes");
-            let leaf = BlockLeaf::new(block_hash, height, chainwork);
-            println!("[a.6] Got block leaf for height {:?}", height);
-            Ok::<_, RiftSdkError>(leaf)
+            let leaf = BlockLeaf::new(explorer_block_hash, height, chainwork);
+            Ok::<_, RiftSdkError>((height, leaf, block))
         });
-        println!("[a.01]");
 
-        println!(
-            "[a.02] Getting block leaves length {}",
-            futures::stream::iter(start_block_height..=end_block_height)
-                .count()
-                .await
-        );
-
-        let leaves = leaves_stream
+        let mut results = leaves_stream
             .buffer_unordered(concurrency_limit)
-            .try_collect::<Vec<BlockLeaf>>()
+            .try_collect::<Vec<(u32, BlockLeaf, GetBlockHeaderResult)>>()
             .await?;
-        println!("[a.03] Got block leaves length {:?}", leaves.len());
+
+        // Sort by height to restore the correct order
+        results.sort_by_key(|(height, _, _)| *height);
+
+        // Split into separate vectors maintaining order
+        let (leaves, headers): (Vec<BlockLeaf>, Vec<GetBlockHeaderResult>) = results
+            .into_iter()
+            .map(|(_, leaf, header)| (leaf, header))
+            .unzip();
+
+        // Validation
+        if let Some(expected_parent) = expected_parent {
+            if headers[0]
+                .previous_block_hash
+                .unwrap()
+                .as_hash()
+                .into_inner()
+                .iter()
+                .rev()
+                .copied()
+                .collect::<Vec<u8>>()
+                != expected_parent
+            {
+                return Err(RiftSdkError::ParentValidationFailed(format!(
+                    "Expected parent {} but got {} from downloaded block",
+                    hex::encode(expected_parent),
+                    hex::encode(
+                        headers[0]
+                            .previous_block_hash
+                            .unwrap()
+                            .as_hash()
+                            .into_inner()
+                    )
+                )));
+            }
+        }
+
+        headers.validate_header_chain()?;
         Ok(leaves)
     }
 
@@ -351,40 +428,56 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         start_block_height: u32,
         end_block_height: u32,
         concurrency_limit: Option<usize>,
+        expected_parent: Option<[u8; 32]>,
     ) -> crate::errors::Result<Vec<BlockHeader>> {
-        // Set to max concurrency limit if not provided.
         let concurrency_limit =
-            concurrency_limit.unwrap_or((end_block_height - start_block_height) as usize);
+            concurrency_limit.unwrap_or((end_block_height - start_block_height) as usize) + 1;
 
-        // Create a stream of block heights.
         let block_heights = start_block_height..=end_block_height;
-        let leaves_stream = futures::stream::iter(block_heights).map(|height| async move {
-            let t = Instant::now();
-
-            let block_hash = self.get_block_hash(height as u64).await;
-            let block_hash = block_hash.map_err(|e| {
+        let headers_stream = futures::stream::iter(block_heights).map(|height| async move {
+            let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block hash for height {} {}",
                     height, e
                 ))
             })?;
 
-            let t = Instant::now();
-            let header = self.get_block_header(&block_hash).await;
-            // TODO: Include checks that the previous block hash in the MMR is the same as the previous block hash in the first block header
-            let header = header.map_err(|e| {
+            let header = self.get_block_header(&block_hash).await.map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!(
                     "Error getting block header info for height {} {}",
                     height, e
                 ))
             })?;
 
-            Ok::<_, RiftSdkError>(header)
+            Ok::<_, RiftSdkError>((height, header))
         });
 
-        leaves_stream
+        let mut headers_with_height = headers_stream
             .buffer_unordered(concurrency_limit)
-            .try_collect::<Vec<BlockHeader>>()
-            .await
+            .try_collect::<Vec<(u32, BlockHeader)>>()
+            .await?;
+
+        // Sort by height to restore the correct order
+        headers_with_height.sort_by_key(|(height, _)| *height);
+
+        // Extract just the headers in correct order
+        let headers: Vec<BlockHeader> = headers_with_height
+            .into_iter()
+            .map(|(_, header)| header)
+            .collect();
+
+        // Validation
+        if let Some(expected_parent) = expected_parent {
+            if headers[0].prev_blockhash.as_hash().into_inner() != expected_parent {
+                return Err(RiftSdkError::ParentValidationFailed(format!(
+                    "Expected parent {} but got {} from downloaded block",
+                    hex::encode(expected_parent),
+                    hex::encode(headers[0].prev_blockhash.as_hash().into_inner())
+                )));
+            }
+        }
+
+        headers.validate_header_chain()?;
+        Ok(headers)
     }
 }

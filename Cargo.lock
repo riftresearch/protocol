@@ -5338,6 +5338,7 @@ dependencies = [
  "bitcoincore-rpc-async2",
  "crypto-bigint",
  "futures",
+ "hex",
  "reqwest 0.12.12",
  "rift-core",
  "serde",

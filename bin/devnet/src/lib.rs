@@ -167,7 +167,7 @@ impl RiftDevnet {
         info!("Downloading checkpoint leaves from block range 0..101");
         let checkpoint_leaves = bitcoin_devnet
             .btc_rpc_client
-            .get_leaves_from_block_range(0, 101, None)
+            .get_leaves_from_block_range(0, 101, None, None)
             .await?;
 
         let tip_block_leaf = &checkpoint_leaves.last().unwrap().clone();
@@ -311,11 +311,13 @@ mod tests {
     use bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize as AsyncSerialize;
     use bitcoincore_rpc_async::bitcoin::BlockHash;
     use rift_core::giga::RiftProgramInput;
+    use rift_core::spv::generate_bitcoin_txn_merkle_proof;
     use rift_core::vaults::hash_deposit_vault;
+    use rift_core::RiftTransaction;
     use rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf;
     use rift_sdk::bindings::non_artifacted_types::Types::MMRProof;
     use rift_sdk::mmr::client_mmr_proof_to_circuit_mmr_proof;
-    use rift_sdk::txn_builder::{self, P2WPKHBitcoinWallet};
+    use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
     use rift_sdk::{
         create_websocket_provider, get_retarget_height_from_block_height, DatabaseLocation,
         ProofGeneratorType, RiftProofGenerator,
@@ -331,7 +333,7 @@ mod tests {
     ///  6) Submit the swap proof to finalize the swap on the RiftExchange
     ///  7) Check final on-chain state
     #[tokio::test]
-    async fn test_swap_end_to_end() {
+    async fn test_simulated_swap_end_to_end() {
         // ---1) Spin up devnet with default config---
         //    Interactive = false => no local HTTP servers / Docker containers
         //    No pre-funded EVM or Bitcoin address => we can do that ourselves below
@@ -736,8 +738,15 @@ mod tests {
                 .bitcoin
                 .btc_rpc_client
                 .get_block_header(
-                    &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(&parent_leaf.block_hash)
-                        .unwrap(),
+                    &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
+                        &parent_leaf
+                            .block_hash
+                            .iter()
+                            .rev()
+                            .copied()
+                            .collect::<Vec<u8>>(),
+                    )
+                    .unwrap(),
                 )
                 .await
                 .unwrap(),
@@ -779,7 +788,12 @@ mod tests {
                 .btc_rpc_client
                 .get_block_header(
                     &bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
-                        &parent_retarget_leaf.block_hash,
+                        &parent_retarget_leaf
+                            .block_hash
+                            .iter()
+                            .rev()
+                            .copied()
+                            .collect::<Vec<u8>>(),
                     )
                     .unwrap(),
                 )
@@ -817,7 +831,21 @@ mod tests {
         let new_headers = devnet
             .bitcoin
             .btc_rpc_client
-            .get_headers_from_block_range(first_download_height, last_download_height as u32, None)
+            .get_headers_from_block_range(
+                first_download_height,
+                last_download_height as u32,
+                None,
+                Some(
+                    parent_leaf
+                        .block_hash
+                        .iter()
+                        .rev()
+                        .copied()
+                        .collect::<Vec<u8>>()
+                        .try_into()
+                        .unwrap(),
+                ),
+            )
             .await
             .unwrap()
             .iter()
@@ -856,26 +884,89 @@ mod tests {
             new_headers,
         };
 
+        /*
+        #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+        pub struct RiftTransaction {
+            // no segwit data serialized bitcoin transaction
+            pub txn: Vec<u8>,
+            // the vaults reserved for this transaction
+            pub reserved_vault: DepositVault,
+            // block header where the txn is included
+            pub block_header: Header,
+            // merkle proof of the txn hash in the block
+            pub txn_merkle_proof: Vec<MerkleProofStep>,
+        }
+        */
+
+        let swap_block_hash = devnet
+            .bitcoin
+            .btc_rpc_client
+            .get_block_hash(swap_block_height as u64)
+            .await
+            .unwrap();
+
+        let swap_block_header: Header =
+            bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
+                &devnet
+                    .bitcoin
+                    .btc_rpc_client
+                    .get_block_header(&swap_block_hash)
+                    .await
+                    .unwrap(),
+            )
+            .try_into()
+            .unwrap();
+
+        let swap_full_block = devnet
+            .bitcoin
+            .btc_rpc_client
+            .get_block(&swap_block_hash)
+            .await
+            .unwrap();
+
+        let (txn_merkle_proof, _) = generate_bitcoin_txn_merkle_proof(
+            &swap_full_block
+                .txdata
+                .iter()
+                .map(|t| t.txid().to_vec().try_into().unwrap())
+                .collect::<Vec<_>>(),
+            bitcoin_txid,
+        );
+
+        let rift_transaction_input = RiftTransaction {
+            txn: serialize_no_segwit(&payment_tx),
+            reserved_vault: sol_types::Types::DepositVault::abi_decode(
+                new_vault.abi_encode().as_slice(),
+                false,
+            )
+            .unwrap(),
+            block_header: swap_block_header,
+            txn_merkle_proof,
+        };
+
         let rift_program_input = RiftProgramInput::builder()
-            .proof_type(rift_core::giga::RustProofType::LightClientOnly)
+            .proof_type(rift_core::giga::RustProofType::Combined)
             .light_client_input(chain_transition)
+            .rift_transaction_input(vec![rift_transaction_input])
             .build()
             .unwrap();
 
         let proof = proof_generator.prove(&rift_program_input).await.unwrap();
 
-        println!("Proof: {:?}", proof);
+        println!(
+            "Proved light client update from block {:?} to {:?} and swap bitcoin transaction.\n Proof Info: {:?}",
+            first_download_height, last_download_height, proof
+        );
 
-        /*
         // We'll do a single-swap array:
         let swap_params = vec![SubmitSwapProofParams {
             swapBitcoinTxid: bitcoin_txid.into(),
             vault: new_vault.clone(),
             storageStrategy: 0.into(), // Append
             localOverwriteIndex: 0,
-            swapBitcoinBlockLeaf: swapBitcoinProof.blockLeaf,
-            swapBitcoinBlockSiblings: swapBitcoinProof.siblings,
-            swapBitcoinBlockPeaks: swapBitcoinProof.peaks,
+            swapBitcoinBlockLeaf: swap_leaf,
+            swapBitcoinBlockSiblings: blockSi,
+            swapBitcoinBlockPeaks: vec![],
         }];
 
         // We also pass an empty "overwriteSwaps"
