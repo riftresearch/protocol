@@ -1565,9 +1565,9 @@ dependencies = [
 
 [[package]]
 name = "bzip2-sys"
-version = "0.1.11+1.0.8"
+version = "0.1.12+1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736a955f3fa7875102d57c82b8cac37ec45224a07fd32d58f9f7a186b6cd4cdc"
+checksum = "72ebc2f1a417f01e1da30ef264ee86ae31d2dcd2d603ea283d3c244a883ca2a9"
 dependencies = [
  "cc",
  "libc",
@@ -1850,8 +1850,7 @@ dependencies = [
 [[package]]
 name = "corepc-node"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "887faf7fdf38a5b99b3efb69e18e27fb9de77c812c5c48956a8076c7f9076b99"
+source = "git+https://github.com/alpinevm/corepc?rev=f168d5a478cd2311250db49d4e5ce48c290ed7b7#f168d5a478cd2311250db49d4e5ce48c290ed7b7"
 dependencies = [
  "anyhow",
  "bitcoin_hashes 0.14.0",
