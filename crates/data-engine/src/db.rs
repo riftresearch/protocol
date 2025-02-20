@@ -1,8 +1,12 @@
 use crate::models::{
     ChainAwareDeposit, ChainAwareProposedSwap, ChainAwareRelease, ChainAwareWithdraw, OTCSwap,
 };
-use alloy::primitives::{keccak256, Address};
+use alloy::{
+    primitives::{keccak256, Address},
+    sol_types::SolValue,
+};
 use eyre::Result;
+use rift_core::vaults::hash_deposit_vault;
 use rift_sdk::bindings::Types::{DepositVault, ProposedSwap};
 use std::str::FromStr;
 use tokio_rusqlite::{params, Connection};
@@ -163,7 +167,10 @@ pub async fn add_deposit(
     deposit_block_hash: [u8; 32],
     deposit_txid: [u8; 32],
 ) -> Result<()> {
-    let deposit_id = deposit.salt.to_vec();
+    let deposit_id = hash_deposit_vault(&sol_types::Types::DepositVault::abi_decode(
+        &deposit.abi_encode(),
+        false,
+    )?);
     let deposit_vault_str = serde_json::to_string(&deposit)
         .map_err(|e| eyre::eyre!("Failed to serialize DepositVault: {:?}", e))?;
 

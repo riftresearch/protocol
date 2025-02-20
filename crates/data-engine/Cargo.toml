@@ -9,6 +9,7 @@ exclude.workspace = true
 rift-sdk.workspace = true
 bitcoin-light-client-core.workspace = true
 sol-types.workspace = true
+rift-core.workspace = true
 
 tokio.workspace = true
 eyre.workspace = true

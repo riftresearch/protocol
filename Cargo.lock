@@ -2163,6 +2163,7 @@ dependencies = [
  "clap",
  "eyre",
  "futures-util",
+ "rift-core",
  "rift-sdk",
  "serde",
  "serde_json",

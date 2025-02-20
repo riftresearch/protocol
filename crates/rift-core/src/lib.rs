@@ -69,8 +69,12 @@ impl RiftTransaction {
 // Combine Light Client and Rift Transaction "programs"
 pub mod giga {
     use super::*;
-    use bitcoin_light_client_core::{hasher::Keccak256Hasher, ChainTransition};
+    use bitcoin_light_client_core::{
+        hasher::Keccak256Hasher, AuxiliaryLightClientData, ChainTransition,
+    };
 
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[repr(u8)]
     pub enum RustProofType {
         SwapOnly,
         LightClientOnly,
@@ -91,7 +95,7 @@ pub mod giga {
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct RiftProgramInput {
-        pub proof_type: ProofType,
+        pub proof_type: RustProofType,
         pub light_client_input: Option<ChainTransition>,
         pub rift_transaction_input: Option<Vec<RiftTransaction>>,
     }
@@ -137,7 +141,7 @@ pub mod giga {
                         .light_client_input
                         .ok_or("light_client_input is required for LightClient proof type")?;
                     Ok(RiftProgramInput {
-                        proof_type: ProofType::from(proof_type as u8),
+                        proof_type,
                         light_client_input: Some(light_client_input),
                         rift_transaction_input: None,
                     })
@@ -147,7 +151,7 @@ pub mod giga {
                         "rift_transaction_input is required for RiftTransaction proof type",
                     )?;
                     Ok(RiftProgramInput {
-                        proof_type: ProofType::from(proof_type as u8),
+                        proof_type,
                         light_client_input: None,
                         rift_transaction_input: Some(rift_transaction_input),
                     })
@@ -160,7 +164,7 @@ pub mod giga {
                         .rift_transaction_input
                         .ok_or("rift_transaction_input is required for Full proof type")?;
                     Ok(RiftProgramInput {
-                        proof_type: ProofType::from(proof_type as u8),
+                        proof_type,
                         light_client_input: Some(light_client_input),
                         rift_transaction_input: Some(rift_transaction_input),
                     })
@@ -177,11 +181,19 @@ pub mod giga {
     }
     */
     impl RiftProgramInput {
-        pub fn verify(self) -> ProofPublicInput {
-            let proof_type = self.proof_type;
-            let matchable_proof_type = RustProofType::from(proof_type.clone());
+        pub fn get_auxiliary_light_client_data(
+            &self,
+        ) -> (LightClientPublicInput, AuxiliaryLightClientData) {
+            let (light_client_public_input, auxiliary_data) = self
+                .light_client_input
+                .as_ref()
+                .expect("light_client_input is required for LightClient proof type")
+                .verify::<Keccak256Hasher>(true);
+            (light_client_public_input, auxiliary_data.unwrap())
+        }
 
-            match matchable_proof_type {
+        pub fn verify(self) -> ProofPublicInput {
+            match self.proof_type {
                 RustProofType::SwapOnly => {
                     let rift_transaction_public_input = self
                         .rift_transaction_input
@@ -191,29 +203,29 @@ pub mod giga {
                         .collect();
 
                     ProofPublicInput {
-                        proofType: proof_type.into(),
+                        proofType: self.proof_type as u8,
                         lightClient: LightClientPublicInput::default(),
                         swaps: rift_transaction_public_input,
                     }
                 }
 
                 RustProofType::LightClientOnly => {
-                    let light_client_public_input = self
+                    let (light_client_public_input, _) = self
                         .light_client_input
                         .expect("light_client_input is required for LightClientOnly proof type")
-                        .verify::<Keccak256Hasher>();
+                        .verify::<Keccak256Hasher>(false);
 
                     ProofPublicInput {
-                        proofType: proof_type.into(),
+                        proofType: self.proof_type as u8,
                         lightClient: light_client_public_input,
                         swaps: Vec::default(),
                     }
                 }
                 RustProofType::Combined => {
-                    let light_client_public_input = self
+                    let (light_client_public_input, _) = self
                         .light_client_input
                         .expect("light_client_input is required for Combined proof type")
-                        .verify::<Keccak256Hasher>();
+                        .verify::<Keccak256Hasher>(false);
                     let rift_transaction_public_input = self
                         .rift_transaction_input
                         .expect("rift_transaction_input is required for Combined proof type")
@@ -222,7 +234,7 @@ pub mod giga {
                         .collect();
 
                     ProofPublicInput {
-                        proofType: proof_type.into(),
+                        proofType: self.proof_type as u8,
                         lightClient: light_client_public_input,
                         swaps: rift_transaction_public_input,
                     }

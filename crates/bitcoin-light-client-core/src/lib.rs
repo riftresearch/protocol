@@ -171,6 +171,11 @@ pub struct ChainTransition {
     pub new_headers: Vec<Header>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AuxiliaryLightClientData {
+    pub compressed_leaves: Vec<u8>,
+}
+
 impl ChainTransition {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -197,7 +202,11 @@ impl ChainTransition {
 
     /// Commit to a new chain, validating the new headers are valid under PoW
     /// and that the new chain extends the previous chain from a previous header.
-    pub fn verify<H: Hasher>(&self) -> LightClientPublicInput {
+    /// auxiliary data is used by clients who create proofs who need to post data onchain
+    pub fn verify<H: Hasher>(
+        &self,
+        include_auxiliary_data: bool,
+    ) -> (LightClientPublicInput, Option<AuxiliaryLightClientData>) {
         // [0] Validate block hashes
         validate_leaf_block_hashes(
             &self.parent.header,
@@ -277,18 +286,29 @@ impl ChainTransition {
             new_mmr.append(&leaf.hash::<H>());
         }
 
-        // [11] Compress the leaves
-        let compressed_leaves: Vec<u8> = new_leaves.compress();
+        // [11] Compress the parent leaf and new leaves
+        let mut all_leaves = vec![self.parent.leaf];
+        all_leaves.extend(new_leaves);
+        let compressed_leaves: Vec<u8> = all_leaves.compress();
 
         // [12] Compute the new leaves commitment
         let new_leaves_commitment = H::hash(&compressed_leaves);
 
         // [13] return the Public Input to commit to witness
-        LightClientPublicInput {
+        let public_input = LightClientPublicInput {
             previousMmrRoot: self.previous_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesCommitment: new_leaves_commitment.into(),
-            tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
+            tipBlockLeaf: (*all_leaves.last().expect("New leaves should not be empty")).into(),
+        };
+
+        if include_auxiliary_data {
+            (
+                public_input,
+                Some(AuxiliaryLightClientData { compressed_leaves }),
+            )
+        } else {
+            (public_input, None)
         }
     }
 }
@@ -472,7 +492,7 @@ mod tests {
             vec![],
             new_headers.to_vec(),
         )
-        .verify::<Keccak256Hasher>();
+        .verify::<Keccak256Hasher>(false);
 
         println!("Public input: {:?}", public_input);
         // Verify the new MMR root and public inputs
@@ -611,7 +631,7 @@ mod tests {
                 .collect(),
             btc_headers,
         )
-        .verify::<Keccak256Hasher>();
+        .verify::<Keccak256Hasher>(false);
 
         println!("Public input: {:?}", public_input);
     }

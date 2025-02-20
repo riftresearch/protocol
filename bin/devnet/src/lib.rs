@@ -32,7 +32,7 @@ use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
 const TOKEN_SYMBOL: &str = "cbBTC";
 const TOKEN_NAME: &str = "Coinbase Wrapped BTC";
 const TOKEN_DECIMALS: u8 = 8;
-const contract_data_engine_SERVER_PORT: u16 = 50100;
+const CONTRACT_DATA_ENGINE_SERVER_PORT: u16 = 50100;
 
 use alloy::sol;
 
@@ -203,7 +203,7 @@ impl RiftDevnet {
         let contract_data_engine_server = if interactive {
             let server = DataEngineServer::from_engine(
                 contract_data_engine.clone(),
-                contract_data_engine_SERVER_PORT,
+                CONTRACT_DATA_ENGINE_SERVER_PORT,
             )
             .await?;
             Some(server)
@@ -227,7 +227,7 @@ impl RiftDevnet {
             );
             println!(
                 "Data Engine HTTP URL:  http://localhost:{}",
-                contract_data_engine_SERVER_PORT
+                CONTRACT_DATA_ENGINE_SERVER_PORT
             );
             println!(
                 "Bitcoin RPC URL:       {}",
@@ -314,8 +314,9 @@ mod tests {
     use rift_core::spv::generate_bitcoin_txn_merkle_proof;
     use rift_core::vaults::hash_deposit_vault;
     use rift_core::RiftTransaction;
-    use rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf;
     use rift_sdk::bindings::non_artifacted_types::Types::MMRProof;
+    use rift_sdk::bindings::non_artifacted_types::Types::{BlockLeaf, ProofPublicInput};
+    use rift_sdk::bindings::Types::BlockProofParams;
     use rift_sdk::mmr::client_mmr_proof_to_circuit_mmr_proof;
     use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
     use rift_sdk::{
@@ -393,13 +394,6 @@ mod tests {
             .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
             .await
             .expect("Failed to create maker evm provider");
-
-        let taker_evm_provider = ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(taker_evm_wallet)
-            .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
-            .await
-            .expect("Failed to create taker evm provider");
 
         // Quick references
         let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();
@@ -700,6 +694,18 @@ mod tests {
 
         let proof_generator = proof_generator_handle.await.unwrap();
 
+        let receipt_logs = receipt.inner.logs();
+        // this will have only a VaultsUpdated log
+        let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+            &receipt_logs
+                .iter()
+                .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+                .unwrap()
+                .inner,
+            false,
+        )
+        .unwrap();
+
         /*
         #[derive(Debug, Clone, Serialize, Deserialize, Default)]
         pub struct BlockPosition {
@@ -733,6 +739,7 @@ mod tests {
                 .unwrap();
             (leaf, leaf_index)
         };
+        println!("parent_leaf: {:?}", parent_leaf);
         let parent_header: Header = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(
             &devnet
                 .bitcoin
@@ -957,108 +964,222 @@ mod tests {
             "Proved light client update from block {:?} to {:?} and swap bitcoin transaction.\n Proof Info: {:?}",
             first_download_height, last_download_height, proof
         );
+        // wait for the block to be included in the data engine
+
+        let swap_mmr_proof = devnet
+            .bitcoin
+            .bitcoin_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_circuit_proof(swap_block_height as usize, None)
+            .await
+            .unwrap();
+
+        let swap_leaf: sol_types::Types::BlockLeaf = swap_leaf.into();
+        let swap_leaf = rift_sdk::bindings::Types::BlockLeaf::abi_decode(
+            swap_leaf.abi_encode().as_slice(),
+            false,
+        )
+        .unwrap();
 
         // We'll do a single-swap array:
         let swap_params = vec![SubmitSwapProofParams {
             swapBitcoinTxid: bitcoin_txid.into(),
             vault: new_vault.clone(),
-            storageStrategy: 0.into(), // Append
+            storageStrategy: 0, // Append
             localOverwriteIndex: 0,
-            swapBitcoinBlockLeaf: swap_leaf,
-            swapBitcoinBlockSiblings: blockSi,
-            swapBitcoinBlockPeaks: vec![],
+            swapBitcoinBlockLeaf: swap_leaf.clone(),
+            swapBitcoinBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
+            swapBitcoinBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
         }];
+
+        // just call verify not in the proof
+        let (public_values_simulated, auxiliary_data) =
+            rift_program_input.get_auxiliary_light_client_data();
+
+        let block_proof_params = BlockProofParams {
+            priorMmrRoot: public_values_simulated.previousMmrRoot,
+            newMmrRoot: public_values_simulated.newMmrRoot,
+            tipBlockLeaf: rift_sdk::bindings::Types::BlockLeaf::abi_decode(
+                public_values_simulated.tipBlockLeaf.abi_encode().as_slice(),
+                false,
+            )
+            .unwrap(),
+            compressedBlockLeaves: auxiliary_data.compressed_leaves.into(),
+        };
 
         // We also pass an empty "overwriteSwaps"
         let overwrite_swaps = vec![];
 
         // The contract function is:
-        // submitBatchSwapProof(
-        //   SubmitSwapProofParams[] swapParams,
-        //   ProposedSwap[] overwriteSwaps,
-        //   bytes calldata proof
+        // Types.SubmitSwapProofParams[] calldata swapParams,
+        // Types.BlockProofParams calldata blockProofParams,
+        // Types.ProposedSwap[] calldata overwriteSwaps,
+        // bytes calldata proof
         // )
-        // We can pass an empty "proof" or something.
-        let no_proof = vec![];
+        let mock_proof = vec![];
 
-        let tx_call = rift_exchange
-            .submitBatchSwapProof(swap_params, overwrite_swaps, no_proof.into())
-            .legacy();
+        let swap_proof_call = rift_exchange.submitBatchSwapProofWithLightClientUpdate(
+            swap_params,
+            block_proof_params,
+            overwrite_swaps,
+            mock_proof.into(),
+        );
+        let swap_proof_calldata = swap_proof_call.calldata().clone();
 
-        let proof_receipt = tx_call
-            .send()
-            .await
-            .expect("submitBatchSwapProof call failed")
-            .get_receipt()
-            .await
-            .expect("No receipt for swap proof submission");
+        let swap_proof_tx = maker_evm_provider
+            .send_transaction(swap_proof_call.into_transaction_request())
+            .await;
 
-        println!("Swap proof receipt: {:?}", proof_receipt);
+        let swap_proof_receipt = match swap_proof_tx {
+            Ok(tx) => {
+                let receipt = tx.get_receipt().await.expect("No swap proof tx receipt");
+                println!("Swap proof receipt: {:?}", receipt);
+                receipt
+            }
+            Err(tx_error) => {
+                println!("Swap proof submission error: {:?}", tx_error);
+                let block_height = devnet
+                    .ethereum
+                    .funded_provider
+                    .get_block_number()
+                    .await
+                    .map_err(|e| eyre::eyre!(e))
+                    .unwrap();
 
-        // ---6) The maker's liquidity is now "Proved." Next step is "releaseLiquidityBatch."
-        // Typically, that requires waiting until the challenge period is over, and the final block is confirmed.
-        // For test, we can just do it immediately. We'll craft a minimal "ReleaseLiquidityParams."
-
-        use rift_sdk::bindings::non_artifacted_types::Types::ReleaseLiquidityParams;
-
-        // We re-use the same fake MMR proof references for the "swapBlock" or tip.
-        // The contract calls _ensureBitcoinInclusion(...) on them:
-        let block_chainwork = fake_swap_proof.blockLeaf.cumulativeChainwork;
-        let block_height = fake_swap_proof.blockLeaf.height;
-
-        // The deposit again
-        let release_params = ReleaseLiquidityParams {
-            swap: ProposedSwap {
-                swapIndex: 0,
-                depositVaultCommitment: deposit_vault_commitment.into(),
-                swapBitcoinBlockHash: fake_swap_proof.blockLeaf.blockHash,
-                confirmationBlocks: 6,
-                liquidityUnlockTimestamp: 0,
-                specifiedPayoutAddress: maker_address,
-                totalSwapFee: deposit_fee,
-                totalSwapOutput: deposit_amount - deposit_fee,
-                state: 1, // 1 => Proved
-            },
-            swapBlockChainwork: block_chainwork.into(),
-            swapBlockHeight: block_height,
-            bitcoinSwapBlockSiblings: fake_swap_proof.siblings.clone(),
-            bitcoinSwapBlockPeaks: fake_swap_proof.peaks.clone(),
-            utilizedVault: DepositVault {
-                vaultIndex: 0,
-                depositTimestamp: 0,
-                depositAmount,
-                depositFee,
-                expectedSats: expected_sats as u64,
-                btcPayoutScriptPubKey: [0; 22],
-                specifiedPayoutAddress: maker_address,
-                ownerAddress: maker_address,
-                salt: [0x44; 32].into(),
-                confirmationBlocks: 6,
-                attestedBitcoinBlockHeight: 1,
-            },
-            tipBlockHeight: 1235, // from fake tip
+                let data = hex::encode(swap_proof_calldata);
+                let from = taker_evm_address.to_string();
+                let to = rift_exchange.address().to_string();
+                println!(
+                    "To debug failed swap proof submission run: cast call {} --from {} --data {} --trace --block {} --rpc-url {}",
+                    to,
+                    from,
+                    data,
+                    block_height,
+                    devnet.ethereum.anvil.endpoint()
+                );
+                // Allow for debugging before panic
+                signal::ctrl_c().await.unwrap();
+                panic!("Swap proof submission failed");
+            }
         };
 
-        let release_batch = vec![release_params];
+        let receipt_logs = swap_proof_receipt.inner.logs();
+        // this will have only a VaultsUpdated log
+        let binding = RiftExchange::SwapsUpdated::decode_log(
+            &receipt_logs
+                .iter()
+                .find(|log| *log.topic0().unwrap() == RiftExchange::SwapsUpdated::SIGNATURE_HASH)
+                .unwrap()
+                .inner,
+            false,
+        )
+        .unwrap();
+        let proposed_swap = binding.data.swaps.first().unwrap();
 
-        let release_call = rift_exchange.releaseLiquidityBatch(release_batch).legacy();
-
-        let release_receipt = release_call
-            .send()
+        // First, get the MMR proof for the swap block (this proof contains the leaf data, siblings, and peaks)
+        let swap_mmr_proof = devnet
+            .bitcoin
+            .bitcoin_data_engine
+            .indexed_mmr
+            .read()
             .await
-            .expect("releaseLiquidityBatch call failed")
-            .get_receipt()
+            .get_circuit_proof(swap_block_height as usize, None)
             .await
-            .expect("No receipt for release tx");
+            .expect("Failed to get swap block proof");
 
-        println!("Release receipt: {:?}", release_receipt);
+        // Also, get the current tip proof (used here to provide the tip block height)
+        let tip_mmr_proof = devnet
+            .bitcoin
+            .bitcoin_data_engine
+            .indexed_mmr
+            .read()
+            .await
+            .get_circuit_proof(swap_block_height as usize + 1, None)
+            .await
+            .expect("Failed to get tip block proof");
 
-        // ---7) Confirm final on-chain state e.g.
-        // Maker's vault is zero, maker's token balance is bigger, or some event is emitted.
-        // For brevity, we do a simple check:
+        // Now, construct the ReleaseLiquidityParams.
+        // The structure (defined in your Types) is as follows:
+        //   struct ReleaseLiquidityParams {
+        //       swap: ProposedSwap,
+        //       swapBlockChainwork: U256,
+        //       swapBlockHeight: u32,
+        //       bitcoinSwapBlockSiblings: Vec<Digest>,
+        //       bitcoinSwapBlockPeaks: Vec<Digest>,
+        //       utilizedVault: DepositVault,
+        //       tipBlockHeight: u32,
+        //   }
+        let release_params = rift_sdk::bindings::Types::ReleaseLiquidityParams {
+            swap: proposed_swap.clone(),
+            swapBlockChainwork: swap_leaf.cumulativeChainwork,
+            swapBlockHeight: swap_leaf.height.clone(),
+            bitcoinSwapBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
+            bitcoinSwapBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
+            utilizedVault: new_vault.clone(),
+            tipBlockHeight: (devnet.contract_data_engine.get_leaf_count().await.unwrap() - 1)
+                as u32,
+        };
+
+        // warp timestamp to 1 second after release timestamp
+        devnet
+            .ethereum
+            .funded_provider
+            .anvil_set_next_block_timestamp(release_params.swap.liquidityUnlockTimestamp + 1)
+            .await
+            .unwrap();
+
+        // Build the release liquidity call. Assume `release_params_array` is a Vec of ReleaseLiquidityParams.
+        let release_liquidity_call = rift_exchange.releaseLiquidityBatch(vec![release_params]);
+
+        // Extract the calldata for debugging
+        let release_liquidity_calldata = release_liquidity_call.calldata().clone();
+
+        // Send the transaction using the maker's EVM provider.
+        let release_liquidity_tx = maker_evm_provider
+            .send_transaction(release_liquidity_call.into_transaction_request())
+            .await;
+
+        // Handle the result with debugging output on error.
+        let release_liquidity_receipt = match release_liquidity_tx {
+            Ok(tx) => {
+                let receipt = tx
+                    .get_receipt()
+                    .await
+                    .expect("No release liquidity tx receipt");
+                println!("Release liquidity receipt: {:?}", receipt);
+                receipt
+            }
+            Err(tx_error) => {
+                println!("Release liquidity submission error: {:?}", tx_error);
+                // Fetch current block height for debug info.
+                let block_height = devnet
+                    .ethereum
+                    .funded_provider
+                    .get_block_number()
+                    .await
+                    .map_err(|e| eyre::eyre!(e))
+                    .unwrap();
+
+                let data = hex::encode(release_liquidity_calldata);
+                let from = taker_evm_address.to_string();
+                let to = rift_exchange.address().to_string();
+                println!(
+            "To debug failed release liquidity submission run: cast call {} --from {} --data {} --trace --block {} --rpc-url {}",
+            to,
+            from,
+            data,
+            block_height,
+            devnet.ethereum.anvil.endpoint()
+        );
+                // Allow for debugging before panicking.
+                signal::ctrl_c().await.unwrap();
+                panic!("Release liquidity submission failed");
+            }
+        };
 
         // If all steps got here w/o revert, we assume success:
         println!("All steps in the end-to-end flow completed successfully!");
-        */
     }
 }

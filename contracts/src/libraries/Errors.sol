@@ -33,4 +33,5 @@ library Errors {
     error CheckpointNotEstablished();
     error ChainworkTooLow();
     error NoSwapsToSubmit();
+    error NotEnoughConfirmations();
 }
