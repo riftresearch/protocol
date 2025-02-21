@@ -15,6 +15,9 @@ RUN curl -L https://sp1up.succinct.xyz | bash && \
     . ~/.bashrc && \
     sp1up -v v4.0.1
 
+# Make sure the installed binaries are on PATH for all future RUN commands
+ENV PATH="/root/.foundry/bin:/root/.sp1/bin:${PATH}"
+
 # Set working directory
 WORKDIR /app
 
@@ -27,3 +30,4 @@ RUN cargo build --release --bin devnet
 # Default entrypoint
 ENTRYPOINT ["/app/target/release/devnet"]
 CMD []
+
