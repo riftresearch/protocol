@@ -218,19 +218,19 @@ impl RiftDevnet {
         if interactive {
             println!("---RIFT DEVNET---");
             println!(
-                "Anvil HTTP Url:        {}",
-                ethereum_devnet.anvil.endpoint()
+                "Anvil HTTP Url:        http://0.0.0.0:{}",
+                ethereum_devnet.anvil.port()
             );
             println!(
-                "Anvil WS Url:          {}",
-                ethereum_devnet.anvil.ws_endpoint()
+                "Anvil WS Url:          ws://0.0.0.0:{}",
+                ethereum_devnet.anvil.port()
             );
             println!(
                 "Anvil Chain ID:        {}",
                 ethereum_devnet.anvil.chain_id()
             );
             println!(
-                "Data Engine HTTP URL:  http://localhost:{}",
+                "Data Engine HTTP URL:  http://0.0.0.0:{}",
                 CONTRACT_DATA_ENGINE_SERVER_PORT
             );
             println!(

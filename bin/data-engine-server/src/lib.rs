@@ -54,7 +54,7 @@ impl DataEngineServer {
             .layer(cors)
             .with_state(data_engine.clone());
 
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
         tracing::info!("Listening on {}", addr);
 
         // Spawn the server in a non-blocking fashion.

@@ -128,9 +128,11 @@ pub struct ForkConfig {
 async fn spawn_anvil(fork_config: Option<ForkConfig>) -> Result<AnvilInstance> {
     tokio::task::spawn_blocking(|| {
         let mut anvil = Anvil::new()
+            .arg("--host")
+            .arg("0.0.0.0")
+            .port(50101_u16)
             .block_time(1)
             .chain_id(1337)
-            .port(50101_u16)
             .arg("--steps-tracing")
             .arg("--timestamp")
             .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string());
