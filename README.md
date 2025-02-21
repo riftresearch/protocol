@@ -29,8 +29,14 @@ Ensure you have the following tools installed:
 - [SP1](https://docs.succinct.xyz/docs/sp1/getting-started/install)
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
 - [Git LFS](https://git-lfs.github.com/)
+
   
 ## Run Devnet
 ```sh
-cargo run --release --bin devnet -- --help
+cargo run --release --bin devnet
 ```
+Alternatively, the devnet is packaged as a docker image: 
+```sh
+docker run -it -p 50101:50101 -p 50100:50100 riftresearch/devnet:latest
+```
+
