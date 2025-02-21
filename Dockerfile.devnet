@@ -4,7 +4,7 @@
 # ----------------------------------------------
 FROM rust:1.68.0-slim-bullseye AS builder
 
-# Install any build dependencies you might need
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config libssl-dev build-essential curl git clang \
     && rm -rf /var/lib/apt/lists/*
@@ -19,7 +19,7 @@ RUN curl -L https://sp1up.succinct.xyz | bash && \
     . ~/.bashrc && \
     sp1up -v v4.0.1
 
-# Create a new empty shell project
+# Set working directory
 WORKDIR /app
 
 # Copy the entire monorepo into /app
@@ -28,24 +28,31 @@ COPY . .
 # Build all release binaries
 RUN cargo build --release
 
+# Debugging: Verify the presence of bitcoind
+RUN find /app/target -name "bitcoind"  # Check where bitcoind actually is
+
 # ----------------------------------------------
 # 2) Final Stage
 #    Copies the compiled binaries into a minimal base
 # ----------------------------------------------
 FROM debian:bullseye-slim
 
-# Install runtime dependencies if needed
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
-# Copy the entire 'target/release' directory from the builder stage
-COPY --from=builder /app/target/release /usr/local/bin/
+# Create an identical /app folder
+WORKDIR /app
 
-# Optionally set a working directory if your binaries need to read or write files
+# Copy the entire /app/target directory from the builder stage
+COPY --from=builder /app/target /app/target
+
+# Set the working directory for devnet
 WORKDIR /opt/devnet
 
-# Expose any ports if required
+# Expose necessary ports if required
 # EXPOSE 50100
 
-# Set ENTRYPOINT to devnet but allow passing arguments dynamically
+# Default entrypoint
 ENTRYPOINT ["/usr/local/bin/devnet"]
 CMD []
+
