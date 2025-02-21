@@ -1,8 +1,4 @@
-# ----------------------------------------------
-# 1) Builder Stage
-#    Build the binaries in a Rust environment
-# ----------------------------------------------
-FROM rust:1.82.0-slim-bullseye AS builder
+FROM rust:1.82.0-slim-bullseye
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -25,35 +21,8 @@ WORKDIR /app
 # Copy the entire monorepo into /app
 COPY . .
 
-# Build all release binaries
-RUN cargo build --release
-
-
-# ----------------------------------------------
-# 2) Final Stage
-#    Copies the compiled binaries into a minimal base
-# ----------------------------------------------
-FROM debian:bullseye-slim
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
-
-# Copy Foundry and SP1 from builder
-COPY --from=builder /root/.foundry /root/.foundry
-COPY --from=builder /root/.sp1 /root/.sp1
-COPY --from=builder /root/.cargo/bin/forge /usr/local/bin/forge
-COPY --from=builder /root/.cargo/bin/cast /usr/local/bin/cast
-COPY --from=builder /root/.cargo/bin/anvil /usr/local/bin/anvil
-COPY --from=builder /root/.cargo/bin/sp1 /usr/local/bin/sp1
-
-# Create an identical /app folder
-WORKDIR /app
-
-# Copy the entire /app/target directory from the builder stage
-COPY --from=builder /app/target /app/target
-
-# Set the working directory for devnet
-WORKDIR /opt/devnet
+# Build the devnet binary
+RUN cargo build --release --bin devnet
 
 # Default entrypoint
 ENTRYPOINT ["/app/target/release/devnet"]
