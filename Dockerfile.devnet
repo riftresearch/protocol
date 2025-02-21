@@ -7,8 +7,18 @@ FROM rust:1.68.0-slim-bullseye AS builder
 # Install any build dependencies you might need
 # (If you need apt packages, add them here)
 RUN apt-get update && apt-get install -y \
-    pkg-config libssl-dev build-essential \
+    pkg-config libssl-dev build-essential curl git \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Foundry
+RUN curl -L https://foundry.paradigm.xyz | bash && \
+    . ~/.bashrc && \
+    foundryup -i v1.0.0
+
+# Install SP1
+RUN curl -L https://sp1up.succinct.xyz | bash && \
+    . ~/.bashrc && \
+    sp1up -v v4.0.1
 
 # Create a new empty shell project
 WORKDIR /app

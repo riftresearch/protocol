@@ -29,6 +29,7 @@ use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
 
 // ================== Contract ABIs ================== //
 
+const TOKEN_ADDRESS: &str = "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf";
 const TOKEN_SYMBOL: &str = "cbBTC";
 const TOKEN_NAME: &str = "Coinbase Wrapped BTC";
 const TOKEN_DECIMALS: u8 = 8;
