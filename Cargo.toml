@@ -3,7 +3,8 @@ members = [
   "bin/benchmark-light-client",
   "bin/devnet",
   "bin/data-engine-server",
-  # "bin/hypernode",
+  "bin/hypernode",
+  "bin/checkpoint-downloader",
   "crates/data-engine",
   "crates/bitcoin-core-rs",
   "crates/bitcoin-light-client-core",
@@ -88,6 +89,7 @@ backoff = { version = "0.4.0", features=["tokio"] }
 bitcoincore-rpc-async2 = { git = "https://github.com/turbofish-org/rust-bitcoincore-rpc-async.git", rev = "5ff63dada9b538f54645ccd3b64980661986751f" }
 # corepc-node = { version = "0.5.0", features = ["28_0"] }
 corepc-node = { git = "https://github.com/alpinevm/corepc", rev = "f168d5a478cd2311250db49d4e5ce48c290ed7b7", features = ["28_0", "download"] }
+dotenv = "0.15.0"
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0-rc.3" }

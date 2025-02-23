@@ -1,0 +1,11 @@
+[package]
+version = "0.1.0"
+name = "checkpoint-downloader"
+edition = "2021"
+
+[dependencies]
+rift-sdk = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+bitcoincore-rpc-async2 = { workspace = true }
+bitcoin-light-client-core = { workspace = true }
