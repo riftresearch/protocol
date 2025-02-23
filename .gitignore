@@ -17,3 +17,7 @@ pgo-data.profdata
 
 # Env
 .env
+
+# Checkpoint
+checkpoint_leaves.txt
+checkpoint_leaves.zstd
