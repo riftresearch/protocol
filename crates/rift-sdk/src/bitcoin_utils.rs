@@ -2,14 +2,19 @@ use alloy::signers::k256;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{BlockHash, BlockHeader};
 use bitcoincore_rpc_async::json::GetBlockHeaderResult;
+use serde_json::value::RawValue;
 use tokio::time::Instant;
 
 use crate::errors::RiftSdkError;
+use backoff::future::retry;
+use backoff::Error as BackoffError;
+use backoff::ExponentialBackoff;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::jsonrpc::Transport;
 use bitcoincore_rpc_async::jsonrpc::{Request, Response};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
+use futures::Future;
 use futures::{stream, StreamExt};
 use sol_types::Types::DepositVault;
 use std::ops::Deref;
@@ -17,10 +22,10 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use backoff::{Error as BackoffError, ExponentialBackoff};
 use reqwest::{Client as ReqwestClient, Url};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::marker::PhantomData;
 
 /// A minimal error type for the transport.
 #[derive(Debug)]
@@ -165,6 +170,58 @@ pub struct AsyncBitcoinClient {
     client: BitcoinClient,
 }
 
+struct BitcoinCoreJsonRpcRequest<T> {
+    method: &'static str,
+    args: Vec<serde_json::Value>,
+    response_type: PhantomData<T>,
+}
+
+// Add a constructor for convenience
+impl<T> BitcoinCoreJsonRpcRequest<T> {
+    fn new(method: &'static str, args: Vec<serde_json::Value>) -> Self {
+        Self {
+            method,
+            args,
+            response_type: PhantomData,
+        }
+    }
+}
+
+async fn retry_rpc_operation<T, F, Fut>(operation: F) -> bitcoincore_rpc_async::Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = bitcoincore_rpc_async::Result<T>>,
+{
+    let backoff = ExponentialBackoff {
+        initial_interval: Duration::from_millis(100),
+        max_interval: Duration::from_secs(10),
+        max_elapsed_time: Some(Duration::from_secs(30)),
+        ..Default::default()
+    };
+
+    retry(backoff, || async {
+        let res = operation().await;
+        match res {
+            Ok(val) => Ok(val),
+            Err(bitcoincore_rpc_async::Error::JsonRpc(
+                bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
+            )) if rpcerr.code == -32603 => {
+                println!("Retrying RPC call due to error: {:?}", rpcerr);
+                Err(BackoffError::transient(
+                    bitcoincore_rpc_async::Error::JsonRpc(
+                        bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
+                    ),
+                ))
+            }
+            Err(e) => {
+                println!("Real RPC error: {:?}", e);
+                Err(BackoffError::permanent(e))
+            }
+        }
+    })
+    .await
+}
+
 // wrapper over the bitcoincore_rpc_async client w/ explicit timeout and retry logic
 impl AsyncBitcoinClient {
     pub async fn new(
@@ -182,6 +239,56 @@ impl AsyncBitcoinClient {
         let client = BitcoinClient::from_jsonrpc(json_rpc_client);
         Ok(Self { client })
     }
+
+    async fn send_batch<T: for<'a> serde::de::Deserialize<'a>>(
+        &self,
+        requests: &[BitcoinCoreJsonRpcRequest<T>],
+    ) -> bitcoincore_rpc_async::Result<Vec<T>> {
+        let json_rpc_client = self.client.get_jsonrpc_client();
+
+        // First pass: build and store all owned argument vectors.
+        let mut v_args_store: Vec<Vec<Box<serde_json::value::RawValue>>> =
+            Vec::with_capacity(requests.len());
+        for request in requests {
+            let v_args: Vec<Box<serde_json::value::RawValue>> = request
+                .args
+                .iter()
+                .map(serde_json::value::to_raw_value)
+                .collect::<std::result::Result<_, serde_json::Error>>()?;
+            v_args_store.push(v_args);
+        }
+
+        // Second pass: build the request data using the stored v_args.
+        let mut request_data: Vec<Request<'_>> = Vec::with_capacity(requests.len());
+        for (i, request) in requests.iter().enumerate() {
+            let args_slice: &[Box<serde_json::value::RawValue>] = v_args_store[i].as_slice();
+            let req = json_rpc_client.build_request(request.method, args_slice);
+            request_data.push(req);
+        }
+
+        // Use our shared retry logic to send the batch
+        let responses = retry_rpc_operation(|| async {
+            json_rpc_client
+                .send_batch(&request_data)
+                .await
+                .map_err(|e| bitcoincore_rpc_async::Error::JsonRpc(e.into()))
+        })
+        .await?;
+
+        let mut results = Vec::with_capacity(responses.len());
+        for (i, response) in responses.iter().enumerate() {
+            let _request = &requests[i];
+            let result = response
+                .as_ref()
+                .ok_or(bitcoincore_rpc_async::Error::JsonRpc(
+                    bitcoincore_rpc_async::jsonrpc::error::Error::EmptyBatch,
+                ))?
+                .result::<T>()
+                .map_err(|e| bitcoincore_rpc_async::Error::JsonRpc(e.into()))?;
+            results.push(result);
+        }
+        Ok(results)
+    }
 }
 
 const RETRY_ATTEMPTS: u8 = 10;
@@ -194,33 +301,7 @@ impl RpcApi for AsyncBitcoinClient {
         cmd: &str,
         args: &[serde_json::Value],
     ) -> bitcoincore_rpc_async::Result<T> {
-        let backoff = ExponentialBackoff {
-            initial_interval: std::time::Duration::from_millis(100),
-            max_interval: std::time::Duration::from_secs(10),
-            max_elapsed_time: Some(std::time::Duration::from_secs(30)),
-            ..Default::default()
-        };
-
-        backoff::future::retry(backoff, || async {
-            match self.client.call(cmd, args).await {
-                Ok(ret) => Ok(ret),
-                Err(bitcoincore_rpc_async::Error::JsonRpc(
-                    bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
-                )) if rpcerr.code == -32603 => {
-                    println!("Retrying RPC call due to error: {:?}", rpcerr);
-                    Err(BackoffError::transient(
-                        bitcoincore_rpc_async::Error::JsonRpc(
-                            bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
-                        ),
-                    ))
-                }
-                Err(e) => {
-                    println!("Real RPC error: {:?}", e);
-                    Err(BackoffError::permanent(e))
-                }
-            }
-        })
-        .await
+        retry_rpc_operation(|| async { self.client.call(cmd, args).await }).await
     }
 }
 
@@ -344,77 +425,101 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         &self,
         start_block_height: u32,
         end_block_height: u32,
-        concurrency_limit: Option<usize>,
+        _concurrency_limit: Option<usize>, // no longer used since we use batch requests
         expected_parent: Option<[u8; 32]>,
     ) -> crate::errors::Result<Vec<BlockLeaf>> {
-        let concurrency_limit =
-            concurrency_limit.unwrap_or((end_block_height - start_block_height) as usize) + 1;
+        // Calculate number of blocks to fetch.
+        let num_blocks = (end_block_height - start_block_height + 1) as usize;
 
-        let block_heights = start_block_height..=end_block_height;
-        let leaves_stream = futures::stream::iter(block_heights).map(|height| async move {
-            let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
-                RiftSdkError::BitcoinRpcError(format!(
-                    "Error getting block hash for height {} {}",
-                    height, e
-                ))
+        // ===============================================================
+        // Batch 1: For each height, get the block hash.
+        // ===============================================================
+        let hash_requests: Vec<BitcoinCoreJsonRpcRequest<BlockHash>> = (start_block_height
+            ..=end_block_height)
+            .map(|height| BitcoinCoreJsonRpcRequest {
+                method: "getblockhash",
+                args: vec![serde_json::json!(height)],
+                response_type: PhantomData,
+            })
+            .collect();
+
+        let block_hashes: Vec<BlockHash> = self.send_batch(&hash_requests).await.map_err(|e| {
+            RiftSdkError::BitcoinRpcError(format!("Error getting block hashes: {}", e))
+        })?;
+
+        // ===============================================================
+        // Batch 2: For each block hash, get the block header info.
+        // ===============================================================
+        let header_requests: Vec<BitcoinCoreJsonRpcRequest<GetBlockHeaderResult>> = block_hashes
+            .iter()
+            .map(|block_hash| BitcoinCoreJsonRpcRequest {
+                method: "getblockheader",
+                // assuming the RPC takes a hex string for the block hash
+                args: vec![serde_json::json!(block_hash.to_string()), true.into()],
+                response_type: PhantomData,
+            })
+            .collect();
+
+        let header_results: Vec<GetBlockHeaderResult> =
+            self.send_batch(&header_requests).await.map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!("Error getting block header info: {}", e))
             })?;
 
-            let block = self.get_block_header_info(&block_hash).await.map_err(|e| {
-                RiftSdkError::BitcoinRpcError(format!(
-                    "Error getting block header info for height {} {}",
-                    height, e
-                ))
-            })?;
+        // ===============================================================
+        // Build our result vector from the block hashes and headers.
+        // ===============================================================
+        let mut results = Vec::with_capacity(num_blocks);
+        for i in 0..num_blocks {
+            let height = start_block_height + i as u32;
+            let block_hash = &block_hashes[i];
+            let header = &header_results[i];
 
+            // Convert block hash to an array of 32 bytes and reverse (as in your original code)
             let mut explorer_block_hash: [u8; 32] = block_hash.as_hash().into_inner();
             explorer_block_hash.reverse();
 
-            let chainwork: [u8; 32] = block
+            // Extract chainwork from header (expecting exactly 32 bytes)
+            let chainwork: [u8; 32] = header
                 .chainwork
                 .as_slice()
                 .try_into()
                 .expect("Chainwork is not 32 bytes");
+
             let leaf = BlockLeaf::new(explorer_block_hash, height, chainwork);
-            Ok::<_, RiftSdkError>((height, leaf, block))
-        });
+            // Note: if GetBlockHeaderResult isn't Copy, you may need to clone it.
+            results.push((height, leaf, header.clone()));
+        }
 
-        let mut results = leaves_stream
-            .buffer_unordered(concurrency_limit)
-            .try_collect::<Vec<(u32, BlockLeaf, GetBlockHeaderResult)>>()
-            .await?;
-
-        // Sort by height to restore the correct order
+        // Sort by height (if necessary)
         results.sort_by_key(|(height, _, _)| *height);
 
-        // Split into separate vectors maintaining order
+        // Unzip into separate vectors (if you need headers for validation)
         let (leaves, headers): (Vec<BlockLeaf>, Vec<GetBlockHeaderResult>) = results
             .into_iter()
-            .map(|(_, leaf, header)| (leaf, header))
+            .map(|(_height, leaf, header)| (leaf, header))
             .unzip();
 
-        // Validation
+        // ===============================================================
+        // Validation: Check the expected parent, if provided.
+        // ===============================================================
         if let Some(expected_parent) = expected_parent {
-            if headers[0]
+            let first_prev = headers[0]
                 .previous_block_hash
-                .unwrap()
+                .as_ref()
+                .ok_or_else(|| {
+                    RiftSdkError::ParentValidationFailed("Missing previous block hash".to_string())
+                })?
                 .as_hash()
-                .into_inner()
-                .iter()
-                .rev()
-                .copied()
-                .collect::<Vec<u8>>()
-                != expected_parent
-            {
+                .into_inner();
+
+            // Reverse the byte order
+            let first_prev_rev: Vec<u8> = first_prev.iter().rev().copied().collect();
+
+            if first_prev_rev != expected_parent {
                 return Err(RiftSdkError::ParentValidationFailed(format!(
                     "Expected parent {} but got {} from downloaded block",
                     hex::encode(expected_parent),
-                    hex::encode(
-                        headers[0]
-                            .previous_block_hash
-                            .unwrap()
-                            .as_hash()
-                            .into_inner()
-                    )
+                    hex::encode(first_prev)
                 )));
             }
         }

@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Downloading blocks from 0 to {}", safe_end_block);
 
     let mut start_block = 0;
-    let chunk_size = 100;
+    let chunk_size = 1000;
     let checkpoint_filename = "checkpoint_leaves.txt";
 
     // If this is the first time running, overwrite the file.

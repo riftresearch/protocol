@@ -20,4 +20,4 @@ pgo-data.profdata
 
 # Checkpoint
 checkpoint_leaves.txt
-checkpoint_leaves.zstd
+checkpoint_leaves.zst
