@@ -4,7 +4,7 @@ use clap::Parser;
 use hex;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Write, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::time::Duration;
 use tokio;
 use zstd::stream::Encoder;
@@ -54,7 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let chunk_size = 100;
     let checkpoint_filename = "checkpoint_leaves.txt";
 
-    // [3] Open the checkpoint file in append mode
+    // If this is the first time running, overwrite the file.
+    if start_block == 0 {
+        File::create(checkpoint_filename)?; // This clears the file on a fresh run
+    }
+
+    // Open file in append mode for adding new chunks
     let mut checkpoint_file = OpenOptions::new()
         .create(true)
         .append(true)
