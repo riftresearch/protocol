@@ -27,6 +27,12 @@ pub struct CheckpointDownloaderArgs {
     /// Bitcoin block height to stop downloading at (inclusive)
     #[arg(short, long, env)]
     pub end_block: u32,
+
+
+    /// Chunks per request (concurrency param) 
+
+    #[arg(short, long, env)]
+    pub chunk_size: u32,
 }
 
 #[tokio::main]
@@ -51,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Downloading blocks from 0 to {}", safe_end_block);
 
     let mut start_block = 0;
-    let chunk_size = 1000;
+    let chunk_size = args.chunk_size;
     let checkpoint_filename = "checkpoint_leaves.txt";
 
     // If this is the first time running, overwrite the file.
