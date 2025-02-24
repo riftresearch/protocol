@@ -193,11 +193,11 @@ impl RiftDevnet {
         info!("Seeding data engine with checkpoint leaves...");
         let t = Instant::now();
         let mut contract_data_engine =
-            DataEngine::seed(DatabaseLocation::InMemory, checkpoint_leaves).await?;
+            DataEngine::seed(&DatabaseLocation::InMemory, checkpoint_leaves).await?;
         info!("Data engine seeded in {:?}", t.elapsed());
 
         // 3) Start EVM side
-        let circuit_verification_key_hash = get_rift_program_hash(); // or however you do it
+        let circuit_verification_key_hash = get_rift_program_hash();
         let (ethereum_devnet, deployment_block_number) = EthDevnet::setup(
             circuit_verification_key_hash,
             contract_data_engine.get_mmr_root().await.unwrap(),

@@ -73,7 +73,7 @@ impl BitcoinDevnet {
             ))?);
 
         let bitcoin_data_engine = futures::executor::block_on(BitcoinDataEngine::new(
-            DatabaseLocation::InMemory,
+            &DatabaseLocation::InMemory,
             bitcoin_rpc_client.clone(),
             100,
             Duration::from_millis(250),

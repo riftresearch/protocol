@@ -76,7 +76,7 @@ fn mock_chainwork_for_height(height: u32) -> U256 {
 async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
     let block_hashes = generate_block_hashes(height);
     let mmr_db_location = DatabaseLocation::InMemory;
-    let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(mmr_db_location)
+    let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&mmr_db_location)
         .await
         .unwrap();
 
@@ -157,7 +157,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
 ) {
     let tip_height = height + confirmations;
     let block_hashes = generate_block_hashes(tip_height);
-    let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory)
+    let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&DatabaseLocation::InMemory)
         .await
         .unwrap();
 

@@ -242,7 +242,7 @@ pub struct IndexedMMR<H: LeafHasher> {
 impl<H: LeafHasher> IndexedMMR<H> {
     /// Single constructor: open or create the store, check or set hasherType, build the MMR + ReverseIndex.
     /// For simplicity, we store a string like "myLeafHasher" under "hasherType" in the DB.
-    pub async fn open(database_location: DatabaseLocation) -> Result<Self> {
+    pub async fn open(database_location: &DatabaseLocation) -> Result<Self> {
         let hasher_name = H::name();
         // TODO: Unified hasher for circuit and client. For now: generic circuit hasher must be keccak256 to match the client
         assert_eq!(hasher_name, "keccak256");
@@ -508,7 +508,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_open() -> Result<()> {
         // 1) Create or open the MMR
-        let mut mmr = IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory).await?;
+        let mut mmr = IndexedMMR::<Keccak256Hasher>::open(&DatabaseLocation::InMemory).await?;
 
         // 2) Append a leaf
         let leaf = BlockLeaf {
@@ -540,7 +540,7 @@ mod tests {
 
         // 1) First open => sets hasherType
         {
-            let mut mmr = IndexedMMR::<Keccak256Hasher>::open(database_location.clone()).await?;
+            let mut mmr = IndexedMMR::<Keccak256Hasher>::open(&database_location).await?;
 
             // append a leaf
             let leaf = BlockLeaf {
@@ -553,7 +553,7 @@ mod tests {
 
         // 2) Second open => same hasherType => OK
         {
-            let mmr2 = IndexedMMR::<Keccak256Hasher>::open(database_location.clone()).await?;
+            let mmr2 = IndexedMMR::<Keccak256Hasher>::open(&database_location).await?;
             assert_eq!(mmr2.leaf_hasher_name(), "keccak256");
         }
 
@@ -563,7 +563,7 @@ mod tests {
     #[tokio::test]
     async fn test_indexed_mmr_creation() -> Result<()> {
         let mut indexed_mmr =
-            IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory).await?;
+            IndexedMMR::<Keccak256Hasher>::open(&DatabaseLocation::InMemory).await?;
 
         // Optional: Add some test data
         let test_leaf = BlockLeaf {
@@ -615,8 +615,7 @@ mod tests {
 
         // First instance: Create and populate the MMR
         {
-            let mut indexed_mmr =
-                IndexedMMR::<Keccak256Hasher>::open(mmr_db_location.clone()).await?;
+            let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&mmr_db_location).await?;
             indexed_mmr.batch_append(&[test_leaf]).await?;
 
             // validate the underyling mmr client has leaf count > 0
@@ -631,7 +630,7 @@ mod tests {
 
         // Second instance: Create new MMR with same database path
         {
-            let indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(mmr_db_location.clone()).await?;
+            let indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&mmr_db_location).await?;
 
             // Verify we can find the leaf
             let found = indexed_mmr.get_leaf_by_leaf_hash(&leaf_hash).await?;
@@ -665,7 +664,7 @@ mod tests {
     #[tokio::test]
     async fn test_append_or_reorg_based_on_parent() -> Result<()> {
         let mmr_db_location = DatabaseLocation::InMemory;
-        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(mmr_db_location).await?;
+        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&mmr_db_location).await?;
 
         // 2) Insert three leaves: A, B, C
         //    For a "realistic" scenario, we vary the block_hash & height
@@ -775,7 +774,7 @@ mod tests {
     async fn test_append_or_reorg_based_on_parent_no_reorg() -> Result<()> {
         // 1) Create an in-memory IndexedMMR
         let mmr_db_location = DatabaseLocation::InMemory;
-        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(mmr_db_location).await?;
+        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&mmr_db_location).await?;
 
         // 2) Insert initial leaves A and B
         let leaf_a = BlockLeaf {

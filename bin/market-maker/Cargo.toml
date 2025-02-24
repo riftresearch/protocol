@@ -1,0 +1,8 @@
+[package]
+name = "market-maker"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+exclude.workspace = true
+
+[dependencies]

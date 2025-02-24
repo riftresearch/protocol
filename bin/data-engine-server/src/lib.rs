@@ -77,7 +77,7 @@ impl DataEngineServer {
         let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
         let data_engine = Arc::new(
             DataEngine::start(
-                config.database_location,
+                &config.database_location,
                 Arc::new(provider),
                 config.rift_exchange_address,
                 config.deploy_block_number,

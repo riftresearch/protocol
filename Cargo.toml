@@ -12,7 +12,7 @@ members = [
   "crates/rift-core", 
   "crates/rift-program",
   "crates/sol-types",
-  "test-data", "bin/test-utils", "crates/bitcoin-data-engine",
+  "test-data", "bin/test-utils", "crates/bitcoin-data-engine", "bin/market-maker",
   # "integration-tests"
   ]
 
@@ -37,6 +37,7 @@ rift-program = {path = "crates/rift-program"}
 data-engine = { path = "crates/data-engine" }
 test-data-utils = { path = "test-data" }
 data-engine-server = { path = "bin/data-engine-server" }
+checkpoint-downloader = { path = "bin/checkpoint-downloader" }
 devnet = {path = "bin/devnet"}
 
 # SP1 dependencies

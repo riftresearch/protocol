@@ -41,12 +41,10 @@ pub struct DataEngine {
 impl DataEngine {
     /// Seeds the DataEngine with the provided checkpoint leaves, but does not start the event listener.
     pub async fn seed(
-        database_location: DatabaseLocation,
+        database_location: &DatabaseLocation,
         checkpoint_leaves: Vec<BlockLeaf>,
     ) -> Result<Self> {
-        let indexed_mmr = Arc::new(RwLock::new(
-            IndexedMMR::open(database_location.clone()).await?,
-        ));
+        let indexed_mmr = Arc::new(RwLock::new(IndexedMMR::open(database_location).await?));
         let swap_database_connection = Arc::new(match database_location.clone() {
             DatabaseLocation::InMemory => tokio_rusqlite::Connection::open_in_memory().await?,
             DatabaseLocation::Directory(path) => {
@@ -71,7 +69,7 @@ impl DataEngine {
     /// Seeds the DataEngine and immediately starts the event listener.
     /// Internally this uses seed() and then start_server().
     pub async fn start(
-        database_location: DatabaseLocation,
+        database_location: &DatabaseLocation,
         provider: Arc<dyn Provider<PubSubFrontend>>,
         rift_exchange_address: String,
         deploy_block_number: u64,

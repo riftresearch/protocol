@@ -1,12 +1,14 @@
 use bitcoin_light_client_core::leaves::BlockLeaf;
+use bitcoincore_rpc_async::{Auth, RpcApi};
+use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use rift_sdk::{create_websocket_provider, DatabaseLocation};
 use serde_json;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
-use zip::read::ZipArchive;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -15,13 +17,17 @@ pub struct HypernodeArgs {
     #[arg(short, long, env)]
     pub evm_ws_rpc: String,
 
-    /// Bitcoin Core RPC URL for indexing
+    /// Bitcoin Core RPC URL with authentication (http(s)://username:password@host:port)
     #[arg(short, long, env)]
     pub btc_rpc: String,
 
     /// Ethereum private key for signing hypernode initiated transactions
     #[arg(short, long, env)]
     pub private_key: String,
+
+    /// Location of checkpoint file (bitcoin blocks that are committed to at deployment)
+    #[arg(short, long, env)]
+    pub checkpoint_file: String,
 
     /// Database location for MMRs
     #[arg(short, long, env)]
@@ -35,50 +41,69 @@ pub struct HypernodeArgs {
     #[arg(short, long, env)]
     pub deploy_block_number: u64,
 
-    /// Location of checkpoint file (bitcoin blocks that are irrevertible)
-    #[arg(short, long, env)]
-    pub checkpoint_file: String,
+    /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
+    #[arg(short, long, env, default_value = "100")]
+    pub btc_batch_rpc_size: usize,
 
     /// Enable mock proof generation
     #[arg(short, long, env, default_value = "false")]
     pub mock_proof: bool,
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+const BITCOIN_RPC_TIMEOUT: Duration = Duration::from_secs(1);
+const BITCOIN_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // [0] configure logging (optional but recommended)
     let args = HypernodeArgs::parse();
 
     // [1] create provider
-    let evm_provider = Arc::new(create_websocket_provider(&args.evm_ws_rpc).await?);
+    let evm_rpc = Arc::new(create_websocket_provider(&args.evm_ws_rpc).await?);
 
-    // [2] load irrevertable bitcoin block leaves from checkpoint zip file
-    let file = File::open(&args.checkpoint_file)?;
-    let mut zip = ZipArchive::new(BufReader::new(file))?;
+    let btc_rpc = Arc::new(
+        rift_sdk::bitcoin_utils::AsyncBitcoinClient::new(
+            args.btc_rpc,
+            Auth::None,
+            BITCOIN_RPC_TIMEOUT,
+        )
+        .await?,
+    );
 
-    // [3] extract the JSON file from the zip archive
-    let mut leaves_json = String::new();
-    let mut file_in_zip = zip.by_name("leaves.json")?;
-    file_in_zip.read_to_string(&mut leaves_json)?;
-
-    // [4] deserialize JSON into Vec<BlockLeaf>
-    let checkpoint_leaves: Vec<BlockLeaf> = serde_json::from_str(&leaves_json)?;
+    let checkpoint_leaves = decompress_checkpoint_file(&args.checkpoint_file)?;
     println!(
-        "Loaded {} checkpoint leaves from zip file",
+        "Loaded {} bitcoin blocks from checkpoint file",
         checkpoint_leaves.len()
     );
 
-    /*
+    let start_time = Instant::now();
+    let contract_data_engine = data_engine::engine::DataEngine::start(
+        &args.database_location,
+        evm_rpc,
+        args.rift_exchange_address,
+        args.deploy_block_number,
+        checkpoint_leaves,
+    )
+    .await?;
+    let contract_data_engine_duration = start_time.elapsed();
+    println!(
+        "Contract data engine initialized in {:?}",
+        contract_data_engine_duration
+    );
 
-        let contract_data_engine = data_engine::engine::DataEngine::start(
-            args.database_location,
-            evm_provider,
-            args.rift_exchange_address,
-            args.deploy_block_number,
-            args.checkpoint_leaves,
-        )
-        .await?;
+    /*
+        database_location: DatabaseLocation,
+        bitcoin_rpc: Arc<AsyncBitcoinClient>,
+        download_chunk_size: usize,
+        block_search_interval: Duration,
     */
+
+    let bitcoin_data_engine = bitcoin_data_engine::BitcoinDataEngine::new(
+        &args.database_location,
+        btc_rpc,
+        args.btc_batch_rpc_size,
+        BITCOIN_BLOCK_POLL_INTERVAL,
+    )
+    .await;
 
     println!("Starting hypernode service...");
 

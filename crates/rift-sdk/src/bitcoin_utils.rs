@@ -1,4 +1,5 @@
 use alloy::signers::k256;
+use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{BlockHash, BlockHeader};
 use bitcoincore_rpc_async::json::GetBlockHeaderResult;
@@ -547,9 +548,9 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         // Batch #2: getblockheader (verbose=false)
         //
         // This returns the **hex-encoded** serialized block header.
-        // We can parse that into `BlockHeader` using Bitcoin’s consensus_decode.
+        // We can parse that into `BlockHeader` using Bitcoin's consensus_decode.
         // ===============================
-        let header_requests: Vec<BitcoinCoreJsonRpcRequest<BlockHeader>> = block_hashes
+        let header_requests: Vec<BitcoinCoreJsonRpcRequest<String>> = block_hashes
             .iter()
             .map(|block_hash| BitcoinCoreJsonRpcRequest {
                 method: "getblockheader",
@@ -561,9 +562,21 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             })
             .collect();
 
-        let headers: Vec<BlockHeader> = self.send_batch(&header_requests).await.map_err(|e| {
-            RiftSdkError::BitcoinRpcError(format!("Error fetching block headers: {}", e))
-        })?;
+        let headers: Vec<BlockHeader> = self
+            .send_batch(&header_requests)
+            .await
+            .map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!("Error fetching block headers: {}", e))
+            })?
+            .iter()
+            .map(|header| {
+                let bytes: Vec<u8> = FromHex::from_hex(header).unwrap();
+                bitcoincore_rpc_async::bitcoin::consensus::encode::deserialize(&bytes)
+            })
+            .collect::<Result<Vec<BlockHeader>, bitcoincore_rpc_async::bitcoin::consensus::encode::Error>>()
+            .map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!("Error deserializing block headers: {}", e))
+            })?;
 
         // ===============================
         // Parse each hex string into a BlockHeader

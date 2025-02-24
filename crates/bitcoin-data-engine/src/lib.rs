@@ -98,7 +98,7 @@ pub struct BitcoinDataEngine {
 impl BitcoinDataEngine {
     /// Create a new data engine.
     pub async fn new(
-        database_location: DatabaseLocation,
+        database_location: &DatabaseLocation,
         bitcoin_rpc: Arc<AsyncBitcoinClient>,
         download_chunk_size: usize,
         block_search_interval: Duration,
@@ -504,9 +504,13 @@ mod tests {
 
         println!("Workdir: {:?}", bitcoin_regtest.workdir());
 
-        let data_engine =
-            BitcoinDataEngine::new(db_loc, bitcoin_rpc.clone(), 100, Duration::from_millis(250))
-                .await;
+        let data_engine = BitcoinDataEngine::new(
+            &db_loc,
+            bitcoin_rpc.clone(),
+            100,
+            Duration::from_millis(250),
+        )
+        .await;
         println!(
             "Current height according to regtest: {:?}",
             (bitcoin_rpc.get_block_count().await.unwrap())

@@ -68,7 +68,7 @@ impl BchOverwriteMMRState {
 
         // 2) Create both MMRs:
 
-        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(DatabaseLocation::InMemory)
+        let mut indexed_mmr = IndexedMMR::<Keccak256Hasher>::open(&DatabaseLocation::InMemory)
             .await
             .unwrap();
         let append_result = indexed_mmr.append(&genesis_leaf).await.unwrap();
