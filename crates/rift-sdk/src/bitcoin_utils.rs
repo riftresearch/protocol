@@ -176,17 +176,6 @@ struct BitcoinCoreJsonRpcRequest<T> {
     response_type: PhantomData<T>,
 }
 
-// Add a constructor for convenience
-impl<T> BitcoinCoreJsonRpcRequest<T> {
-    fn new(method: &'static str, args: Vec<serde_json::Value>) -> Self {
-        Self {
-            method,
-            args,
-            response_type: PhantomData,
-        }
-    }
-}
-
 async fn retry_rpc_operation<T, F, Fut>(operation: F) -> bitcoincore_rpc_async::Result<T>
 where
     F: Fn() -> Fut,
@@ -532,57 +521,90 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         &self,
         start_block_height: u32,
         end_block_height: u32,
-        concurrency_limit: Option<usize>,
+        _concurrency_limit: Option<usize>, // Not used with batch approach
         expected_parent: Option<[u8; 32]>,
     ) -> crate::errors::Result<Vec<BlockHeader>> {
-        let concurrency_limit =
-            concurrency_limit.unwrap_or((end_block_height - start_block_height) as usize) + 1;
+        // Number of blocks in the requested range
+        let num_blocks = (end_block_height - start_block_height + 1) as usize;
 
-        let block_heights = start_block_height..=end_block_height;
-        let headers_stream = futures::stream::iter(block_heights).map(|height| async move {
-            let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
-                RiftSdkError::BitcoinRpcError(format!(
-                    "Error getting block hash for height {} {}",
-                    height, e
-                ))
-            })?;
+        // ===============================
+        // Batch #1: getblockhash
+        // ===============================
+        let hash_requests: Vec<BitcoinCoreJsonRpcRequest<BlockHash>> = (start_block_height
+            ..=end_block_height)
+            .map(|height| BitcoinCoreJsonRpcRequest {
+                method: "getblockhash",
+                args: vec![serde_json::json!(height)],
+                response_type: PhantomData,
+            })
+            .collect();
 
-            let header = self.get_block_header(&block_hash).await.map_err(|e| {
-                RiftSdkError::BitcoinRpcError(format!(
-                    "Error getting block header info for height {} {}",
-                    height, e
-                ))
-            })?;
+        let block_hashes: Vec<BlockHash> = self.send_batch(&hash_requests).await.map_err(|e| {
+            RiftSdkError::BitcoinRpcError(format!("Error fetching block hashes: {}", e))
+        })?;
 
-            Ok::<_, RiftSdkError>((height, header))
-        });
+        // ===============================
+        // Batch #2: getblockheader (verbose=false)
+        //
+        // This returns the **hex-encoded** serialized block header.
+        // We can parse that into `BlockHeader` using Bitcoin’s consensus_decode.
+        // ===============================
+        let header_requests: Vec<BitcoinCoreJsonRpcRequest<BlockHeader>> = block_hashes
+            .iter()
+            .map(|block_hash| BitcoinCoreJsonRpcRequest {
+                method: "getblockheader",
+                args: vec![
+                    serde_json::json!(block_hash.to_string()),
+                    serde_json::json!(false), // verbose = false => returns hex
+                ],
+                response_type: PhantomData,
+            })
+            .collect();
 
-        let mut headers_with_height = headers_stream
-            .buffer_unordered(concurrency_limit)
-            .try_collect::<Vec<(u32, BlockHeader)>>()
-            .await?;
+        let headers: Vec<BlockHeader> = self.send_batch(&header_requests).await.map_err(|e| {
+            RiftSdkError::BitcoinRpcError(format!("Error fetching block headers: {}", e))
+        })?;
 
-        // Sort by height to restore the correct order
-        headers_with_height.sort_by_key(|(height, _)| *height);
+        // ===============================
+        // Parse each hex string into a BlockHeader
+        // ===============================
+        let mut headers_with_height = Vec::with_capacity(num_blocks);
+        for (i, header) in headers.into_iter().enumerate() {
+            let height = start_block_height + i as u32;
 
-        // Extract just the headers in correct order
+            headers_with_height.push((height, header));
+        }
+
+        // Sort by height (just to be sure we're in ascending order)
+        headers_with_height.sort_by_key(|(h, _)| *h);
+
+        // Unzip the vector of (height, header) into just the headers
         let headers: Vec<BlockHeader> = headers_with_height
             .into_iter()
             .map(|(_, header)| header)
             .collect();
 
-        // Validation
+        // =================================================
+        // Check the expected parent if provided
+        // =================================================
         if let Some(expected_parent) = expected_parent {
-            if headers[0].prev_blockhash.as_hash().into_inner() != expected_parent {
+            let actual_parent = headers[0].prev_blockhash;
+            // The internal byte order of `BlockHash` is reversed vs typical hex.
+            // If your `expected_parent` is already reversed, compare directly:
+            if actual_parent.into_inner() != expected_parent {
                 return Err(RiftSdkError::ParentValidationFailed(format!(
-                    "Expected parent {} but got {} from downloaded block",
+                    "Expected parent {} but got {} for the first header",
                     hex::encode(expected_parent),
-                    hex::encode(headers[0].prev_blockhash.as_hash().into_inner())
+                    hex::encode(actual_parent.into_inner())
                 )));
             }
         }
 
+        // =================================================
+        // Validate that each header references the previous block
+        // =================================================
         headers.validate_header_chain()?;
+
         Ok(headers)
     }
 }
