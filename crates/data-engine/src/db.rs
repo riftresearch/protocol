@@ -407,3 +407,45 @@ pub async fn get_virtual_swaps(
     .await
     .map_err(|e| eyre::eyre!(e))
 }
+
+pub async fn get_deposits_for_recipient(
+    conn: &Connection,
+    address: Address,
+    deposit_block_cutoff: u64,
+) -> Result<Vec<DepositVault>> {
+    let address_str = address.to_string();
+
+    // Query for deposits where the recipient matches the provided address
+    // and the deposit block number is greater than or equal to the cutoff
+    conn.call(move |conn| {
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                deposit_vault         -- (JSON-serialized DepositVault)
+            FROM deposits
+            WHERE recipient = ?1 AND deposit_block_number >= ?2
+            ORDER BY deposit_block_number ASC
+            "#,
+        )?;
+
+        let mut rows = stmt.query(params![address_str, deposit_block_cutoff as i64])?;
+
+        let mut deposits = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let deposit_vault_str: String = row.get(0)?;
+            let deposit_vault: DepositVault =
+                serde_json::from_str(&deposit_vault_str).map_err(|e| {
+                    tokio_rusqlite::Error::Other(
+                        format!("Failed to deserialize DepositVault: {:?}", e).into(),
+                    )
+                })?;
+
+            deposits.push(deposit_vault);
+        }
+
+        Ok(deposits)
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}

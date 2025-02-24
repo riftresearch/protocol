@@ -12,7 +12,8 @@ use bitcoin_light_client_core::{
 use eyre::Result;
 use futures_util::stream::StreamExt;
 use rift_sdk::bindings::{
-    non_artifacted_types::Types::SwapUpdateContext, non_artifacted_types::Types::VaultUpdateContext,
+    non_artifacted_types::Types::{SwapUpdateContext, VaultUpdateContext},
+    Types::DepositVault,
 };
 use rift_sdk::mmr::IndexedMMR;
 use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
@@ -25,8 +26,9 @@ use tracing::{info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::db::{
-    add_deposit, add_proposed_swap, get_proposed_swap_id, get_virtual_swaps, setup_swaps_database,
-    update_deposit_to_withdrawn, update_proposed_swap_to_released,
+    add_deposit, add_proposed_swap, get_deposits_for_recipient, get_proposed_swap_id,
+    get_virtual_swaps, setup_swaps_database, update_deposit_to_withdrawn,
+    update_proposed_swap_to_released,
 };
 use crate::models::OTCSwap;
 
@@ -130,6 +132,19 @@ impl DataEngine {
                 .await?;
         }
         Ok(())
+    }
+
+    pub async fn get_deposits_for_recipient(
+        &self,
+        address: Address,
+        deposit_block_cutoff: u64,
+    ) -> Result<Vec<DepositVault>> {
+        get_deposits_for_recipient(
+            &self.swap_database_connection,
+            address,
+            deposit_block_cutoff,
+        )
+        .await
     }
 
     pub async fn get_virtual_swaps(

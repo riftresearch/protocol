@@ -5,6 +5,7 @@ members = [
   "bin/data-engine-server",
   "bin/hypernode",
   "bin/checkpoint-downloader",
+  "bin/market-maker",
   "crates/data-engine",
   "crates/bitcoin-core-rs",
   "crates/bitcoin-light-client-core",
@@ -39,6 +40,8 @@ test-data-utils = { path = "test-data" }
 data-engine-server = { path = "bin/data-engine-server" }
 checkpoint-downloader = { path = "bin/checkpoint-downloader" }
 devnet = {path = "bin/devnet"}
+market-maker = {path = "bin/market-maker"}
+
 
 # SP1 dependencies
 sp1-helper = "4.0.1"
@@ -77,7 +80,7 @@ alloy = { version = "0.8.0", features = ["full", "node-bindings", "json"] }
 alloy-primitives = "0.8.12"
 async-trait = "0.1.86"
 reqwest = { version = "0.12.12", features = ["json"] }
-
+zstd = "0.13.3"
 
 eyre = "0.6.12"
 tokio = {version="1.40.0", features=["full", "rt-multi-thread", "macros"]}

@@ -3961,6 +3961,30 @@ dependencies = [
 [[package]]
 name = "market-maker"
 version = "0.1.0"
+dependencies = [
+ "alloy",
+ "backoff",
+ "bitcoin 0.32.5",
+ "bitcoin-light-client-core",
+ "bitcoincore-rpc-async2",
+ "checkpoint-downloader",
+ "chrono",
+ "clap",
+ "data-engine",
+ "eyre",
+ "futures",
+ "hex",
+ "reqwest 0.12.12",
+ "rift-core",
+ "rift-sdk",
+ "serde",
+ "serde_json",
+ "sol-types",
+ "tokio",
+ "tokio-rusqlite",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "matchers"
