@@ -1,11 +1,16 @@
-use bitcoin_light_client_core::leaves::{get_genesis_leaf, BlockLeaf};
+use bitcoin_light_client_core::leaves::{
+    decompress_block_leaves, get_genesis_leaf, BlockLeaf, BlockLeafCompressor,
+};
 use bitcoincore_rpc_async::{Auth, RpcApi};
+use checkpoint_downloader::compress_checkpoint_leaves;
+use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use hex;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::time::Duration;
+use tempfile;
 use tokio;
 use zstd::stream::Encoder;
 
@@ -24,13 +29,7 @@ pub struct CheckpointDownloaderArgs {
     #[arg(long, env)]
     pub rpc_pass: String,
 
-    /// Bitcoin block height to stop downloading at (inclusive)
-    #[arg(short, long, env)]
-    pub end_block: u32,
-
-
-    /// Chunks per request (concurrency param) 
-
+    /// Chunks per request (concurrency param)
     #[arg(short, long, env)]
     pub chunk_size: u32,
 }
@@ -49,27 +48,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    // [1] Get genesis leaf
-    let _genesis_leaf: BlockLeaf = get_genesis_leaf();
-
-    // [2] Ensure safe block range (100 blocks before the end block to prevent reorgs)
-    let safe_end_block = args.end_block.saturating_sub(100);
+    // [2] Ensure safe block range
+    let safe_end_block = (client.get_block_count().await? - 100) as u32;
     println!("Downloading blocks from 0 to {}", safe_end_block);
 
     let mut start_block = 0;
     let chunk_size = args.chunk_size;
-    let checkpoint_filename = "checkpoint_leaves.txt";
-
-    // If this is the first time running, overwrite the file.
-    if start_block == 0 {
-        File::create(checkpoint_filename)?; // This clears the file on a fresh run
-    }
-
-    // Open file in append mode for adding new chunks
-    let mut checkpoint_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(checkpoint_filename)?;
+    let mut all_leaves = Vec::new();
 
     while start_block <= safe_end_block {
         let end_chunk = std::cmp::min(start_block + chunk_size - 1, safe_end_block);
@@ -81,28 +66,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         println!("Retrieved {} headers", headers.len());
 
-        // [5] Write headers to the file in hex format
-        let mut writer = BufWriter::new(&checkpoint_file);
-        for header in headers {
-            writeln!(writer, "{}", hex::encode(header.serialize()))?;
-        }
-        writer.flush()?;
-
-        start_block = end_chunk + 1; // Move to next chunk
+        all_leaves.extend(headers);
+        start_block = end_chunk + 1;
     }
 
-    println!("Checkpoint file saved: {}", checkpoint_filename);
-
-    // [6] Compress checkpoint file using Zstd
+    // Compress the leaves directly to the final compressed file
     let compressed_filename = "checkpoint_leaves.zst";
-    let input_file = File::open(checkpoint_filename)?;
-    let output_file = File::create(compressed_filename)?;
-    let mut encoder = Encoder::new(output_file, 0)?; // Compression level 0 (default)
-    let mut reader = BufReader::new(input_file);
-    std::io::copy(&mut reader, &mut encoder)?;
-    encoder.finish()?;
+    compress_checkpoint_leaves(&all_leaves, compressed_filename)?;
 
     println!("Compressed checkpoint file saved: {}", compressed_filename);
+    println!("Total leaves collected: {}", all_leaves.len());
 
     Ok(())
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compress_checkpoint_leaves() {
+        let leaves = vec![get_genesis_leaf()];
+        // Create a named temporary file
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let temp_path = temp_file.path().to_str().unwrap();
+
+        compress_checkpoint_leaves(&leaves, temp_path).unwrap();
+        let decompressed_leaves = decompress_checkpoint_file(temp_path).unwrap();
+        assert_eq!(leaves, decompressed_leaves);
+    }
 }

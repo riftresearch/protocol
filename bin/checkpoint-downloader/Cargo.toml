@@ -3,6 +3,10 @@ version = "0.1.0"
 name = "checkpoint-downloader"
 edition = "2021"
 
+[[bin]]
+name = "checkpoint-downloader"
+path = "src/bin/main.rs"
+
 [dependencies]
 rift-sdk = { workspace = true }
 tokio = { workspace = true }
@@ -14,3 +18,4 @@ serde_json = "1.0"      # For JSON serialization and deserialization
 bitcoin = "0.32.5"      # For Bitcoin structures and utilities
 hex = "0.4"            # If you are decoding hex data
 zstd = "0.13.3"
+tempfile = { workspace = true }
