@@ -17,21 +17,33 @@ contract RiftReactorMock is RiftReactor {
         bytes32 _circuitVerificationKey,
         address _verifier,
         address _feeRouter,
-        Types.BlockLeaf memory _tipBlockLeaf
-    ) RiftReactor(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _tipBlockLeaf) {}
+        Types.BlockLeaf memory _tipBlockLeaf,
+        address _cbbtc_address
+    )
+        RiftReactor(
+            _mmrRoot,
+            _depositToken,
+            _circuitVerificationKey,
+            _verifier,
+            _feeRouter,
+            _tipBlockLeaf,
+            _cbbtc_address
+        )
+    {}
 
-    function computeBondPulic(uint256 depositAmount) public pure returns (uint96 requiredBond) {
-        return computeBond(depositAmount);
+    function computeBond(uint256 depositAmount) public pure returns (uint96 requiredBond) {
+        return _computeBond(depositAmount);
     }
 
-    function computeAuctionSatsPublic(DutchAuctionInfo memory info) public view returns (uint256 expectedSats) {
-        return computeAuctionSats(info);
+    function computeAuctionSats(Types.DutchAuctionInfo memory info) public view returns (uint256 expectedSats) {
+        return _computeAuctionSats(info);
     }
 }
 
 contract RiftTestSetup is Test {
     address exchangeOwner = address(0xbeef);
     MockToken public mockToken;
+    MockToken public cbBTC;
     SP1MockVerifier public verifier;
     RiftReactorMock public riftReactor;
 
@@ -40,6 +52,7 @@ contract RiftTestSetup is Test {
         verifier = new SP1MockVerifier();
 
         Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
+        cbBTC = new MockToken("Mock cbBTC", "cbBTC", 8);
 
         riftReactor = new RiftReactorMock({
             _mmrRoot: initial_mmr_proof.mmrRoot,
@@ -47,10 +60,16 @@ contract RiftTestSetup is Test {
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),
-            _tipBlockLeaf: initial_mmr_proof.blockLeaf
+            _tipBlockLeaf: initial_mmr_proof.blockLeaf,
+            _cbbtc_address: address(cbBTC)
         });
 
         mockToken = MockToken(address(riftReactor.DEPOSIT_TOKEN()));
+
+        // Mint tokens to the test contract so it can approve depositBond.
+        // Adjust the mint amount as needed.
+        mockToken.mint(address(this), 1_000_000);
+        cbBTC.mint(address(this), 1_000_000);
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
