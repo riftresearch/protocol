@@ -218,4 +218,68 @@ library Types {
         bool established;
         Types.BlockLeaf tipBlockLeaf;
     }
+
+    // -----------------------------------------------------------------------
+    //                         RiftReactor Structs
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Struct for depositLiquidity parameters.
+     *
+     * @param depositAmount Amount of ERC20 tokens to deposit (including fees).
+     * @param depositSalt User-generated salt for vault nonce.
+     * @param depositOwnerAddress End user wallet address to receive funds.
+     * @param btcPayoutScriptPubKey Bitcoin script for receiving BTC.
+     * @param confirmationBlocks Number of Bitcoin blocks required for confirmation.
+     * @param safeBlockLeaf The leaf representing a block the depositor believes is highly unlikely to be reorged out of the chain.
+     * @param safeBlockSiblings Merkle proof siblings for safe block inclusion.
+     * @param safeBlockPeaks MMR peaks for safe block inclusion.
+     */
+    struct ReactorDepositLiquidityParams {
+        uint256 depositAmount;
+        bytes32 depositSalt;
+        address depositOwnerAddress;
+        bytes25 btcPayoutScriptPubKey;
+        uint8 confirmationBlocks;
+        Types.BlockLeaf safeBlockLeaf;
+        bytes32[] safeBlockSiblings;
+        bytes32[] safeBlockPeaks;
+    }
+
+    struct BondedSwap {
+        // binpack both of these into a single 256 bit word
+        address marketMaker;
+        uint96 bond;
+    }
+
+    struct DutchAuctionInfo {
+        uint256 startBlock;
+        uint256 endBlock;
+        uint256 minSats;
+        uint256 maxSats;
+    }
+
+    struct IntentInfo {
+        address intentReactor;
+        // replay protection + cancellation
+        uint256 nonce;
+        // this will be the cbBTC address if no swap will occur
+        address tokenIn;
+        DutchAuctionInfo auction;
+        // a place holder, this is basically Types.DepositLiquidityParams but without
+        // expectedSats, specifiedPayoutAddress
+        // bytes depositLiquidityParams;
+        ReactorDepositLiquidityParams depositLiquidityParams;
+    }
+
+    struct LiquidityRoute {
+        address router;
+        bytes routeData;
+    }
+
+    struct SignedIntent {
+        IntentInfo info; // this is signed
+        bytes signature; // this is the signature of the user
+        bytes32 orderHash; // do we need this?, depends on intent validation logic
+    }
 }

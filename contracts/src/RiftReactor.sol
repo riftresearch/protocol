@@ -3,8 +3,52 @@ pragma solidity ^0.8.28;
 
 import {Types} from "./libraries/Types.sol";
 import {RiftExchange} from "./RiftExchange.sol";
+import "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin-contracts/token/ERC20/IERC20.sol";
+
+// /**
+//  * RiftReactor Structs inside Types.sol
+//  */
+// struct BondedSwap {
+//     // binpack both of these into a single 256 bit word
+//     address marketMaker;
+//     uint96 bond;
+// }
+
+// struct DutchAuctionInfo {
+//     uint256 startBlock;
+//     uint256 endBlock;
+//     uint256 minSats;
+//     uint256 maxSats;
+// }
+
+// struct IntentInfo {
+//     address intentReactor;
+//     // replay protection + cancellation
+//     uint256 nonce;
+//     // this will be the cbBTC address if no swap will occur
+//     address tokenIn;
+//     DutchAuctionInfo auction;
+//     // a place holder, this is basically Types.DepositLiquidityParams but without
+//     // expectedSats, specifiedPayoutAddress
+//     bytes depositLiquidityParams;
+// }
+
+// struct LiquidityRoute {
+//     address router;
+//     bytes routeData;
+// }
+
+// struct SignedIntent {
+//     IntentInfo info; // this is signed
+//     bytes signature; // this is the signature of the user
+//     bytes32 orderHash; // do we need this?, depends on intent validation logic
+// }
 
 contract RiftReactor is RiftExchange {
+    // TODO: Organize code and move out certain functions to seperate libs.
+    using ECDSA for bytes32;
+
     // min penalty for not resolving an order
     // ~25 USD worth of cbBTC,
     uint96 public constant MIN_BOND = 0.0003 * 10 ** 8;
@@ -14,44 +58,44 @@ contract RiftReactor is RiftExchange {
     uint16 public constant SLASH_FEE_BIPS = 500;
     uint256 public slashedBondFees;
 
-    struct BondedSwap {
-        // binpack both of these into a single 256 bit word
-        address marketMaker;
-        uint96 bond;
-    }
+    // Validation constants
+    bytes32 public immutable DOMAIN_SEPARATOR;
+    // TODO: Could be moved to constants library for cleaner code in here.
+    bytes32 public constant AUCTION_TYPE_HASH =
+        keccak256("DutchAuctionInfo(uint256 startBlock,uint256 endBlock,uint256 minSats,uint256 maxSats)");
+    bytes32 public constant BLOCK_LEAF_TYPE_HASH =
+        keccak256("BlockLeaf(bytes32 blockHash,uint32 height,uint256 cumulativeChainwork)");
+    bytes32 public constant DEPOSIT_LIQUIDITY_PARAMS_TYPE_HASH =
+        keccak256(
+            "ReactorDepositLiquidityParams(address depositOwnerAddress,uint256 depositAmount,bytes25 btcPayoutScriptPubKey,bytes32 depositSalt,uint8 confirmationBlocks,BlockLeaf safeBlockLeaf,bytes32[] safeBlockSiblings,bytes32[] safeBlockPeaks)"
+        );
+    bytes32 public constant INTENT_TYPE_HASH =
+        keccak256(
+            "IntentInfo(address intentReactor,uint256 nonce,address tokenIn,DutchAuctionInfo auction,ReactorDepositLiquidityParams depositLiquidityParams)"
+        );
 
-    mapping(bytes32 => BondedSwap) public swapBonds;
+    // Mapping to track the available bond deposited by each market maker.
+    mapping(address => uint96) public mmBondDeposits;
+    // Mapping to track bond associated with each executed swap.
+    mapping(bytes32 => Types.BondedSwap) public swapBonds;
+    // Nonce mapping: deposit owner address => nonce
     mapping(address => uint256) public intentNonce;
 
-    struct DutchAuctionInfo {
-        uint256 startBlock;
-        uint256 endBlock;
-        uint256 minSats;
-        uint256 maxSats;
+    IERC20 immutable cbBTC;
+
+    struct EIP712Domain {
+        string name;
+        string version;
+        uint256 chainId;
+        address verifyingContract;
     }
 
-    struct IntentInfo {
-        address intentReactor;
-        // replay protection + cancellation
-        uint256 nonce;
-        // this will be the cbBTC address if no swap will occur
-        address tokenIn;
-        DutchAuctionInfo auction;
-        // a place holder, this is basically Types.DepositLiquidityParams but without
-        // expectedSats, specifiedPayoutAddress
-        bytes depositLiquidityParams;
-    }
-
-    struct LiquidityRoute {
-        address router;
-        bytes routeData;
-    }
-
-    struct SignedIntent {
-        IntentInfo info; // this is signed
-        bytes signature; // this is the signature of the user
-        bytes32 orderHash; // do we need this?, depends on intent validation logic
-    }
+    // TODO: Move these to error library
+    error InvalidEIP712Signature();
+    error AuctionEnded();
+    error InvalidNonce();
+    error InsufficientBond();
+    error BondDepositTransferFailed();
 
     constructor(
         bytes32 _mmrRoot,
@@ -59,9 +103,20 @@ contract RiftReactor is RiftExchange {
         bytes32 _circuitVerificationKey,
         address _verifier,
         address _feeRouter,
-        Types.BlockLeaf memory _tipBlockLeaf
+        Types.BlockLeaf memory _tipBlockLeaf,
+        address _cbbtc_address
     ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _tipBlockLeaf) {
-        // Initialize RiftReactor
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("RiftReactor"),
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
+
+        cbBTC = IERC20(_cbbtc_address);
     }
 
     // Note, non-exhaustive list of checks is included below
@@ -80,13 +135,125 @@ contract RiftReactor is RiftExchange {
     //10. Build final deposit call using calculated expectedSats, msg.sender for
     //    specifiedPayoutAddress and original user signed deposit data.
     //11. Call depositLiquidity()/depositLiquidityWithOverwrite()
-    function executeIntentWithSwap(LiquidityRoute memory route, SignedIntent memory order) external {
-        // 1. Validate intent aka SignedIntent (EIP712 typed data validation)
+    function executeIntentWithSwap(Types.LiquidityRoute memory route, Types.SignedIntent memory order) external {
+        // Step 1-3: Validate the intent, EIP-712 signature, auction status, nonce, and bond.
+        _validateIntentAndBond(order);
+
+        // Compute required bond based on the deposit amount.
+        uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
+        uint96 requiredBond = _computeBond(depositAmount);
+
+        // Deduct the required bond from the MM's deposited balance.
+        mmBondDeposits[msg.sender] -= requiredBond;
+
+        // Record the bonded swap.
+        bytes32 orderId = order.orderHash; // Alternatively, compute a unique identifier.
+        swapBonds[orderId] = Types.BondedSwap({marketMaker: msg.sender, bond: requiredBond});
+
+        // TODO: Implement Permit2 ERC20 transfer, invoke the router call, and call depositLiquidity functions.
+    }
+
+    // ---------------------------------------------------------------
+    // Bond Management Functions
+    // ---------------------------------------------------------------
+
+    /**
+     * @notice Allows a market maker to deposit cbBTC as bond.
+     * @param amount The amount of cbBTC to deposit.
+     * @dev The market maker must have approved this contract to spend their cbBTC.
+     */
+    function depositBond(uint96 amount) external {
+        bool success = cbBTC.transferFrom(msg.sender, address(this), amount);
+        if (!success) {
+            revert BondDepositTransferFailed();
+        }
+        mmBondDeposits[msg.sender] += amount;
+    }
+
+    /**
+     * @notice Retrieves the amount of bond posted by a market maker.
+     * @param mm The market maker's address.
+     * @return bondAmount The available bond amount for the given market maker.
+     */
+    function _getBondPosted(address mm) internal view returns (uint96 bondAmount) {
+        return mmBondDeposits[mm];
+    }
+
+    // Steps 1-3 from executeIntentWithSwap()
+    /**
+     * @notice Validates the signed intent and ensures the market maker has posted sufficient bond.
+     * @dev Performs these checks:
+     *      1. Validates the EIP‑712 signature of the SignedIntent.
+     *      2. Verifies the auction is active (auction.endBlock > block.number) and the nonce is correct.
+     *      3. Checks that msg.sender (the market maker executing the swap) has posted sufficient cbBTC bond.
+     *          The required bond is computed based on depositLiquidityParams.depositAmount, which now represents
+     *          the expected amount of cbBTC the MM must supply.
+     * @param order The SignedIntent containing the intent and signature data.
+     */
+    function _validateIntentAndBond(Types.SignedIntent memory order) internal view {
+        // Step 1: Validate the EIP‑712 signature.
+        if (!_validateEIP712(order)) {
+            revert InvalidEIP712Signature();
+        }
+        // Step 2: Validate that the order is active.
+        if (order.info.auction.endBlock <= block.number) {
+            revert AuctionEnded();
+        }
+        if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
+            revert InvalidNonce();
+        }
+        // Step 3: Validate that the market maker has posted sufficient bond.
+        // depositAmount represents the expected amount of cbBTC the MM must supply.
+        uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
+        uint96 requiredBond = _computeBond(depositAmount);
+        uint96 bondPosted = _getBondPosted(msg.sender);
+        if (bondPosted < requiredBond) {
+            revert InsufficientBond();
+        }
+    }
+
+    /**
+     * @notice Validates the EIP‑712 signature for a SignedIntent.
+     * @dev Constructs the EIP‑712 digest by:
+     *      1. Hashing the DutchAuctionInfo sub-structure using _hashDutchAuctionInfo.
+     *      2. Hashing the ReactorDepositLiquidityParams sub-structure using _hashReactorDepositLiquidityParams.
+     *      3. Hashing the overall IntentInfo struct using INTENT_TYPE_HASH.
+     *      4. Combining with the DOMAIN_SEPARATOR to form the digest.
+     *      Finally, it recovers the signer from the digest and compares it with the expected signer
+     *      (i.e. the depositOwnerAddress in depositLiquidityParams). If the recovered signer is zero or does not
+     *      match, it reverts with InvalidEIP712Signature.
+     * @param order The SignedIntent containing the intent data and signature.
+     * @return isValid True if the signature is valid.
+     */
+    function _validateEIP712(Types.SignedIntent memory order) internal view returns (bool isValid) {
+        bytes32 auctionHash = _hashDutchAuctionInfo(order.info.auction);
+        bytes32 depositLiquidityParamsHash = _hashReactorDepositLiquidityParams(order.info.depositLiquidityParams);
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                INTENT_TYPE_HASH,
+                order.info.intentReactor,
+                order.info.nonce,
+                order.info.tokenIn,
+                auctionHash,
+                depositLiquidityParamsHash
+            )
+        );
+
+        // Compute the EIP‑712 digest.
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+
+        // Recover the signer from the digest and the signature.
+        address recovered = digest.recover(order.signature);
+        if (recovered == address(0) || recovered != order.info.depositLiquidityParams.depositOwnerAddress) {
+            revert InvalidEIP712Signature();
+        }
+        return true;
     }
 
     // For pure cbBTC deposits:
     // Steps 1-3 and 9-10 from executeIntentWithSwap()
-    function executeIntent(SignedIntent memory order) external {}
+    function executeIntent(Types.SignedIntent memory order) external {}
 
     // calls releaseLiquidityBatch() and releases bond back to mm
     // should accept an array of release requests to align with the underlying
@@ -99,7 +266,10 @@ contract RiftReactor is RiftExchange {
     // The remaining bond amount is sent to the depositor's address
     function withdrawAndPenalize() external {}
 
-    // higher of (BOND_BIPS of depositAmount) or MIN_BOND
+    // -----------------------------------------------------------------------
+    //                             HELPER FUNCTIONS
+    // -----------------------------------------------------------------------
+    // TODO: Possibly replace the less precise integer math with FixedPointMathLib.
     /**
      * @notice Computes the bond required for a given deposit amount.
      * @dev The bond is the greater of (depositAmount * BOND_BIPS / 10,000) or MIN_BOND.
@@ -107,7 +277,7 @@ contract RiftReactor is RiftExchange {
      * @param depositAmount The amount for which the bond is being computed.
      * @return requiredBond The required bond as a uint96.
      */
-    function computeBond(uint256 depositAmount) internal pure returns (uint96 requiredBond) {
+    function _computeBond(uint256 depositAmount) internal pure returns (uint96 requiredBond) {
         uint256 calculatedBond = (depositAmount * BOND_BIPS) / 10000;
         if (calculatedBond < MIN_BOND) {
             return MIN_BOND;
@@ -125,7 +295,7 @@ contract RiftReactor is RiftExchange {
      * @param info A DutchAuctionInfo struct containing startBlock, endBlock, minSats, and maxSats.
      * @return expectedSats The computed expected sats value at the current block.
      */
-    function computeAuctionSats(DutchAuctionInfo memory info) internal view returns (uint256 expectedSats) {
+    function _computeAuctionSats(Types.DutchAuctionInfo memory info) internal view returns (uint256 expectedSats) {
         uint256 currentBlock = block.number;
 
         // Return maxSats if auction hasn't started yet.
@@ -144,5 +314,54 @@ contract RiftReactor is RiftExchange {
 
         // Linearly interpolate to determine the current sats value.
         expectedSats = info.maxSats - ((diff * elapsed) / duration);
+    }
+
+    // -----------------------------------------------------------------------
+    //                             EIP712 HASHING FUNCTIONS
+    // -----------------------------------------------------------------------
+    /**
+     * @notice Computes the hash of a DutchAuctionInfo struct.
+     * @param auction The DutchAuctionInfo struct to hash.
+     * @return hash The computed hash.
+     */
+    function _hashDutchAuctionInfo(Types.DutchAuctionInfo memory auction) internal pure returns (bytes32 hash) {
+        return
+            keccak256(
+                abi.encode(AUCTION_TYPE_HASH, auction.startBlock, auction.endBlock, auction.minSats, auction.maxSats)
+            );
+    }
+
+    /**
+     * @notice Computes the hash of a ReactorDepositLiquidityParams struct.
+     * @dev The dynamic arrays (safeBlockSiblings and safeBlockPeaks) are hashed via abi.encodePacked.
+     * @param params The ReactorDepositLiquidityParams struct to hash.
+     * @return hash The computed hash.
+     */
+    function _hashReactorDepositLiquidityParams(
+        Types.ReactorDepositLiquidityParams memory params
+    ) internal pure returns (bytes32 hash) {
+        return
+            keccak256(
+                abi.encode(
+                    DEPOSIT_LIQUIDITY_PARAMS_TYPE_HASH,
+                    params.depositOwnerAddress,
+                    params.depositAmount,
+                    params.btcPayoutScriptPubKey,
+                    params.depositSalt,
+                    params.confirmationBlocks,
+                    _hashBlockLeaf(params.safeBlockLeaf),
+                    keccak256(abi.encodePacked(params.safeBlockSiblings)),
+                    keccak256(abi.encodePacked(params.safeBlockPeaks))
+                )
+            );
+    }
+
+    /**
+     * @notice Computes the hash of a BlockLeaf struct.
+     * @param leaf The BlockLeaf to hash.
+     * @return hash The computed hash.
+     */
+    function _hashBlockLeaf(Types.BlockLeaf memory leaf) internal pure returns (bytes32 hash) {
+        return keccak256(abi.encode(BLOCK_LEAF_TYPE_HASH, leaf.blockHash, leaf.height, leaf.cumulativeChainwork));
     }
 }
