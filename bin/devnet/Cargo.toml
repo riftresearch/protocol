@@ -17,6 +17,8 @@ corepc-node = { workspace = true }
 sol-types = { workspace = true }
 bitcoin-data-engine = { workspace = true }
 accumulators = { workspace = true }
+checkpoint-downloader = { workspace = true }
+tempfile = { workspace = true }
 
 alloy = { workspace = true }
 clap = { workspace = true }

@@ -5,9 +5,15 @@ mod errors;
 pub mod indexed_mmr;
 pub mod txn_builder;
 
-use alloy::providers::{ProviderBuilder, WsConnect};
+use alloy::network::{Ethereum, EthereumWallet};
+use alloy::providers::fillers::{
+    BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
+};
+use alloy::providers::{Identity, ProviderBuilder, RootProvider, WsConnect};
 use alloy::pubsub::{ConnectionHandle, PubSubConnect};
 use alloy::rpc::client::ClientBuilder;
+use alloy::signers::local::LocalSigner;
+use alloy::signers::Signer;
 use alloy::transports::{impl_future, TransportResult};
 use alloy::{providers::Provider, pubsub::PubSubFrontend};
 use backoff::exponential::ExponentialBackoff;
@@ -18,7 +24,21 @@ use sp1_sdk::{EnvProver, HashableKey};
 use sp1_sdk::{Prover, SP1ProvingKey};
 use std::fmt::Write;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Instant;
+
+pub type WebsocketWalletProvider = FillProvider<
+    JoinFill<
+        JoinFill<
+            Identity,
+            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+        >,
+        WalletFiller<EthereumWallet>,
+    >,
+    RootProvider<PubSubFrontend>,
+    PubSubFrontend,
+    Ethereum,
+>;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
@@ -102,6 +122,34 @@ pub async fn create_websocket_provider(
     Ok(provider)
 }
 
+pub fn right_pad_to_25_bytes(input: &[u8]) -> [u8; 25] {
+    let mut padded = [0u8; 25];
+    let copy_len = input.len().min(25);
+    padded[..copy_len].copy_from_slice(&input[..copy_len]);
+    padded
+}
+
+pub async fn create_websocket_wallet_provider(
+    evm_rpc_websocket_url: &str,
+    private_key: [u8; 32],
+) -> errors::Result<WebsocketWalletProvider> {
+    let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
+    let client = ClientBuilder::default()
+        .pubsub(ws)
+        .await
+        .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
+
+    let provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .wallet(EthereumWallet::new(
+            LocalSigner::from_str(&hex::encode(private_key))
+                .map_err(|e| errors::RiftSdkError::InvalidPrivateKey(e.to_string()))?,
+        ))
+        .on_client(client);
+
+    Ok(provider)
+}
+
 pub struct RiftProofGenerator {
     pub pk: SP1ProvingKey,
     pub vk: SP1VerifyingKey,
@@ -154,6 +202,7 @@ impl RiftProofGenerator {
         let vk = self.vk.clone();
         let circuit_verification_key_hash = self.circuit_verification_key_hash;
         let prover_type = self.prover_type;
+        // TODO: This doesn't work when using CUDA, figure how to get a single prover client
         let prover_client = ProverClient::from_env();
         let input = input.clone();
 

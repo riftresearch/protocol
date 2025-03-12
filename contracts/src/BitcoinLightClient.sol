@@ -110,9 +110,6 @@ abstract contract BitcoinLightClient {
         bytes32[] calldata peaks,
         uint32 expectedConfirmationBlocks
     ) internal view {
-        if (expectedConfirmationBlocks < 2) {
-            revert Errors.InvalidConfirmationBlockDelta();
-        }
         if (!proveBlockInclusion(blockLeaf, siblings, peaks)) {
             revert Errors.InvalidSwapBlockInclusionProof();
         }

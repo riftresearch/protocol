@@ -299,6 +299,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     ) internal view returns (Types.DepositVault memory, bytes32) {
         if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
         if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
+        if (params.confirmationBlocks < Constants.MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
         if (!LightClientVerificationLib.validateScriptPubKey(params.btcPayoutScriptPubKey))
             revert Errors.InvalidScriptPubKey();
 

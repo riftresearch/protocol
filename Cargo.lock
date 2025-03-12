@@ -100,6 +100,7 @@ dependencies = [
  "alloy-core",
  "alloy-eips",
  "alloy-genesis",
+ "alloy-json-rpc",
  "alloy-network",
  "alloy-node-bindings",
  "alloy-provider",
@@ -832,9 +833,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.94"
+version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1fd03a028ef38ba2276dce7e33fcd6369c158a1bca17946c4b1b701891c1ff7"
+checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
 
 [[package]]
 name = "ark-ff"
@@ -1485,7 +1486,7 @@ checksum = "23285ad32269793932e830392f2fe2f83e26488fd3ec778883a93c8323735780"
 dependencies = [
  "arrayref",
  "arrayvec",
- "constant_time_eq 0.3.1",
+ "constant_time_eq",
 ]
 
 [[package]]
@@ -1712,8 +1713,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
- "zstd 0.13.3",
+ "zstd",
 ]
 
 [[package]]
@@ -1841,12 +1843,6 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "constant_time_eq"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
-
-[[package]]
-name = "constant_time_eq"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
@@ -1879,9 +1875,9 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "corepc-client"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb85495f0577f4765ea2ece0a69003d38acdddba2ac06bdde180ac2b969a9a63"
+checksum = "11f79bc7f1f164a3727919c4a3e6b149176f0329af00978b3be020ff296af4fe"
 dependencies = [
  "bitcoin 0.32.5",
  "corepc-types",
@@ -1893,11 +1889,11 @@ dependencies = [
 
 [[package]]
 name = "corepc-node"
-version = "0.5.0"
-source = "git+https://github.com/alpinevm/corepc?rev=f168d5a478cd2311250db49d4e5ce48c290ed7b7#f168d5a478cd2311250db49d4e5ce48c290ed7b7"
+version = "0.6.0"
+source = "git+https://github.com/rust-bitcoin/corepc?rev=7949505ebc29a478887852b6c0bc773f6a50baf7#7949505ebc29a478887852b6c0bc773f6a50baf7"
 dependencies = [
  "anyhow",
- "bitcoin_hashes 0.14.0",
+ "bitcoin_hashes 0.13.0",
  "corepc-client",
  "flate2",
  "log",
@@ -1911,12 +1907,11 @@ dependencies = [
 
 [[package]]
 name = "corepc-types"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "282d9bd7fd9d944471a0c0ad44fd1581acd87a79739652c5455ffdae25177db6"
+checksum = "b3b9d5320f2752bd2ec0cadcb2c9471e8a26be82cf3a34b651e5687547d1c2ea"
 dependencies = [
  "bitcoin 0.32.5",
- "bitcoin-internals 0.3.0",
  "serde",
  "serde_json",
 ]
@@ -2304,6 +2299,7 @@ dependencies = [
  "bitcoin-data-engine",
  "bitcoin-light-client-core",
  "bitcoincore-rpc-async2",
+ "checkpoint-downloader",
  "chrono",
  "clap",
  "corepc-node",
@@ -2317,6 +2313,7 @@ dependencies = [
  "rift-core",
  "rift-sdk",
  "sol-types",
+ "tempfile",
  "tokio",
 ]
 
@@ -2967,7 +2964,7 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "wasi",
+ "wasi 0.11.0+wasi-snapshot-preview1",
  "wasm-bindgen",
 ]
 
@@ -3448,6 +3445,8 @@ dependencies = [
  "serde_json",
  "sol-types",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3719,10 +3718,28 @@ dependencies = [
 name = "integration-tests"
 version = "0.1.0"
 dependencies = [
+ "accumulators",
+ "alloy",
+ "bitcoin 0.32.5",
+ "bitcoin-data-engine",
  "bitcoin-light-client-core",
+ "bitcoincore-rpc-async2",
+ "chrono",
+ "clap",
+ "corepc-node",
  "data-engine",
+ "data-engine-server",
  "devnet",
+ "env_logger",
+ "eyre",
+ "futures",
+ "futures-util",
+ "hex",
+ "hypernode",
+ "log",
+ "rift-core",
  "rift-sdk",
+ "sol-types",
  "tempfile",
  "tokio",
 ]
@@ -4112,7 +4129,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2886843bf800fba2e3377cff24abf6379b4c4d5c6681eaf9ea5b0d15090450bd"
 dependencies = [
  "libc",
- "wasi",
+ "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.52.0",
 ]
 
@@ -4778,17 +4795,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "password-hash"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7676374caaee8a325c9e7a2ae557f216c5563a171d6997b0ef8a65af35147700"
-dependencies = [
- "base64ct",
- "rand_core",
- "subtle",
-]
-
-[[package]]
 name = "pasta_curves"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4837,9 +4843,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
- "hmac",
- "password-hash",
- "sha2",
 ]
 
 [[package]]
@@ -6057,7 +6060,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with_macros",
- "time",
+ "time 0.3.37",
 ]
 
 [[package]]
@@ -7435,6 +7438,17 @@ dependencies = [
 
 [[package]]
 name = "time"
+version = "0.1.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
+dependencies = [
+ "libc",
+ "wasi 0.10.0+wasi-snapshot-preview1",
+ "winapi",
+]
+
+[[package]]
+name = "time"
 version = "0.3.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35e7868883861bd0e56d9ac6efcaaca0d6d5d82a2a7ec8209ff492c07cf37b21"
@@ -7773,7 +7787,7 @@ checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
 dependencies = [
  "crossbeam-channel",
  "thiserror 1.0.69",
- "time",
+ "time 0.3.37",
  "tracing-subscriber",
 ]
 
@@ -8054,7 +8068,7 @@ dependencies = [
  "cfg-if",
  "git2",
  "rustversion",
- "time",
+ "time 0.3.37",
 ]
 
 [[package]]
@@ -8080,6 +8094,12 @@ checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
 dependencies = [
  "try-lock",
 ]
+
+[[package]]
+name = "wasi"
+version = "0.10.0+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "wasi"
@@ -8224,14 +8244,11 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "4.4.2"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87ba24419a2078cd2b0f2ede2691b6c66d8e47836da3b6db8265ebad47afbfc7"
+checksum = "d011071ae14a2f6671d0b74080ae0cd8ebf3a6f8c9589a2cd45f23126fe29724"
 dependencies = [
- "either",
- "home",
- "once_cell",
- "rustix",
+ "libc",
 ]
 
 [[package]]
@@ -8658,22 +8675,16 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "0.6.6"
+version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
+checksum = "93ab48844d61251bb3835145c521d88aa4031d7139e8485990f60ca911fa0815"
 dependencies = [
- "aes",
  "byteorder",
  "bzip2",
- "constant_time_eq 0.1.5",
  "crc32fast",
- "crossbeam-utils",
  "flate2",
- "hmac",
- "pbkdf2",
- "sha1",
- "time",
- "zstd 0.11.2+zstd.1.5.2",
+ "thiserror 1.0.69",
+ "time 0.1.45",
 ]
 
 [[package]]
@@ -8705,30 +8716,11 @@ dependencies = [
 
 [[package]]
 name = "zstd"
-version = "0.11.2+zstd.1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20cc960326ece64f010d2d2107537f26dc589a6573a316bd5b1dba685fa5fde4"
-dependencies = [
- "zstd-safe 5.0.2+zstd.1.5.2",
-]
-
-[[package]]
-name = "zstd"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
 dependencies = [
- "zstd-safe 7.2.3",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "5.0.2+zstd.1.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d2a5585e04f9eea4b2a3d1eca508c4dee9592a89ef6f450c11719da0726f4db"
-dependencies = [
- "libc",
- "zstd-sys",
+ "zstd-safe",
 ]
 
 [[package]]

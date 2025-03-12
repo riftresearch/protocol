@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
-use rift_sdk::create_websocket_provider;
+use rift_sdk::{create_websocket_provider, WebsocketWalletProvider};
 use tokio::time::Instant;
 
 use alloy::{
@@ -31,28 +31,12 @@ use crate::{
     RiftExchangeWebsocket,
 };
 
-pub type EvmWebsocketProvider = Arc<
-    FillProvider<
-        JoinFill<
-            JoinFill<
-                Identity,
-                JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-            >,
-            WalletFiller<EthereumWallet>,
-        >,
-        RootProvider<PubSubFrontend>,
-        PubSubFrontend,
-        Ethereum,
-    >,
->;
-
 /// Holds all Ethereum-related devnet state.
 pub struct EthDevnet {
     pub anvil: AnvilInstance,
     pub token_contract: Arc<MockTokenWebsocket>,
     pub rift_exchange_contract: Arc<RiftExchangeWebsocket>,
-    pub funded_provider: EvmWebsocketProvider,
-
+    pub funded_provider: Arc<WebsocketWalletProvider>,
     pub on_fork: bool,
 }
 
@@ -63,9 +47,10 @@ impl EthDevnet {
         genesis_mmr_root: [u8; 32],
         tip_block_leaf: BlockLeaf,
         fork_config: Option<ForkConfig>,
+        interactive: bool,
     ) -> Result<(Self, u64)> {
         let on_fork = fork_config.is_some();
-        let anvil = spawn_anvil(fork_config).await?;
+        let anvil = spawn_anvil(interactive, fork_config).await?;
         info!(
             "Anvil spawned at {}, chain_id={}",
             anvil.endpoint(),
@@ -176,12 +161,11 @@ pub struct ForkConfig {
 }
 
 /// Spawns Anvil in a blocking task.
-async fn spawn_anvil(fork_config: Option<ForkConfig>) -> Result<AnvilInstance> {
-    tokio::task::spawn_blocking(|| {
+async fn spawn_anvil(interactive: bool, fork_config: Option<ForkConfig>) -> Result<AnvilInstance> {
+    tokio::task::spawn_blocking(move || {
         let mut anvil = Anvil::new()
             .arg("--host")
             .arg("0.0.0.0")
-            .port(50101_u16)
             .block_time(1)
             .chain_id(1337)
             .arg("--steps-tracing")
@@ -192,6 +176,9 @@ async fn spawn_anvil(fork_config: Option<ForkConfig>) -> Result<AnvilInstance> {
             if let Some(block_number) = fork_config.block_number {
                 anvil = anvil.fork_block_number(block_number);
             }
+        }
+        if interactive {
+            anvil = anvil.port(50101_u16);
         }
         anvil.try_spawn().map_err(|e| eyre!(e))
     })

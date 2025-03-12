@@ -19,7 +19,10 @@ use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
 
 use std::{path::PathBuf, str::FromStr, sync::Arc};
-use tokio::{sync::RwLock, task::JoinHandle};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+};
 use tracing::{info, warn};
 
 // Added for idempotency tracking.
@@ -37,6 +40,8 @@ pub struct DataEngine {
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
     // New field to track if the event listener has been started already.
     server_started: Arc<AtomicBool>,
+    initial_sync_complete_watcher: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<bool>>>>,
+    initial_sync_complete: Arc<AtomicBool>,
     pub event_listener_handle: Option<JoinHandle<()>>,
 }
 
@@ -63,9 +68,27 @@ impl DataEngine {
         Ok(Self {
             checkpointed_block_tree,
             swap_database_connection,
+            initial_sync_complete: Arc::new(AtomicBool::new(false)),
+            initial_sync_complete_watcher: Arc::new(Mutex::new(Vec::new())),
             server_started: Arc::new(AtomicBool::new(false)),
             event_listener_handle: None,
         })
+    }
+
+    pub async fn wait_for_initial_sync(&self) -> eyre::Result<()> {
+        let mut initial_sync_complete_watcher = self.initial_sync_complete_watcher.lock().await;
+        if self
+            .initial_sync_complete
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        initial_sync_complete_watcher.push(tx);
+        drop(initial_sync_complete_watcher);
+        rx.await
+            .map_err(|_| eyre::eyre!("Initial sync watcher channel closed unexpectedly"))?;
+        Ok(())
     }
 
     /// Seeds the DataEngine and immediately starts the event listener.
@@ -102,6 +125,8 @@ impl DataEngine {
 
         let checkpointed_block_tree_clone = self.checkpointed_block_tree.clone();
         let swap_database_connection_clone = self.swap_database_connection.clone();
+        let initial_sync_complete_clone = self.initial_sync_complete.clone();
+        let initial_sync_complete_watcher_clone = self.initial_sync_complete_watcher.clone();
 
         let handle = tokio::spawn(async move {
             listen_for_events(
@@ -110,6 +135,8 @@ impl DataEngine {
                 checkpointed_block_tree_clone,
                 &rift_exchange_address,
                 deploy_block_number,
+                initial_sync_complete_clone,
+                initial_sync_complete_watcher_clone,
             )
             .await
             .expect("listen_for_events failed");
@@ -226,6 +253,8 @@ pub async fn listen_for_events(
     checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: &str,
     deploy_block_number: u64,
+    initial_sync_complete: Arc<AtomicBool>,
+    initial_sync_complete_watcher: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<bool>>>>,
 ) -> Result<()> {
     let rift_exchange_address = Address::from_str(rift_exchange_address)?;
 
@@ -294,6 +323,15 @@ pub async fn listen_for_events(
         "Subscribed to new logs starting from block {}",
         latest_block + 1
     );
+
+    // Signal that the initial sync is complete
+    initial_sync_complete.store(true, std::sync::atomic::Ordering::Relaxed);
+    {
+        let mut initial_sync_complete_watcher = initial_sync_complete_watcher.lock().await;
+        for tx in initial_sync_complete_watcher.drain(..) {
+            let _ = tx.send(true);
+        }
+    }
 
     // Now process the subscription stream
     while let Some(log) = stream.next().await {

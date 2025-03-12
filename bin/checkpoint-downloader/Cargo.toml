@@ -17,6 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bitcoin = { workspace = true }
 hex = { workspace = true }
+thiserror = { workspace = true }
 
 zstd = { workspace = true }
 tempfile = { workspace = true }

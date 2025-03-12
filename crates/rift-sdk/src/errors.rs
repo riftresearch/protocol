@@ -40,6 +40,9 @@ pub enum RiftSdkError {
 
     #[error("Key derivation failed")]
     KeyDerivationFailed,
+
+    #[error("Invalid private key: {0}")]
+    InvalidPrivateKey(String),
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;

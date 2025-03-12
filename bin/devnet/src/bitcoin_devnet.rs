@@ -35,7 +35,13 @@ impl BitcoinDevnet {
     /// with an optional `funded_address`.
     /// Returns `(BitcoinDevnet, AsyncBitcoinClient)` so we can
     /// also have an async RPC client if needed.
-    pub fn setup(funded_address: Option<String>) -> Result<Self> {
+    pub async fn setup(funded_address: Option<String>, using_bitcoin: bool) -> Result<(Self, u32)> {
+        if !using_bitcoin {
+            assert!(
+                funded_address.is_none(),
+                "You can't provide a funded address if you're not using Bitcoin"
+            );
+        }
         info!("Instantiating Bitcoin Regtest...");
         let t = Instant::now();
         let bitcoin_regtest = BitcoinRegtest::from_downloaded().map_err(|e| eyre!(e))?;
@@ -52,7 +58,7 @@ impl BitcoinDevnet {
         // Mine 101 blocks to get initial coinbase BTC
         bitcoin_regtest
             .client
-            .generate_to_address(101, &alice_address)?;
+            .generate_to_address(if using_bitcoin { 101 } else { 1 }, &alice_address)?;
 
         // If user wants to fund a specific BTC address
         let mut funded_sats = 0;
@@ -65,22 +71,34 @@ impl BitcoinDevnet {
         let bitcoin_rpc_url = bitcoin_regtest.rpc_url_with_wallet("alice");
         info!("Creating async Bitcoin RPC client at {}", bitcoin_rpc_url);
 
-        let bitcoin_rpc_client: Arc<AsyncBitcoinClient> =
-            Arc::new(futures::executor::block_on(AsyncBitcoinClient::new(
+        let bitcoin_rpc_client: Arc<AsyncBitcoinClient> = Arc::new(
+            AsyncBitcoinClient::new(
                 bitcoin_rpc_url,
                 Auth::CookieFile(cookie.clone()),
                 Duration::from_millis(250),
-            ))?);
+            )
+            .await?,
+        );
 
-        let bitcoin_data_engine = futures::executor::block_on(BitcoinDataEngine::new(
+        let bitcoin_data_engine = BitcoinDataEngine::new(
             &DatabaseLocation::InMemory,
             bitcoin_rpc_client.clone(),
             100,
             Duration::from_millis(250),
-        ));
+        )
+        .await;
+
+        let data_engine = Arc::new(bitcoin_data_engine);
+        let t = Instant::now();
+        println!("Waiting for bitcoin data engine initial sync...");
+        data_engine.wait_for_initial_sync().await?;
+        println!(
+            "Bitcoin data engine initial sync complete in {:?}",
+            t.elapsed()
+        );
 
         let devnet = BitcoinDevnet {
-            data_engine: Arc::new(bitcoin_data_engine),
+            data_engine,
             rpc_client: bitcoin_rpc_client,
             regtest: bitcoin_regtest,
             miner_client: alice,
@@ -89,7 +107,7 @@ impl BitcoinDevnet {
             funded_sats,
         };
 
-        Ok(devnet)
+        Ok((devnet, if using_bitcoin { 101 } else { 1 }))
     }
 
     pub async fn mine_blocks(&self, blocks: usize) -> Result<()> {

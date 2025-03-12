@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
 
     let (devnet, _funding_sats) = RiftDevnet::setup(
         true,             // interactive
+        true,             // using_bitcoin
         args.evm_address, // an optional EVM address to fund
         None,
         fork_config,

@@ -84,15 +84,16 @@ use rift_sdk::DatabaseLocation; // assumed to be defined in your code base
 pub struct BitcoinDataEngine {
     /// Our local MMR of the best chain
     pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
-    /// Tokio mpsc channel for blocks downstream consumer should analyze (new blocks)
-    blocks_to_analyze_tx: mpsc::UnboundedSender<()>,
-    blocks_to_analyze_rx: mpsc::UnboundedReceiver<()>,
     /// Async RPC client for bitcoind.
     bitcoin_rpc: Arc<AsyncBitcoinClient>,
     /// JoinHandle for our block watchtower task.
     block_watchtower_handle: JoinHandle<Result<(), eyre::Report>>,
     /// Map of (block_height -> oneshot Senders), for tasks waiting on that height.
     watchers: Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
+    /// Map of (block_height -> oneshot Senders), for tasks waiting on the initial sync to complete.
+    initial_sync_watchers: Arc<Mutex<Vec<oneshot::Sender<bool>>>>,
+    /// Boolean flag to indicate if the initial sync is complete
+    initial_sync_complete: Arc<AtomicBool>,
 }
 
 impl BitcoinDataEngine {
@@ -110,14 +111,16 @@ impl BitcoinDataEngine {
                 .expect("Failed to open IndexedMMR"),
         ));
 
-        let (blocks_to_analyze_tx, blocks_to_analyze_rx) = tokio::sync::mpsc::unbounded_channel();
-
         // Create a watchers map for waiting on specific heights
         let watchers = Arc::new(Mutex::new(HashMap::new()));
+        let initial_sync_watchers = Arc::new(Mutex::new(Vec::new()));
+        let initial_sync_complete = Arc::new(AtomicBool::new(false));
 
         // Spawn the block watchtower in a separate task
         let block_watchtower_handle = tokio::spawn(block_watchtower(
             mmr.clone(),
+            initial_sync_complete.clone(),
+            initial_sync_watchers.clone(),
             watchers.clone(),
             bitcoin_rpc.clone(),
             download_chunk_size,
@@ -126,12 +129,32 @@ impl BitcoinDataEngine {
 
         Self {
             indexed_mmr: mmr,
-            blocks_to_analyze_tx,
-            blocks_to_analyze_rx,
             bitcoin_rpc,
             block_watchtower_handle,
             watchers,
+            initial_sync_watchers,
+            initial_sync_complete,
         }
+    }
+
+    pub async fn wait_for_initial_sync(&self) -> eyre::Result<()> {
+        let (tx, rx) = oneshot::channel();
+
+        // lock channel first, then check if initial sync is complete, then push to channel if not complete
+        let mut initial_sync_watchers = self.initial_sync_watchers.lock().await;
+
+        if self
+            .initial_sync_complete
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+
+        initial_sync_watchers.push(tx);
+        drop(initial_sync_watchers);
+        rx.await
+            .map_err(|_| eyre::eyre!("Initial sync watcher channel closed unexpectedly"))?;
+        Ok(())
     }
 
     /// Wait for a certain block height to arrive in the MMR. Returns the corresponding `BlockLeaf`.
@@ -142,7 +165,7 @@ impl BitcoinDataEngine {
             let mmr_guard = self.indexed_mmr.read().await;
             mmr_guard.get_leaf_by_leaf_index(height as usize).await?
         } {
-            // If it's already there, we can short-circuit immediately.
+            // If it's already there, we can short-circuit return immediately.
             return Ok(leaf);
         }
 
@@ -155,7 +178,8 @@ impl BitcoinDataEngine {
 
         // 3. Return the receiving end of the channel. When the watchtower loop
         //    sees that this height arrived, it will send the corresponding `BlockLeaf`.
-        rx.await.map_err(|_| eyre::eyre!("oneshot canceled"))
+        rx.await
+            .map_err(|_| eyre::eyre!("Block height watcher channel closed unexpectedly"))
     }
 }
 
@@ -163,6 +187,8 @@ impl BitcoinDataEngine {
 /// on a periodic basis, and then fulfilling watchers for any heights that are now in the MMR.
 async fn block_watchtower(
     indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    initial_sync_complete: Arc<AtomicBool>,
+    initial_sync_watchers: Arc<Mutex<Vec<oneshot::Sender<bool>>>>,
     watchers: Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
     bitcoin_rpc: Arc<AsyncBitcoinClient>,
     // number of blocks to download at a time before applying to the local mmr
@@ -252,6 +278,18 @@ async fn block_watchtower(
             )
             .await
             .unwrap();
+        }
+
+        // if the initial sync is not complete, set it to complete and notify all watchers
+        if !initial_sync_complete.load(std::sync::atomic::Ordering::Relaxed) {
+            initial_sync_complete.store(true, std::sync::atomic::Ordering::Relaxed);
+
+            {
+                let mut initial_sync_watchers = initial_sync_watchers.lock().await;
+                for tx in initial_sync_watchers.drain(..) {
+                    let _ = tx.send(true);
+                }
+            }
         }
 
         // **After** re-syncing, check if any watchers can now be fulfilled.
