@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
+import {IPermit2} from "uniswap-permit2/src/interfaces/IPermit2.sol";
 
 library Types {
     // --------- LIGHT CLIENT TYPES --------- //
@@ -270,6 +271,7 @@ library Types {
         // expectedSats, specifiedPayoutAddress
         // bytes depositLiquidityParams;
         ReactorDepositLiquidityParams depositLiquidityParams;
+        Permit2TransferInfo permit2TransferInfo;
     }
 
     struct LiquidityRoute {
@@ -281,5 +283,12 @@ library Types {
         IntentInfo info; // this is signed
         bytes signature; // this is the signature of the user
         bytes32 orderHash; // do we need this?, depends on intent validation logic
+    }
+
+    struct Permit2TransferInfo {
+        IPermit2.PermitTransferFrom permitTransferFrom;
+        IPermit2.SignatureTransferDetails transferDetails;
+        address owner;
+        bytes signature;
     }
 }
