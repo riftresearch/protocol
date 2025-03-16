@@ -92,9 +92,9 @@ contract RiftReactor is RiftExchange {
      *      [X] 6. Give approval to callback contract for ERC20
      *      [X] 7. Call solver provided router with routeCalldata
      *      [X] 8. Validate sufficient cbBTC was sent ((postCallcbBTC - preCallcbBTC) >= order.depositLiquidtyParams.depositAmount)
-     *      [ ] 9. Compute expected sats based on linear model defined in above footnotes
-     *      [ ] 10. Build final deposit call using calculated expectedSats, msg.sender for specifiedPayoutAddress and original user signed deposit data
-     *      [ ] 11. Call depositLiquidity()/depositLiquidityWithOverwrite()
+     *      [X] 9. Compute expected sats based on linear model defined in above footnotes
+     *      [X] 10. Build final deposit call using calculated expectedSats, msg.sender for specifiedPayoutAddress and original user signed deposit data
+     *      [X] 11. Call depositLiquidity()/depositLiquidityWithOverwrite()
      * @param route The liquidity route containing swap details and routing information
      * @param order The signed intent containing deposit parameters and permit2 transfer info
      */
@@ -115,11 +115,51 @@ contract RiftReactor is RiftExchange {
         // End step 13
 
         // Step 4: Transfer ERC20 tokens from the user's account into the
-    }
+        // reactor using Permit2.
+        IPermit2(permit2).permitTransferFrom(
+            order.info.permit2TransferInfo.permitTransferFrom,
+            order.info.permit2TransferInfo.transferDetails,
+            order.info.permit2TransferInfo.owner,
+            order.info.permit2TransferInfo.signature
+        );
 
-    // ---------------------------------------------------------------
-    //                     RIFT EXCHANGE FUNCTIONS
-    // ---------------------------------------------------------------
+        // Step 5: Fetch contracts current balance of cbBTC (preCallcbBTC)
+        uint256 preCallcbBTC = cbBTC.balanceOf(address(this));
+
+        // Step 6: Give approval to callback contract for ERC20
+        cbBTC.approve(address(route.router), depositAmount);
+
+        // Step 7: Call solver provided router with routeCalldata
+        (bool success, ) = route.router.call(route.routeData);
+        if (!success) {
+            revert RouterCallFailed();
+        }
+
+        // Step 8: Validate sufficient cbBTC was sent ((postCallcbBTC - preCallcbBTC) >= order.depositLiquidtyParams.depositAmount)
+        uint256 postCallcbBTC = cbBTC.balanceOf(address(this));
+        if ((postCallcbBTC - preCallcbBTC) < depositAmount) {
+            revert InsufficientCbBTC();
+        }
+        //    ((postCallcbBTC - preCallcbBTC) >= order.depositLiquidtyParams.depositAmount)
+        // 9. Compute expected sats based on linear model defined in above
+        //    footnotes.
+        uint256 expectedSats = _computeAuctionSats(order.info.auction);
+        //10. Build final deposit call using calculated expectedSats, msg.sender for
+        //    specifiedPayoutAddress and original user signed deposit data.
+        //11. Call depositLiquidity()/depositLiquidityWithOverwrite()
+        depositLiquidity(
+            order.info.depositLiquidityParams.address,
+            order.info.depositLiquidityParams.specifiedPayoutAddress,
+            order.info.depositLiquidityParams.depositAmount,
+            expectedSats,
+            order.info.depositLiquidityParams.btcPayoutScriptPubKey,
+            order.info.depositLiquidityParams.depositSalt,
+            order.info.depositLiquidityParams.confirmationBlocks,
+            order.info.depositLiquidityParams.safeBlockLeaf,
+            order.info.depositLiquidityParams.safeBlockSiblings,
+            order.info.depositLiquidityParams.safeBlockPeaks
+        );
+    }
 
     /**
      * @notice Allows a market maker to deposit cbBTC as bond.
@@ -134,9 +174,42 @@ contract RiftReactor is RiftExchange {
         mmBondDeposits[msg.sender] += amount;
     }
 
+    /**
+     * @notice Executes a liquidity intent with an atomic swap using a provided route
+     * @dev This function handles the complete flow of validating and executing a liquidity intent.
+     * @dev Non-exhaustive checklist (TODO: Remove after implementation):
+     *      [X] 1. Validate intent aka SignedIntent (EIP712 typed data validation)
+     *      [X] 2. Validate order is active, auction isn't over (endBlock > block.number), nonce is valid
+     *      [X] 3. Validate sufficient cbBTC bond has been posted by msg.sender (the MM)
+     *      [X] 9. Compute expected sats based on linear model defined in above footnotes
+     *      [X] 10. Build final deposit call using calculated expectedSats, msg.sender for specifiedPayoutAddress and original user signed deposit data
+     *      [X] 11. Call depositLiquidity()/depositLiquidityWithOverwrite()
+     * @param order The signed intent containing deposit parameters and permit2 transfer info
+     */
     // For pure cbBTC deposits:
     // Steps 1-3 and 9-10 from executeIntentWithSwap()
-    function executeIntent(Types.SignedIntent calldata order) external {}
+    function executeIntent(Types.SignedIntent calldata order) external {
+        // Step 1-3: Validate the intent, EIP-712 signature, auction status, nonce, and bond.
+        _validateIntentAndBond(order);
+
+        // 9. Compute expected sats based on linear model defined in above footnotes
+        uint256 expectedSats = _computeAuctionSats(order.info.auction);
+        //10. Build final deposit call using calculated expectedSats, msg.sender for
+        //    specifiedPayoutAddress and original user signed deposit data.
+        //11. Call depositLiquidity()/depositLiquidityWithOverwrite()
+        depositLiquidity(
+            order.info.depositLiquidityParams.address,
+            order.info.depositLiquidityParams.specifiedPayoutAddress,
+            order.info.depositLiquidityParams.depositAmount,
+            expectedSats,
+            order.info.depositLiquidityParams.btcPayoutScriptPubKey,
+            order.info.depositLiquidityParams.depositSalt,
+            order.info.depositLiquidityParams.confirmationBlocks,
+            order.info.depositLiquidityParams.safeBlockLeaf,
+            order.info.depositLiquidityParams.safeBlockSiblings,
+            order.info.depositLiquidityParams.safeBlockPeaks
+        );
+    }
 
     // calls releaseLiquidityBatch() and releases bond back to mm
     // should accept an array of release requests to align with the underlying
