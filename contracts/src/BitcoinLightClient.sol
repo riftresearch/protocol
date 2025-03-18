@@ -86,8 +86,8 @@ abstract contract BitcoinLightClient {
 
     function proveBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata siblings,
-        bytes32[] calldata peaks
+        bytes32[] memory siblings,
+        bytes32[] memory peaks
     ) public view returns (bool) {
         return
             LightClientVerificationLib.proveBlockInclusion(

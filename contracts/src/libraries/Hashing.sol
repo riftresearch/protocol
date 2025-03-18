@@ -3,8 +3,14 @@ pragma solidity ^0.8.28;
 
 import {Types} from "../libraries/Types.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {SignatureVerification} from "../libraries/SignatureVerification.sol";
+import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
 
 library EIP712Hashing {
+    using EIP712Hashing for Types.IntentInfo;
+    using ECDSA for bytes32;
+    using SignatureVerification for bytes;
+
     bytes32 constant AUCTION_TYPE_HASH =
         keccak256("DutchAuctionInfo(uint256 startBlock,uint256 endBlock,uint256 minSats,uint256 maxSats)");
     bytes32 constant BLOCK_LEAF_TYPE_HASH =
@@ -24,28 +30,20 @@ library EIP712Hashing {
 
     /**
      * @notice Validates the EIP‑712 signature for a SignedIntent.
-     * @dev Constructs the EIP‑712 digest by:
-     *      1. Hashing the DutchAuctionInfo sub-structure using _hashDutchAuctionInfo.
-     *      2. Hashing the ReactorDepositLiquidityParams sub-structure using _hashReactorDepositLiquidityParams.
-     *      3. Hashing the overall IntentInfo struct using INTENT_TYPE_HASH.
-     *      4. Combining with the DOMAIN_SEPARATOR to form the digest.
-     *      Finally, it recovers the signer from the digest and compares it with the expected signer
-     *      (i.e. the depositOwnerAddress in depositLiquidityParams). If the recovered signer is zero or does not
-     *      match, it reverts with InvalidEIP712Signature.
+     * @dev This is heavily borrowing from the Permit2 implementation. It will revert
+     *      if the signature is not valid or not signed by the expected signer.
      * @param order The SignedIntent containing the intent data and signature.
-     * @return isValid True if the signature is valid.
+     * @param DOMAIN_SEPARATOR The DOMAIN_SEPARATOR for the SignedIntent.
      */
-    function validateEIP712(Types.SignedIntent calldata order) internal view returns (bool isValid) {
-        bytes32 intentInfoHash = order.info.hash();
-        // Compute the EIP‑712 digest.
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, intentInfoHash));
+    function validateEIP712(Types.SignedIntent calldata order, bytes32 DOMAIN_SEPARATOR) internal view {
+        order.signature.verify(
+            _hashTypedData(order.info.hash(), DOMAIN_SEPARATOR),
+            order.info.depositLiquidityParams.depositOwnerAddress
+        );
+    }
 
-        // Recover the signer from the digest and the signature.
-        address recovered = digest.recover(order.signature);
-        if (recovered == address(0) || recovered != order.info.depositLiquidityParams.depositOwnerAddress) {
-            revert Errors.InvalidEIP712Signature();
-        }
-        return true;
+    function _hashTypedData(bytes32 dataHash, bytes32 DOMAIN_SEPARATOR) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, dataHash));
     }
 
     /**
