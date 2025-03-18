@@ -73,10 +73,9 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity into a new vault
-    function depositLiquidity(Types.DepositLiquidityParams calldata params) internal {
+    function depositLiquidity(Types.DepositLiquidityParams memory params) internal {
         // Determine vault index
         uint256 vaultIndex = vaultCommitments.length;
-
         // Create deposit liquidity request
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params, vaultIndex);
 
@@ -277,7 +276,7 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Internal function to prepare and validate a new deposit
     function _prepareDeposit(
-        Types.DepositLiquidityParams calldata params,
+        Types.DepositLiquidityParams memory params,
         uint256 depositVaultIndex
     ) internal view returns (Types.DepositVault memory, bytes32) {
         if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
