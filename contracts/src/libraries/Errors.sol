@@ -43,4 +43,7 @@ library Errors {
     error BondDepositTransferFailed();
     error RouterCallFailed();
     error InsufficientCbBTC();
+    error BondNotFoundOrAlreadyReleased();
+    error BondReleaseTransferFailed();
+    error AuctionNotEnded();
 }

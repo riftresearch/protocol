@@ -10,7 +10,6 @@ import "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {IPermit2} from "uniswap-permit2/src/interfaces/IPermit2.sol";
 
 contract RiftReactor is RiftExchange {
-    // TODO: Organize code and move out certain functions to separate libs.
     using ECDSA for bytes32;
     using EIP712Hashing for Types.IntentInfo;
     using EIP712Hashing for Types.SignedIntent;
@@ -27,17 +26,13 @@ contract RiftReactor is RiftExchange {
     // Validation constants
     bytes32 public immutable DOMAIN_SEPARATOR;
 
-    // Mapping to track the available bond deposited by each market maker.
-    mapping(address => uint96) public mmBondDeposits;
     // Mapping to track bond associated with each executed swap.
     mapping(bytes32 => Types.BondedSwap) public swapBonds;
     // Nonce mapping: deposit owner address => nonce
     mapping(address => uint256) public intentNonce;
 
-    IERC20 immutable cbBTC;
-    IPermit2 immutable permit2;
-
-    // TODO: Move these to error library
+    IERC20 immutable CB_BTC;
+    IPermit2 immutable PERMIT2;
 
     constructor(
         bytes32 _mmrRoot,
@@ -47,7 +42,7 @@ contract RiftReactor is RiftExchange {
         address _feeRouter,
         Types.BlockLeaf memory _tipBlockLeaf,
         address _cbbtc_address,
-        address _permit2
+        address _permit2_address
     ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _tipBlockLeaf) {
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
@@ -59,45 +54,8 @@ contract RiftReactor is RiftExchange {
             )
         );
 
-        cbBTC = IERC20(_cbbtc_address);
-        permit2 = IPermit2(_permit2);
-    }
-
-    // ---------------------------------------------------------------
-    // Modifiers
-    // ---------------------------------------------------------------
-    /**
-     * @notice Validates the signed intent and ensures the market maker has posted sufficient bond.
-     * @dev Performs these checks:
-     *      1. Validates the EIP‑712 signature of the SignedIntent.
-     *      2. Verifies the auction is active (auction.endBlock > block.number) and the nonce is correct.
-     *      3. Checks that msg.sender (the market maker executing the swap) has posted sufficient cbBTC bond.
-     *          The required bond is computed based on depositLiquidityParams.depositAmount, which now represents
-     *          the expected amount of cbBTC the MM must supply.
-     * @param order The SignedIntent containing the intent and signature data.
-     */
-    modifier validateIntentAndBond(Types.SignedIntent calldata order) {
-        // NOTE: Do less gas intensive checks first, then if those fail more gas
-        // will be returned.
-        if (order.info.auction.endBlock <= block.number) {
-            revert Errors.AuctionEnded();
-        }
-        if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
-            revert Errors.InvalidNonce();
-        }
-
-        // Step 1: Validate the EIP‑712 signature of the SignedIntent.
-        order.validateEIP712(DOMAIN_SEPARATOR);
-
-        // Step 3: Validate that the market maker has posted sufficient bond.
-        // depositAmount represents the expected amount of cbBTC the MM must supply.
-        uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
-        uint96 requiredBond = _computeBond(depositAmount);
-        uint96 bondPosted = _getBondPosted(msg.sender);
-        if (bondPosted < requiredBond) {
-            revert Errors.InsufficientBond();
-        }
-        _;
+        CB_BTC = IERC20(_cbbtc_address);
+        PERMIT2 = IPermit2(_permit2_address);
     }
 
     // -----------------------------------------------------------------------
@@ -122,42 +80,40 @@ contract RiftReactor is RiftExchange {
      * @param route The liquidity route containing swap details and routing information
      * @param order The signed intent containing deposit parameters and permit2 transfer info
      */
+    // validateIntentAndBond(order)
+    function executeIntentWithSwap(Types.LiquidityRoute calldata route, Types.SignedIntent calldata order) external {
+        uint256 expectedSats = _executeIntentAndSwapShared(route, order);
+
+        depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
+        intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
+    }
+
+    /**
+     * @notice Executes a liquidity intent with an atomic swap using a provided route and overwrites an existing vault
+     * @dev This function handles the complete flow of validating and executing a liquidity intent,
+     *      then overwrites an existing empty vault with the new deposit.
+     * @param route The liquidity route containing swap details and routing information
+     * @param order The signed intent containing deposit parameters and permit2 transfer info
+     * @param depositVault The existing empty vault to overwrite with the new deposit
+     */
     function executeIntentWithSwap(
         Types.LiquidityRoute calldata route,
-        Types.SignedIntent calldata order
-    ) external validateIntentAndBond(order) {
-        // Compute required bond based on the deposit amount.
-        uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
-        uint96 requiredBond = _computeBond(depositAmount);
+        Types.SignedIntent calldata order,
+        Types.DepositVault calldata depositVault
+    ) external {
+        uint256 expectedSats = _executeIntentAndSwapShared(route, order);
 
-        // Deduct the required bond from the MM's deposited balance.
-        mmBondDeposits[msg.sender] -= requiredBond;
-
-        // Record the bonded swap.
-        bytes32 orderId = order.orderHash; // Alternatively, compute a unique identifier.
-        swapBonds[orderId] = Types.BondedSwap({marketMaker: msg.sender, bond: requiredBond});
-        // End step 13
-
-        // Step 4: Transfer ERC20 tokens from the user's account into the
-        // reactor using Permit2.
-        IPermit2(permit2).permitTransferFrom(
-            order.info.permit2TransferInfo.permitTransferFrom,
-            order.info.permit2TransferInfo.transferDetails,
-            order.info.permit2TransferInfo.owner,
-            order.info.permit2TransferInfo.signature
+        depositLiquidityWithOverwrite(
+            Types.DepositLiquidityWithOverwriteParams({
+                depositParams: _buildDepositLiquidityParams(
+                    order.info.depositLiquidityParams,
+                    msg.sender,
+                    expectedSats
+                ),
+                overwriteVault: depositVault
+            })
         );
-
-        // Steps 5-8: Execute the swap and validate sufficient cbBTC was received
-        _executeSwap(route, order, depositAmount);
-
-        //    ((postCallcbBTC - preCallcbBTC) >= order.depositLiquidtyParams.depositAmount)
-        // 9. Compute expected sats based on linear model defined in above
-        //    footnotes.
-        //10. Build final deposit call using calculated expectedSats, msg.sender for
-        //    specifiedPayoutAddress and original user signed deposit data.
-        //11. Call depositLiquidity()/depositLiquidityWithOverwrite
-        uint256 expectedSats = _computeAuctionSats(order.info.auction);
-        depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
+        intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
     }
 
     /**
@@ -174,42 +130,158 @@ contract RiftReactor is RiftExchange {
      */
     // For pure cbBTC deposits:
     // Steps 1-3 and 9-10 from executeIntentWithSwap()
-    function executeIntent(Types.SignedIntent calldata order) external validateIntentAndBond(order) {
-        // 9. Compute expected sats based on linear model defined in above footnotes
-        //10. Build final deposit call using calculated expectedSats, msg.sender for
-        //    specifiedPayoutAddress and original user signed deposit data.
-        //11. Call depositLiquidity()/depositLiquidityWithOverwrite()
+    function executeIntent(Types.SignedIntent calldata order) external {
+        _validateBondAndRecord(order);
+
         uint256 expectedSats = _computeAuctionSats(order.info.auction);
         depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
+        intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
     }
 
-    // calls releaseLiquidityBatch() and releases bond back to mm
-    // should accept an array of release requests to align with the underlying
-    // releaseLiquidityBatch() function
-    function releaseAndFree() external {}
+    /** Shared functionality between depositLiquidity and depositLiquidityOverride */
+    function _executeIntentAndSwapShared(
+        Types.LiquidityRoute calldata route,
+        Types.SignedIntent calldata order
+    ) internal returns (uint256 expectedSats) {
+        _validateBondAndRecord(order);
+
+        // Step 4: Transfer ERC20 tokens from the user's account into the
+        // reactor using Permit2.
+        PERMIT2.permitTransferFrom(
+            order.info.permit2TransferInfo.permitTransferFrom,
+            order.info.permit2TransferInfo.transferDetails,
+            order.info.permit2TransferInfo.owner,
+            order.info.permit2TransferInfo.signature
+        );
+
+        // Steps 5-8: Execute the swap and validate sufficient cbBTC was received
+        _executeSwap(route, order, order.info.depositLiquidityParams.depositAmount);
+
+        expectedSats = _computeAuctionSats(order.info.auction);
+    }
+
+    /**
+     * @notice Releases bonded swap funds and returns the full bond to the corresponding market makers.
+     * @dev This function processes an array of liquidity release requests. It first finalizes the underlying
+     * liquidity releases by calling `releaseLiquidityBatch(paramsArray)`. Then, for each release request, it:
+     *   - Retrieves the corresponding bonded swap using the order hash from the release parameters.
+     *   - Verifies that a valid bonded swap exists (i.e. the market maker address is not zero).
+     *   - Transfers the entire bond amount (in CB_BTC) back to the market maker.
+     *   - Deletes the bonded swap record to prevent double releases.
+     *
+     * @param paramsArray An array of release liquidity parameters that includes an `orderHash` used to identify
+     * the corresponding bonded swap record in `swapBonds`.
+     *
+     * @dev Reverts with:
+     *   - `BondNotFoundOrAlreadyReleased()` if a bonded swap record is not found or has already been released.
+     *   - `BondReleaseTransferFailed()` if the CB_BTC transfer to the market maker fails.
+     */
+    function releaseAndFree(Types.ReleaseLiquidityParams[] calldata paramsArray) external {
+        // Call the underlying liquidity release function.
+        // (Assumes that releaseLiquidityBatch processes all the deposit releases correctly.)
+        releaseLiquidityBatch(paramsArray);
+
+        uint256 i;
+        uint256 paramsArrayLength = paramsArray.length;
+        for (; i < paramsArrayLength; ) {
+            Types.ReleaseLiquidityParams calldata param = paramsArray[i];
+            // Retrieve the bonded swap record for this release request using
+            // the order hash.
+            Types.BondedSwap memory swapInfo = swapBonds[param.orderHash];
+            // Ensure a valid bond is recorded.
+            if (swapInfo.marketMaker == address(0)) revert Errors.BondNotFoundOrAlreadyReleased();
+
+            // Release the full bond amount back to the market maker (no penalty applied here).
+            bool success = CB_BTC.transfer(swapInfo.marketMaker, swapInfo.bond);
+            if (!success) revert Errors.BondReleaseTransferFailed();
+
+            // Clear the bond record to prevent double releasing.
+            delete swapBonds[param.orderHash];
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
 
     // Withdraws liquidity for a deposit while applying a penalty based on SLASH_FEE_BIPS
     // A portion of the bond associated with this deposit is retained in the contract
     // as a penalty, tracked by updating `slashedBondFees` using `SLASH_FEE_BIPS`
     // The remaining bond amount is sent to the depositor's address
-    function withdrawAndPenalize() external {}
-
     /**
-     * @notice Allows a market maker to deposit cbBTC as bond.
-     * @param amount The amount of cbBTC to deposit.
-     * @dev The market maker must have approved this contract to spend their cbBTC.
+     * @notice Withdraws liquidity for a deposit while penalizing the market maker's bond.
+     * @dev Applies a penalty based on SLASH_FEE_BIPS to the bond associated with the deposit.
+     * A portion of the bond (the penalty) is retained by the contract and added to slashedBondFees;
+     * the remaining bond amount is transferred to the depositor's address.
+     *
+     * The orderHash parameter is used to look up the corresponding bonded swap record.
+     *
+     * Requirements:
+     * - A valid bonded swap must exist for the provided order hash.
+     * - The CB_BTC transfer to MM must succeed.
+     *
+     * @param orderHash The unique identifier for the intent (used to look up the bonded swap record).
+     * @dev Reverts with:
+     *   - BondNotFoundOrAlreadyReleased() if no valid bond is found for the given order hash.
+     *   - BondReleaseTransferFailed() if the CB_BTC transfer to the depositor fails.
      */
-    function depositBond(uint96 amount) external {
-        bool success = cbBTC.transferFrom(msg.sender, address(this), amount);
-        if (!success) {
-            revert Errors.BondDepositTransferFailed();
-        }
-        mmBondDeposits[msg.sender] += amount;
+    function withdrawAndPenalize(bytes32 orderHash) external {
+        // Retrieve the bonded swap record using the provided order hash.
+        Types.BondedSwap memory swapInfo = swapBonds[orderHash];
+        if (block.number < swapInfo.endBlock) revert Errors.AuctionNotEnded();
+        if (swapInfo.marketMaker == address(0)) revert Errors.BondNotFoundOrAlreadyReleased();
+
+        // Calculate the penalty based on SLASH_FEE_BIPS.
+        // For example, if SLASH_FEE_BIPS is 500 (i.e. 5%), then penalty = 5% of the bond.
+        uint96 penalty = (swapInfo.bond * SLASH_FEE_BIPS) / 10000;
+        uint96 refundAmount = swapInfo.bond - penalty;
+
+        // Update the global slashedBondFees by adding the penalty.
+        slashedBondFees += penalty;
+
+        // Transfer the remaining bond amount back to the MM.
+        bool success = CB_BTC.transfer(swapInfo.marketMaker, refundAmount);
+        if (!success) revert Errors.BondReleaseTransferFailed();
+
+        // Clear the bonded swap record to prevent double withdrawals.
+        delete swapBonds[orderHash];
     }
 
     // ---------------------------------------------------------------
     //                     INTERNAL FUNCTIONS
     // ---------------------------------------------------------------
+
+    /**
+     * @notice Validates and records a bond payment for an intent execution
+     * @dev Checks the nonce, calculates the required bond amount based on the deposit size,
+     *      transfers the bond from the market maker to the contract, and
+     *      records the bonded swap in the swapBonds mapping.
+     * @dev The bond amount is either a percentage of the deposit amount (BOND_BIPS/10000)
+     *      or the minimum bond amount (MIN_BOND), whichever is greater.
+     * @param order The signed intent containing deposit parameters
+     * @custom:throws BondDepositTransferFailed If the bond transfer from msg.sender fails
+     */
+    function _validateBondAndRecord(Types.SignedIntent calldata order) internal {
+        if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
+            revert Errors.InvalidNonce();
+        }
+
+        uint96 requiredBond = _computeBond(order.info.depositLiquidityParams.depositAmount);
+
+        // Do ERC20 transfer of bond amount from msg.sender to this contract
+        bool success = CB_BTC.transferFrom(msg.sender, address(this), requiredBond);
+        if (!success) {
+            revert Errors.BondDepositTransferFailed();
+        }
+
+        // Record the bonded swap.
+        bytes32 orderId = order.orderHash; // Alternatively, compute a unique identifier.
+        swapBonds[orderId] = Types.BondedSwap({
+            marketMaker: msg.sender,
+            bond: requiredBond,
+            endBlock: order.info.auction.endBlock
+        });
+    }
 
     /**
      * @notice Executes a token swap through a router and validates the resulting cbBTC amount
@@ -228,7 +300,7 @@ contract RiftReactor is RiftExchange {
         uint256 depositAmount
     ) internal {
         // Step 5: Fetch contracts current balance of cbBTC (preCallcbBTC)
-        uint256 preCallcbBTC = cbBTC.balanceOf(address(this));
+        uint256 preCallcbBTC = CB_BTC.balanceOf(address(this));
 
         // Step 6: Give approval to callback contract for ERC20
         IERC20(order.info.tokenIn).approve(address(route.router), depositAmount);
@@ -240,7 +312,7 @@ contract RiftReactor is RiftExchange {
         }
 
         // Step 8: Validate sufficient cbBTC was sent
-        uint256 postCallcbBTC = cbBTC.balanceOf(address(this));
+        uint256 postCallcbBTC = CB_BTC.balanceOf(address(this));
         if ((postCallcbBTC - preCallcbBTC) < depositAmount) {
             revert Errors.InsufficientCbBTC();
         }
@@ -271,18 +343,6 @@ contract RiftReactor is RiftExchange {
                 safeBlockSiblings: baseParams.safeBlockSiblings,
                 safeBlockPeaks: baseParams.safeBlockPeaks
             });
-    }
-
-    // ---------------------------------------------------------------
-    // Bond Management Functions
-    // ---------------------------------------------------------------
-    /**
-     * @notice Retrieves the amount of bond posted by a market maker.
-     * @param mm The market maker's address.
-     * @return bondAmount The available bond amount for the given market maker.
-     */
-    function _getBondPosted(address mm) internal view returns (uint96 bondAmount) {
-        return mmBondDeposits[mm];
     }
 
     // -----------------------------------------------------------------------

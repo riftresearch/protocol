@@ -17,7 +17,7 @@ library VaultLib {
     }
 
     function validateDepositVaultCommitment(
-        Types.DepositVault calldata vault,
+        Types.DepositVault memory vault,
         bytes32[] storage vaultCommitments
     ) internal view returns (bytes32) {
         bytes32 vaultHash = hashDepositVault(vault);

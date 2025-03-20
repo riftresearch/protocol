@@ -213,6 +213,7 @@ library Types {
         bytes32[] bitcoinSwapBlockPeaks;
         Types.DepositVault utilizedVault;
         uint32 tipBlockHeight;
+        bytes32 orderHash;
     }
 
     struct BitcoinCheckpoint {
@@ -251,6 +252,7 @@ library Types {
         // binpack both of these into a single 256 bit word
         address marketMaker;
         uint96 bond;
+        uint256 endBlock;
     }
 
     struct DutchAuctionInfo {
