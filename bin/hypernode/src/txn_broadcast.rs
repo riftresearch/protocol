@@ -8,7 +8,8 @@ use alloy::{
     },
     transports::RpcError,
 };
-use rift_sdk::{bindings::RiftExchange, WebsocketWalletProvider};
+use rift_sdk::WebsocketWalletProvider;
+use sol_bindings::RiftExchange;
 use std::{collections::VecDeque, sync::Arc};
 use tokio::{
     sync::{
@@ -76,14 +77,13 @@ struct Request {
 
 #[derive(Debug)]
 pub struct TransactionBroadcaster {
-    // Queue is important, here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
     request_sender: UnboundedSender<Request>,
     pub handle: JoinHandle<eyre::Result<()>>,
 }
 
 impl TransactionBroadcaster {
     pub fn new(wallet_rpc: Arc<WebsocketWalletProvider>, debug_rpc_url: String) -> Self {
-        // Using an unbounded channel for the requests
+        // Channel is important, here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
         let (request_sender, request_receiver) = unbounded_channel();
 
         // This never exits even if channel is empty, only if channel breaks/closes

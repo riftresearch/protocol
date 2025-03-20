@@ -93,6 +93,7 @@ bitcoincore-rpc-async2 = { git = "https://github.com/turbofish-org/rust-bitcoinc
 
 # TODO: Update this to the version of corepc that supports Arm Macs once it's released
 corepc-node = { git = "https://github.com/rust-bitcoin/corepc", rev = "7949505ebc29a478887852b6c0bc773f6a50baf7", features = ["28_0", "download"] }
+# corepc-node = { version = "0.6.1", features = ["28_0", "download"] }
 dotenv = "0.15.0"
 bip39 = "2.1.0"
 

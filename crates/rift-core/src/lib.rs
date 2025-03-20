@@ -47,8 +47,9 @@ impl RiftTransaction {
 
         // [1] Validate Bitcoin payment given the reserved deposit vault
 
-        let vault_commitment = hash_deposit_vault(&self.reserved_vault);
-        validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment);
+        let vault_commitment: [u8; 32] = hash_deposit_vault(&self.reserved_vault);
+        validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment)
+            .expect("Failed to validate bitcoin payment");
 
         // [2] Construct the public input, bitcoin block hash and txid are reversed to align with network byte order
         let mut block_hash =

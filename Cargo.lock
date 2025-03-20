@@ -1893,7 +1893,7 @@ version = "0.6.0"
 source = "git+https://github.com/rust-bitcoin/corepc?rev=7949505ebc29a478887852b6c0bc773f6a50baf7#7949505ebc29a478887852b6c0bc773f6a50baf7"
 dependencies = [
  "anyhow",
- "bitcoin_hashes 0.14.0",
+ "bitcoin_hashes 0.13.0",
  "corepc-client",
  "flate2",
  "log",
