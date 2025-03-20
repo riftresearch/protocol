@@ -14,12 +14,12 @@ pub struct BlockLeaf {
     pub cumulative_chainwork: [u8; 32], // Stored in reverse byte order
 }
 
-impl From<BlockLeaf> for sol_types::Types::BlockLeaf {
+impl From<BlockLeaf> for sol_bindings::Types::BlockLeaf {
     fn from(leaf: BlockLeaf) -> Self {
         // Chainwork is stored in reverse byte order, so we need to reverse it before converting to the Uint type
         let mut cumulative_chainwork = leaf.cumulative_chainwork;
         cumulative_chainwork.reverse();
-        sol_types::Types::BlockLeaf {
+        sol_bindings::Types::BlockLeaf {
             height: leaf.height,
             blockHash: leaf.block_hash.into(),
             cumulativeChainwork: alloy_sol_types::sol_data::Uint::<256>::detokenize(

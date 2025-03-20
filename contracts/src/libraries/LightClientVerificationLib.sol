@@ -3,7 +3,6 @@ pragma solidity =0.8.28;
 
 import {Types} from "./Types.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
-import {console} from "forge-std/src/console.sol";
 
 library LightClientVerificationLib {
     /**

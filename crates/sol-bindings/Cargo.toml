@@ -1,8 +1,9 @@
 [package]
-name = "sol-types"
+name = "sol-bindings"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
+alloy-contract = { workspace = true }
 serde = { workspace = true }

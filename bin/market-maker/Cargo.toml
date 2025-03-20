@@ -11,7 +11,7 @@ bitcoin-light-client-core = { workspace = true }
 bitcoin = { workspace = true }
 data-engine = { workspace = true }
 rift-core = { workspace = true }
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
 bitcoincore-rpc-async2 = { workspace = true }
 checkpoint-downloader = { workspace = true }
 

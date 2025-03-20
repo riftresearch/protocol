@@ -7,9 +7,9 @@ use alloy::{
 };
 use eyre::Result;
 use rift_core::vaults::hash_deposit_vault;
-use rift_sdk::bindings::Types::{DepositVault, ProposedSwap};
+use sol_bindings::Types::{DepositVault, ProposedSwap};
 use std::str::FromStr;
-use tokio_rusqlite::{params, Connection};
+use tokio_rusqlite::{params, Connection, Error::Rusqlite};
 
 /// Run initial table creation / migrations on an existing `tokio_sqlite::Connection`.
 pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
@@ -18,6 +18,7 @@ pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
             deposit_id            BLOB(32) PRIMARY KEY,
             depositor             TEXT      NOT NULL,
             recipient             TEXT      NOT NULL,
+            deposit_unlock_timestamp INTEGER NOT NULL,
             deposit_vault         TEXT      NOT NULL,
 
             deposit_block_number  INTEGER   NOT NULL,
@@ -61,6 +62,76 @@ pub fn get_proposed_swap_id(swap: &ProposedSwap) -> [u8; 32] {
     let mut id_material = swap.depositVaultCommitment.to_vec();
     id_material.extend(swap.swapIndex.to_be_bytes::<32>().to_vec());
     keccak256(id_material).into()
+}
+
+pub async fn get_oldest_active_deposit(
+    conn: &Connection,
+    current_timestamp: u64,
+) -> Result<Option<ChainAwareDeposit>> {
+    let sql = r#"
+        SELECT
+            deposit_id,
+            depositor,
+            recipient,
+            deposit_unlock_timestamp,
+            deposit_vault,
+            deposit_block_number,
+            deposit_block_hash,
+            deposit_txid
+        FROM deposits
+        WHERE deposit_unlock_timestamp < ?
+        ORDER BY deposit_unlock_timestamp ASC
+        LIMIT 1
+    "#;
+
+    // Use conn.call to run the query logic inside a single closure,
+    // then parse the row in a step-by-step way similar to get_virtual_swaps.
+    let deposit = conn
+        .call(move |conn| {
+            let mut stmt = conn.prepare(sql)?;
+            let mut rows = stmt.query([current_timestamp])?;
+
+            // We only expect zero or one row because of `LIMIT 1`,
+            // so just parse the first if present.
+            if let Some(row) = rows.next()? {
+                let deposit_id_vec: Vec<u8> = row.get(0)?;
+                let _depositor: String = row.get(1)?;
+                let _recipient: String = row.get(2)?;
+                let _deposit_unlock_timestamp: i64 = row.get(3)?;
+
+                let deposit_vault_str: String = row.get(4)?;
+                let deposit_vault: DepositVault = serde_json::from_str(&deposit_vault_str)
+                    .map_err(|_| {
+                        tokio_rusqlite::Error::Other("Failed to deserialize DepositVault".into())
+                    })?;
+
+                let deposit_block_number: i64 = row.get(5)?;
+                let deposit_block_hash_vec: Vec<u8> = row.get(6)?;
+                let deposit_block_hash: [u8; 32] =
+                    deposit_block_hash_vec.as_slice().try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid deposit_block_hash length".into())
+                    })?;
+
+                let deposit_txid_vec: Vec<u8> = row.get(7)?;
+                let deposit_txid: [u8; 32] =
+                    deposit_txid_vec.as_slice().try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid deposit_txid length".into())
+                    })?;
+
+                Ok(Some(ChainAwareDeposit {
+                    deposit: deposit_vault,
+                    deposit_block_number: deposit_block_number as u64,
+                    deposit_block_hash,
+                    deposit_txid,
+                }))
+            } else {
+                // No deposit matched the condition
+                Ok(None)
+            }
+        })
+        .await?;
+
+    Ok(deposit)
 }
 
 pub async fn add_proposed_swap(
@@ -167,10 +238,7 @@ pub async fn add_deposit(
     deposit_block_hash: [u8; 32],
     deposit_txid: [u8; 32],
 ) -> Result<()> {
-    let deposit_id = hash_deposit_vault(&sol_types::Types::DepositVault::abi_decode(
-        &deposit.abi_encode(),
-        false,
-    )?);
+    let deposit_id = hash_deposit_vault(&deposit);
     let deposit_vault_str = serde_json::to_string(&deposit)
         .map_err(|e| eyre::eyre!("Failed to serialize DepositVault: {:?}", e))?;
 
@@ -447,6 +515,62 @@ pub async fn get_deposits_for_recipient(
         }
 
         Ok(deposits)
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+pub async fn get_deposit_by_id(
+    conn: &Connection,
+    deposit_id: [u8; 32],
+) -> Result<Option<ChainAwareDeposit>> {
+    let sql = r#"
+        SELECT
+            deposit_vault,
+            deposit_block_number,
+            deposit_block_hash,
+            deposit_txid
+        FROM deposits
+        WHERE deposit_id = ?
+    "#;
+
+    conn.call(move |conn| {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params![deposit_id.to_vec()])?;
+
+        if let Some(row) = rows.next()? {
+            // Parse deposit vault
+            let deposit_vault_str: String = row.get(0)?;
+            let deposit_vault: DepositVault =
+                serde_json::from_str(&deposit_vault_str).map_err(|_| {
+                    tokio_rusqlite::Error::Other("Failed to deserialize DepositVault".into())
+                })?;
+
+            // Parse block information
+            let deposit_block_number: i64 = row.get(1)?;
+            let deposit_block_hash_vec: Vec<u8> = row.get(2)?;
+            let deposit_block_hash: [u8; 32] =
+                deposit_block_hash_vec.as_slice().try_into().map_err(|_| {
+                    tokio_rusqlite::Error::Other("Invalid deposit_block_hash length".into())
+                })?;
+
+            // Parse transaction ID
+            let deposit_txid_vec: Vec<u8> = row.get(3)?;
+            let deposit_txid: [u8; 32] = deposit_txid_vec
+                .as_slice()
+                .try_into()
+                .map_err(|_| tokio_rusqlite::Error::Other("Invalid deposit_txid length".into()))?;
+
+            Ok(Some(ChainAwareDeposit {
+                deposit: deposit_vault,
+                deposit_block_number: deposit_block_number as u64,
+                deposit_block_hash,
+                deposit_txid,
+            }))
+        } else {
+            // No deposit found with this ID
+            Ok(None)
+        }
     })
     .await
     .map_err(|e| eyre::eyre!(e))

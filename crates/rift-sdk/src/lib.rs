@@ -1,4 +1,3 @@
-pub mod bindings;
 pub mod bitcoin_utils;
 pub mod checkpoint_mmr;
 mod errors;

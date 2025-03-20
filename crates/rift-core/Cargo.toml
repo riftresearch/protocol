@@ -5,14 +5,14 @@ edition = "2021"
 
 [dependencies]
 bitcoin-light-client-core = { workspace = true }
-alloy-sol-types = { workspace = true }
+alloy-sol-types= { workspace = true }
 sha2 = {  workspace = true }
 crypto-bigint = {  workspace = true }
 serde = { workspace = true }
 bitcoin = { workspace = true }
 bitcoin-core-rs = { workspace = true }
 tiny-keccak = { workspace = true }
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
 [dev-dependencies]
 alloy = { workspace = true }
 test-data-utils = { workspace = true }

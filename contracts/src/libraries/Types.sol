@@ -19,6 +19,7 @@ library Types {
     struct DepositVault {
         uint256 vaultIndex;
         uint64 depositTimestamp;
+        uint64 depositUnlockTimestamp;
         // this is the amount of capital actually available to be swapped
         uint256 depositAmount;
         // this is the fee the maker and taker will pay

@@ -19,7 +19,7 @@ rift-sdk = { workspace = true }
 data-engine = { workspace = true }
 data-engine-server = { workspace = true }
 corepc-node = { workspace = true }
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
 bitcoin-data-engine = { workspace = true }
 accumulators = { workspace = true }
 hypernode = { workspace = true }

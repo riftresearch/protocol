@@ -14,13 +14,13 @@ use data_engine::engine::DataEngine;
 use eyre::{eyre, Result};
 use mempool_electrs::{TxStatus, Utxo};
 use rift_core::vaults::hash_deposit_vault;
-use rift_sdk::bindings::Types::DepositVault;
 use rift_sdk::{
     bitcoin_utils::AsyncBitcoinClient,
     create_websocket_provider,
     txn_builder::{build_rift_payment_transaction, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
+use sol_bindings::Types::DepositVault;
 use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tokio_rusqlite::{params, Connection};
@@ -287,13 +287,7 @@ impl MarketMaker {
         let latest_block_timestamp = latest_block.unwrap().header().timestamp();
 
         for deposit in deposits {
-            let commitment = format!(
-                "0x{}",
-                hex::encode(hash_deposit_vault(
-                    &sol_types::Types::DepositVault::abi_decode(&deposit.abi_encode(), false)
-                        .unwrap()
-                ))
-            );
+            let commitment = format!("0x{}", hex::encode(hash_deposit_vault(&deposit)));
 
             let already_processed = self
                 .payment_database_connection
@@ -382,7 +376,7 @@ impl MarketMaker {
 
         // Build the transaction paying to the deposit's scriptPubKey
         let payment_tx = build_rift_payment_transaction(
-            &sol_types::Types::DepositVault::abi_decode(&deposit.abi_encode(), false).unwrap(),
+            &deposit,
             &canon_txid,
             &canon_tx,
             utxo.vout,
@@ -397,12 +391,7 @@ impl MarketMaker {
         info!("Transaction sent with txid: {}", tx_result);
 
         // Record the transaction in our database
-        let commitment = format!(
-            "0x{}",
-            hex::encode(hash_deposit_vault(
-                &sol_types::Types::DepositVault::abi_decode(&deposit.abi_encode(), false).unwrap(),
-            ))
-        );
+        let commitment = format!("0x{}", hex::encode(hash_deposit_vault(&deposit)));
         let tx_hex = tx_result.to_string();
         let now = chrono::Utc::now().timestamp();
 

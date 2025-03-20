@@ -11,12 +11,12 @@ use bitcoin_light_client_core::{
 };
 use eyre::Result;
 use futures_util::stream::StreamExt;
-use rift_sdk::bindings::{
-    non_artifacted_types::Types::{SwapUpdateContext, VaultUpdateContext},
-    Types::DepositVault,
-};
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
-use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
+use rift_sdk::DatabaseLocation;
+use sol_bindings::{
+    RiftExchange,
+    Types::{DepositVault, VaultUpdateContext},
+};
 
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{
@@ -28,12 +28,18 @@ use tracing::{info, warn};
 // Added for idempotency tracking.
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::db::{
-    add_deposit, add_proposed_swap, get_deposits_for_recipient, get_proposed_swap_id,
-    get_virtual_swaps, setup_swaps_database, update_deposit_to_withdrawn,
-    update_proposed_swap_to_released,
+use crate::{
+    db::{
+        add_deposit, add_proposed_swap, get_deposits_for_recipient, get_proposed_swap_id,
+        get_virtual_swaps, setup_swaps_database, update_deposit_to_withdrawn,
+        update_proposed_swap_to_released,
+    },
+    models::ChainAwareDeposit,
 };
-use crate::models::OTCSwap;
+use crate::{
+    db::{get_deposit_by_id, get_oldest_active_deposit},
+    models::OTCSwap,
+};
 
 pub struct DataEngine {
     pub checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
@@ -193,6 +199,13 @@ impl DataEngine {
         get_virtual_swaps(&self.swap_database_connection, address, page, page_size).await
     }
 
+    pub async fn get_oldest_active_deposit(
+        &self,
+        current_timestamp: u64,
+    ) -> Result<Option<ChainAwareDeposit>> {
+        get_oldest_active_deposit(&self.swap_database_connection, current_timestamp).await
+    }
+
     // get's the tip of the MMR, and returns a proof of the tip
     pub async fn get_tip_proof(&self) -> Result<(BlockLeaf, Vec<Digest>, Vec<Digest>)> {
         let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
@@ -237,6 +250,13 @@ impl DataEngine {
             .get_bagged_peak()
             .await
             .map_err(|e| eyre::eyre!(e))
+    }
+
+    pub async fn get_deposit_by_id(
+        &self,
+        deposit_id: [u8; 32],
+    ) -> Result<Option<ChainAwareDeposit>> {
+        get_deposit_by_id(&self.swap_database_connection, deposit_id).await
     }
 }
 
@@ -310,6 +330,7 @@ pub async fn listen_for_events(
             process_log(&log, db_conn, &checkpointed_block_tree).await?;
         }
     }
+    // TODO: This can potentially drop blocks, update this to subscribe BEFORE pulling historical logs
 
     // Create subscription filter for new logs starting after the latest processed block
     let subscription_filter = Filter::new()
@@ -396,10 +417,8 @@ async fn handle_vault_updated_event(
         .ok_or_else(|| eyre::eyre!("Missing block hash in VaultUpdated event"))?;
 
     for deposit_vault in deposit_vaults {
-        match VaultUpdateContext::try_from(decoded.data.context)
-            .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
-        {
-            VaultUpdateContext::Created => {
+        match decoded.data.context {
+            0 /* VaultUpdateContext::Created */ => {
                 info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
                 add_deposit(
                     db_conn,
@@ -411,7 +430,7 @@ async fn handle_vault_updated_event(
                 .await
                 .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
             }
-            VaultUpdateContext::Withdraw => {
+            1 /* VaultUpdateContext::Withdraw */ => {
                 info!(
                     "Withdrawing deposit for nonce: {:?}",
                     deposit_vault.vaultIndex
@@ -453,10 +472,8 @@ async fn handle_swap_updated_event(
         .block_hash
         .ok_or_else(|| eyre::eyre!("Missing block hash in SwapUpdated event"))?;
 
-    match SwapUpdateContext::try_from(decoded.data.context)
-        .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
-    {
-        SwapUpdateContext::Created => {
+    match decoded.data.context {
+        0 /* SwapUpdateContext::Created */ => {
             for swap in decoded.data.swaps {
                 info!(
                     "Received SwapUpdated event: proposed_swap_id = {:?}",
@@ -473,7 +490,7 @@ async fn handle_swap_updated_event(
                 .map_err(|e| eyre::eyre!("add_proposed_swap failed: {:?}", e))?;
             }
         }
-        SwapUpdateContext::Complete => {
+        1 /* SwapUpdateContext::Complete */ => {
             for swap in decoded.data.swaps {
                 update_proposed_swap_to_released(
                     db_conn,

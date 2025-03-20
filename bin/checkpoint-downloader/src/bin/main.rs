@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // [4] Fetch headers from Bitcoin client
         let headers = client
-            .get_leaves_from_block_range(start_block, end_chunk, None, None)
+            .get_leaves_from_block_range(start_block, end_chunk, chunk_size as usize, None)
             .await?;
         println!("Retrieved {} headers", headers.len());
 

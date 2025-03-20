@@ -10,6 +10,7 @@ bitcoin-light-client-core = { workspace = true }
 accumulators = { workspace = true }
 alloy = {workspace = true }
 thiserror = { workspace = true }
+eyre = { workspace = true }
 bitcoin = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,7 +22,7 @@ bitcoincore-rpc-async2 = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
 reqwest = {workspace = true } 
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
 hex = { workspace = true }
 bip39 = { workspace = true }
 tracing = { workspace = true }

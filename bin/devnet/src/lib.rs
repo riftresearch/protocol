@@ -13,7 +13,7 @@ pub use evm_devnet::EthDevnet;
 use evm_devnet::ForkConfig;
 use eyre::Result;
 use log::info;
-use rift_sdk::bindings::RiftExchange;
+use sol_bindings::RiftExchange;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -131,7 +131,7 @@ pub async fn deploy_contracts(
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
 
-    let tip_block_leaf_sol: sol_types::Types::BlockLeaf = tip_block_leaf.into();
+    let tip_block_leaf_sol: sol_bindings::Types::BlockLeaf = tip_block_leaf.into();
     // Deploy RiftExchange
     let exchange = RiftExchange::deploy(
         provider.clone(),
@@ -140,12 +140,7 @@ pub async fn deploy_contracts(
         circuit_verification_key_hash.into(),
         verifier_contract,
         deployer_address, // e.g. owner
-        // TODO: any way to not do this goofy conversion? need to deduplicate the types
-        rift_sdk::bindings::Types::BlockLeaf {
-            blockHash: tip_block_leaf_sol.blockHash,
-            height: tip_block_leaf_sol.height,
-            cumulativeChainwork: tip_block_leaf_sol.cumulativeChainwork,
-        },
+        tip_block_leaf_sol,
     )
     .await?;
 
@@ -190,7 +185,7 @@ impl RiftDevnet {
         info!("Downloading checkpoint leaves from block range 0..101");
         let checkpoint_leaves = bitcoin_devnet
             .rpc_client
-            .get_leaves_from_block_range(0, current_mined_height, None, None)
+            .get_leaves_from_block_range(0, current_mined_height, 100, None)
             .await?;
 
         let named_temp_file = tempfile::NamedTempFile::new()?;

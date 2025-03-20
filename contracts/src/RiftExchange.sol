@@ -2,7 +2,6 @@
 
 pragma solidity =0.8.28;
 
-import {console} from "forge-std/src/console.sol";
 import {ISP1Verifier} from "sp1-contracts/contracts/src/ISP1Verifier.sol";
 import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin-contracts/interfaces/IERC20Metadata.sol";
@@ -125,9 +124,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     function withdrawLiquidity(Types.DepositVault calldata vault) external {
         VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
         if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
-        if (
-            block.timestamp < vault.depositTimestamp + RiftUtils.calculateDepositLockupPeriod(vault.confirmationBlocks)
-        ) {
+        if (block.timestamp < vault.depositUnlockTimestamp) {
             revert Errors.DepositStillLocked();
         }
 
@@ -168,14 +165,16 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         );
 
         bytes32 compressedLeavesCommitment = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
-        _verifyZeroKnowledgeProof(
-            Types.ProofType.Combined,
-            swapPublicInputs,
-            Types.LightClientPublicInput({
-                previousMmrRoot: blockProofParams.priorMmrRoot,
-                newMmrRoot: blockProofParams.newMmrRoot,
-                compressedLeavesCommitment: compressedLeavesCommitment,
-                tipBlockLeaf: blockProofParams.tipBlockLeaf
+        verifyZkProof(
+            Types.ProofPublicInput({
+                proofType: Types.ProofType.Combined,
+                swaps: swapPublicInputs,
+                lightClient: Types.LightClientPublicInput({
+                    previousMmrRoot: blockProofParams.priorMmrRoot,
+                    newMmrRoot: blockProofParams.newMmrRoot,
+                    compressedLeavesCommitment: compressedLeavesCommitment,
+                    tipBlockLeaf: blockProofParams.tipBlockLeaf
+                })
             }),
             proof
         );
@@ -196,8 +195,14 @@ contract RiftExchange is BitcoinLightClient, Ownable {
             overwriteSwaps
         );
 
-        _verifyZeroKnowledgeProof(Types.ProofType.SwapOnly, swapPublicInputs, getNullLightClientPublicInput(), proof);
-
+        verifyZkProof(
+            Types.ProofPublicInput({
+                proofType: Types.ProofType.SwapOnly,
+                swaps: swapPublicInputs,
+                lightClient: getNullLightClientPublicInput()
+            }),
+            proof
+        );
         emit Events.SwapsUpdated(swaps, Types.SwapUpdateContext.Created);
     }
 
@@ -312,6 +317,9 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
+            depositUnlockTimestamp: uint64(
+                block.timestamp + RiftUtils.calculateDepositLockupPeriod(params.confirmationBlocks)
+            ),
             depositAmount: params.depositAmount - depositFee,
             depositFee: depositFee,
             expectedSats: params.expectedSats,
@@ -410,23 +418,9 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         }
     }
 
-    function _verifyZeroKnowledgeProof(
-        Types.ProofType proofType,
-        Types.SwapPublicInput[] memory swapPublicInputs,
-        Types.LightClientPublicInput memory lightClientPublicInput,
-        bytes calldata proof
-    ) internal view {
-        VERIFIER.verifyProof(
-            CIRCUIT_VERIFICATION_KEY,
-            abi.encode(
-                Types.ProofPublicInput({
-                    proofType: proofType,
-                    swaps: swapPublicInputs,
-                    lightClient: lightClientPublicInput
-                })
-            ),
-            proof
-        );
+    // Convenience function to verify a zero-knowledge proof via eth_call
+    function verifyZkProof(Types.ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
+        VERIFIER.verifyProof(CIRCUIT_VERIFICATION_KEY, abi.encode(proofPublicInput), proof);
     }
 
     function getNullLightClientPublicInput() internal pure returns (Types.LightClientPublicInput memory) {
@@ -457,5 +451,11 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
     function getSwapCommitment(uint256 swapIndex) external view returns (bytes32) {
         return swapCommitments[swapIndex];
+    }
+
+    function serializeLightClientPublicInput(
+        Types.LightClientPublicInput memory input
+    ) external pure returns (bytes memory) {
+        return abi.encode(input);
     }
 }

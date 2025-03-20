@@ -25,7 +25,7 @@ serde = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 hex = { workspace = true }
-alloy-sol-types = { workspace = true }
+alloy-sol-types= { workspace = true }
 once_cell = { workspace = true }
 accumulators = { workspace = true }
 prettytable = { workspace = true }

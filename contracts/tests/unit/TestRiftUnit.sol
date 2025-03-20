@@ -68,6 +68,7 @@ contract RiftExchangeUnitTest is RiftTest {
             Types.DepositVault({
                 vaultIndex: vault.vaultIndex % maxValue,
                 depositTimestamp: vault.depositTimestamp % maxValue,
+                depositUnlockTimestamp: vault.depositUnlockTimestamp % maxValue,
                 depositAmount: vault.depositAmount % maxValue,
                 depositFee: vault.depositFee % maxValue,
                 expectedSats: vault.expectedSats % maxValue,

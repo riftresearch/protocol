@@ -1,5 +1,5 @@
-use rift_sdk::bindings::Types::{DepositVault, ProposedSwap};
 use serde::{Deserialize, Serialize};
+use sol_bindings::Types::{DepositVault, ProposedSwap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapStatus {

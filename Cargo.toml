@@ -12,7 +12,7 @@ members = [
   "crates/rift-sdk",
   "crates/rift-core", 
   "crates/rift-program",
-  "crates/sol-types",
+  "crates/sol-bindings",
   "test-data", "bin/sol-utils", "crates/bitcoin-data-engine", "bin/market-maker",
   "integration-tests"
   ]
@@ -28,7 +28,7 @@ exclude = [".github/"]
 
 [workspace.dependencies]
 # Internal dependencies
-sol-types = { path = "crates/sol-types" }
+sol-bindings= { path = "crates/sol-bindings" }
 bitcoin-core-rs = { path = "crates/bitcoin-core-rs"}
 bitcoin-light-client-core = { path = "crates/bitcoin-light-client-core" }
 bitcoin-data-engine = { path = "crates/bitcoin-data-engine" }
@@ -74,6 +74,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tempfile = { version = "3.6.0" }
 
 alloy-sol-types = { version = "0.8.0", features = ["json"] }
+alloy-contract = "0.8.0"
 alloy = { version = "0.8.0", features = ["full", "node-bindings", "json", "json-rpc"] }
 alloy-primitives = "0.8.12"
 async-trait = "0.1.86"

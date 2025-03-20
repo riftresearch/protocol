@@ -104,7 +104,7 @@ async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
     }
 
     // Prepare the block leaf for the final block at `height`
-    let block_leaf = rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf {
+    let block_leaf = sol_bindings::nonpublic::Types::BlockLeaf {
         blockHash: block_hashes[height as usize].into(),
         height,
         cumulativeChainwork: mock_chainwork_for_height(height),
@@ -146,7 +146,7 @@ async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
         .collect::<Vec<_>>();
     let tip_block_height = height;
     let root_hash: FixedBytes<32> = root_hash.into();
-    let sol_mmr_proof = rift_sdk::bindings::non_artifacted_types::Types::MMRProof {
+    let sol_mmr_proof = sol_bindings::nonpublic::Types::MMRProof {
         blockLeaf: block_leaf,
         siblings,
         peaks,
@@ -185,7 +185,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
     }
 
     // 1) Get proof for the block at `height`
-    let block_leaf = rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf {
+    let block_leaf = sol_bindings::nonpublic::Types::BlockLeaf {
         blockHash: block_hashes[height as usize].into(),
         height,
         cumulativeChainwork: mock_chainwork_for_height(height),
@@ -198,7 +198,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         .unwrap();
 
     // 2) Also get a proof for the *tip* block at `tip_height`
-    let tip_block_leaf = rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf {
+    let tip_block_leaf = sol_bindings::nonpublic::Types::BlockLeaf {
         blockHash: block_hashes[tip_height as usize].into(),
         height: tip_height,
         cumulativeChainwork: mock_chainwork_for_height(tip_height),
@@ -238,7 +238,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
     let peaks: Vec<FixedBytes<32>> = proof.peaks.iter().map(|s| s.into()).collect::<Vec<_>>();
     let leaf_count = tip_height + 1;
     let root_hash_fixed: FixedBytes<32> = root_hash.into();
-    let sol_mmr_proof = rift_sdk::bindings::non_artifacted_types::Types::MMRProof {
+    let sol_mmr_proof = sol_bindings::nonpublic::Types::MMRProof {
         blockLeaf: block_leaf,
         siblings,
         peaks,
@@ -254,7 +254,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         .collect::<Vec<_>>();
     let tip_peaks: Vec<FixedBytes<32>> =
         tip_proof.peaks.iter().map(|s| s.into()).collect::<Vec<_>>();
-    let tip_sol_mmr_proof = rift_sdk::bindings::non_artifacted_types::Types::MMRProof {
+    let tip_sol_mmr_proof = sol_bindings::nonpublic::Types::MMRProof {
         blockLeaf: tip_block_leaf,
         siblings: tip_siblings,
         peaks: tip_peaks,
@@ -262,7 +262,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         mmrRoot: root_hash_fixed,
     };
 
-    let full_proof = rift_sdk::bindings::non_artifacted_types::Types::ReleaseMMRProof {
+    let full_proof = sol_bindings::nonpublic::Types::ReleaseMMRProof {
         proof: sol_mmr_proof,
         tipProof: tip_sol_mmr_proof,
     };
@@ -272,11 +272,8 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
 
 async fn hash_block_leaf(abi_encoded_leaf: &str) {
     let abi_encoded_leaf = hex::decode(abi_encoded_leaf.strip_prefix("0x").unwrap()).unwrap();
-    let sol_leaf = rift_sdk::bindings::non_artifacted_types::Types::BlockLeaf::abi_decode(
-        &abi_encoded_leaf,
-        false,
-    )
-    .unwrap();
+    let sol_leaf =
+        sol_bindings::nonpublic::Types::BlockLeaf::abi_decode(&abi_encoded_leaf, false).unwrap();
 
     let core_leaf = BlockLeaf::new(
         sol_leaf.blockHash.into(),
@@ -306,9 +303,14 @@ async fn get_deployment_params(checkpoint_file: &str, debug: bool) {
     let circuit_verification_key = rift_sdk::get_rift_program_hash();
 
     let tip_block_leaf = checkpoint_leaves[checkpoint_leaves.len() - 1];
+    let tip_block_leaf: sol_bindings::Types::BlockLeaf = tip_block_leaf.into();
 
-    let deployment_params = sol_types::Types::DeploymentParams {
-        tipBlockLeaf: tip_block_leaf.into(),
+    let deployment_params = sol_bindings::nonpublic::Types::DeploymentParams {
+        tipBlockLeaf: sol_bindings::nonpublic::Types::BlockLeaf {
+            blockHash: tip_block_leaf.blockHash.into(),
+            height: tip_block_leaf.height,
+            cumulativeChainwork: tip_block_leaf.cumulativeChainwork.into(),
+        },
         mmrRoot: mmr_root.into(),
         circuitVerificationKey: circuit_verification_key.into(),
     };

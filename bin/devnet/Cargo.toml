@@ -14,7 +14,7 @@ bitcoin-light-client-core = { workspace = true }
 data-engine = { workspace = true }
 data-engine-server = { workspace = true }
 corepc-node = { workspace = true }
-sol-types = { workspace = true }
+sol-bindings = { workspace = true }
 bitcoin-data-engine = { workspace = true }
 accumulators = { workspace = true }
 checkpoint-downloader = { workspace = true }

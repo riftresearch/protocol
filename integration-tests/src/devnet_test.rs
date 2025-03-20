@@ -18,7 +18,7 @@ use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use bitcoin_light_client_core::leaves::BlockLeaf as CoreBlockLeaf;
 use bitcoin_light_client_core::light_client::Header;
 use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
-use bitcoin_light_client_core::{BlockPosition, ChainTransition};
+use bitcoin_light_client_core::{ChainTransition, ProvenLeaf, VerifiedBlock};
 use bitcoincore_rpc_async::bitcoin::hashes::Hash as BitcoinHash;
 use bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize as AsyncSerialize;
 use bitcoincore_rpc_async::bitcoin::BlockHash;
@@ -28,16 +28,16 @@ use rift_core::giga::RiftProgramInput;
 use rift_core::spv::generate_bitcoin_txn_merkle_proof;
 use rift_core::vaults::hash_deposit_vault;
 use rift_core::RiftTransaction;
-use rift_sdk::bindings::non_artifacted_types::Types::MMRProof;
-use rift_sdk::bindings::non_artifacted_types::Types::{BlockLeaf, ProofPublicInput};
-use rift_sdk::bindings::RiftExchange;
-use rift_sdk::bindings::Types::BlockProofParams;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use rift_sdk::indexed_mmr::client_mmr_proof_to_circuit_mmr_proof;
 use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
 use rift_sdk::{
     create_websocket_provider, get_retarget_height_from_block_height, right_pad_to_25_bytes,
     DatabaseLocation, ProofGeneratorType, RiftProofGenerator,
+};
+use sol_bindings::Types::{DepositLiquidityParams, ReleaseLiquidityParams, SubmitSwapProofParams};
+use sol_bindings::{
+    RiftExchange, Types::BlockLeaf, Types::BlockProofParams, Types::ProofPublicInput,
 };
 use tokio::signal;
 
@@ -151,9 +151,6 @@ async fn test_simulated_swap_end_to_end() {
     // We'll fill in some "fake" deposit parameters.
     // This is just an example; in real usage you'd call e.g. depositLiquidity(...) with your chosen params.
 
-    use rift_sdk::bindings::Types::BlockLeaf as ContractBlockLeaf;
-    use rift_sdk::bindings::Types::DepositLiquidityParams;
-
     // We can skip real MMR proofs; for dev/test, we can pass dummy MMR proof data or a known "safe block."
     // For example, we'll craft a dummy "BlockLeaf" that the contract won't reject:
     let (safe_leaf, safe_siblings, safe_peaks) =
@@ -161,7 +158,7 @@ async fn test_simulated_swap_end_to_end() {
 
     let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    let safe_leaf: sol_types::Types::BlockLeaf = safe_leaf.into();
+    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
 
     println!("Safe leaf tip (data engine): {:?}", safe_leaf);
     println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
@@ -199,11 +196,7 @@ async fn test_simulated_swap_end_to_end() {
         depositSalt: [0x44; 32].into(), // this can be anything
         confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
         // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: ContractBlockLeaf {
-            blockHash: safe_leaf.blockHash,
-            height: safe_leaf.height,
-            cumulativeChainwork: safe_leaf.cumulativeChainwork,
-        },
+        safeBlockLeaf: safe_leaf,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };
@@ -265,19 +258,7 @@ async fn test_simulated_swap_end_to_end() {
     .unwrap();
 
     let new_vault = &vaults_updated_log.data.vaults[0];
-    let vault_commitment = hash_deposit_vault(&sol_types::Types::DepositVault {
-        vaultIndex: new_vault.vaultIndex,
-        depositTimestamp: new_vault.depositTimestamp,
-        depositAmount: new_vault.depositAmount,
-        depositFee: new_vault.depositFee,
-        expectedSats: new_vault.expectedSats,
-        btcPayoutScriptPubKey: new_vault.btcPayoutScriptPubKey,
-        specifiedPayoutAddress: new_vault.specifiedPayoutAddress,
-        ownerAddress: new_vault.ownerAddress,
-        salt: new_vault.salt,
-        confirmationBlocks: new_vault.confirmationBlocks,
-        attestedBitcoinBlockHeight: new_vault.attestedBitcoinBlockHeight,
-    });
+    let vault_commitment = hash_deposit_vault(&new_vault);
 
     println!("Vault commitment: {:?}", hex::encode(vault_commitment));
 
@@ -328,12 +309,10 @@ async fn test_simulated_swap_end_to_end() {
     let mut reader = serialized.as_slice();
     let canon_bitcoin_tx = Transaction::consensus_decode_from_finite_reader(&mut reader).unwrap();
     let canon_txid = canon_bitcoin_tx.compute_txid();
-    let canon_deposit_vault =
-        sol_types::Types::DepositVault::abi_decode(&new_vault.abi_encode(), false).unwrap();
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
     let payment_tx = txn_builder::build_rift_payment_transaction(
-        &canon_deposit_vault,
+        &new_vault,
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,
@@ -388,9 +367,7 @@ async fn test_simulated_swap_end_to_end() {
 
     // We'll craft the needed "ProposedSwap" data.
     // See the contract's `SubmitSwapProofParams`.
-    use rift_sdk::bindings::Types::{
-        DepositVault, ProposedSwap, StorageStrategy, SubmitSwapProofParams,
-    };
+
     // Now we build the Light client update and swap proof
 
     // TODO: For each MMR update on the contract, store the leaf hash of the tip at that point in the data engine in a new index/table
@@ -556,7 +533,7 @@ async fn test_simulated_swap_end_to_end() {
         .get_headers_from_block_range(
             first_download_height,
             last_download_height as u32,
-            None,
+            100,
             Some(
                 parent_leaf
                     .block_hash
@@ -586,20 +563,23 @@ async fn test_simulated_swap_end_to_end() {
             .unwrap(),
 
         // the current tip
-        parent: BlockPosition {
+        parent: VerifiedBlock {
             header: parent_header,
-            leaf: parent_leaf,
-            inclusion_proof: parent_inclusion_proof.clone(),
+            mmr_data: ProvenLeaf {
+                leaf: parent_leaf,
+                proof: parent_inclusion_proof.clone(),
+            },
         },
-        parent_retarget: BlockPosition {
+        parent_retarget: VerifiedBlock {
             header: parent_retarget_header,
-            leaf: parent_retarget_leaf,
-            inclusion_proof: parent_retarget_inclusion_proof,
+            mmr_data: ProvenLeaf {
+                leaf: parent_retarget_leaf,
+                proof: parent_retarget_inclusion_proof,
+            },
         },
-        current_tip: BlockPosition {
-            header: parent_header,
+        current_tip: ProvenLeaf {
             leaf: parent_leaf,
-            inclusion_proof: parent_inclusion_proof,
+            proof: parent_inclusion_proof,
         },
         parent_leaf_peaks,
         disposed_leaf_hashes: vec![],
@@ -655,12 +635,8 @@ async fn test_simulated_swap_end_to_end() {
     );
 
     let rift_transaction_input = RiftTransaction {
-        txn: serialize_no_segwit(&payment_tx),
-        reserved_vault: sol_types::Types::DepositVault::abi_decode(
-            new_vault.abi_encode().as_slice(),
-            false,
-        )
-        .unwrap(),
+        txn: serialize_no_segwit(&payment_tx).unwrap(),
+        reserved_vault: new_vault.clone(),
         block_header: swap_block_header,
         txn_merkle_proof,
     };
@@ -690,10 +666,7 @@ async fn test_simulated_swap_end_to_end() {
         .await
         .unwrap();
 
-    let swap_leaf: sol_types::Types::BlockLeaf = swap_leaf.into();
-    let swap_leaf =
-        rift_sdk::bindings::Types::BlockLeaf::abi_decode(swap_leaf.abi_encode().as_slice(), false)
-            .unwrap();
+    let swap_leaf: sol_bindings::Types::BlockLeaf = swap_leaf.into();
 
     // We'll do a single-swap array:
     let swap_params = vec![SubmitSwapProofParams {
@@ -713,11 +686,7 @@ async fn test_simulated_swap_end_to_end() {
     let block_proof_params = BlockProofParams {
         priorMmrRoot: public_values_simulated.previousMmrRoot,
         newMmrRoot: public_values_simulated.newMmrRoot,
-        tipBlockLeaf: rift_sdk::bindings::Types::BlockLeaf::abi_decode(
-            public_values_simulated.tipBlockLeaf.abi_encode().as_slice(),
-            false,
-        )
-        .unwrap(),
+        tipBlockLeaf: public_values_simulated.tipBlockLeaf,
         compressedBlockLeaves: auxiliary_data.compressed_leaves.into(),
     };
 
@@ -823,7 +792,7 @@ async fn test_simulated_swap_end_to_end() {
     //       utilizedVault: DepositVault,
     //       tipBlockHeight: u32,
     //   }
-    let release_params = rift_sdk::bindings::Types::ReleaseLiquidityParams {
+    let release_params = ReleaseLiquidityParams {
         swap: proposed_swap.clone(),
         swapBlockChainwork: swap_leaf.cumulativeChainwork,
         swapBlockHeight: swap_leaf.height.clone(),
