@@ -34,4 +34,16 @@ library Errors {
     error ChainworkTooLow();
     error NoSwapsToSubmit();
     error NotEnoughConfirmations();
+
+    // --------- REACTOR ERRORS --------- //
+    error InvalidEIP712Signature();
+    error AuctionEnded();
+    error InvalidNonce();
+    error InsufficientBond();
+    error BondDepositTransferFailed();
+    error RouterCallFailed();
+    error InsufficientCbBTC();
+    error BondNotFoundOrAlreadyReleased();
+    error BondReleaseTransferFailed();
+    error AuctionNotEnded();
 }

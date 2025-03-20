@@ -19,8 +19,8 @@ library LightClientVerificationLib {
      */
     function proveBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata siblings,
-        bytes32[] calldata peaks,
+        bytes32[] memory siblings,
+        bytes32[] memory peaks,
         uint32 leafCount,
         bytes32 mmrRoot
     ) internal pure returns (bool) {
@@ -84,7 +84,7 @@ library LightClientVerificationLib {
      * @notice “Bags” (folds) peaks in right-to-left order:
      *  Rust `bag_peaks` does `fold(None, |acc, peak| match acc { None => peak, Some(prev) => hash(peak, prev) })`
      */
-    function bagPeaks(bytes32[] calldata peaks) internal pure returns (bytes32) {
+    function bagPeaks(bytes32[] memory peaks) internal pure returns (bytes32) {
         if (peaks.length == 0) {
             return bytes32(0);
         }

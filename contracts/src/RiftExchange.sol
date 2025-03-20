@@ -17,7 +17,6 @@ import {RiftUtils} from "./libraries/RiftUtils.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
 
-
 /**
  * @title RiftExchange
  * @author alpinevm <https://github.com/alpinevm>
@@ -74,10 +73,9 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity into a new vault
-    function depositLiquidity(Types.DepositLiquidityParams calldata params) external {
+    function depositLiquidity(Types.DepositLiquidityParams memory params) internal {
         // Determine vault index
         uint256 vaultIndex = vaultCommitments.length;
-
         // Create deposit liquidity request
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params, vaultIndex);
 
@@ -89,7 +87,7 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity by overwriting an existing empty vault
-    function depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams calldata params) external {
+    function depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams memory params) internal {
         // Create deposit liquidity request
         uint256 vaultIndex = params.overwriteVault.vaultIndex;
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params.depositParams, vaultIndex);
@@ -107,7 +105,7 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Withdraws liquidity from a deposit vault after the lockup period
     /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
-    function withdrawLiquidity(Types.DepositVault calldata vault) external {
+    function withdrawLiquidity(Types.DepositVault calldata vault) internal {
         VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
         if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
         if (
@@ -187,7 +185,7 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Releases locked liquidity for multiple swaps
-    function releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) external {
+    function releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) internal {
         Types.ProposedSwap[] memory updatedSwaps = new Types.ProposedSwap[](paramsArray.length);
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](paramsArray.length);
 
@@ -278,7 +276,7 @@ contract RiftExchange is BitcoinLightClient {
 
     /// @notice Internal function to prepare and validate a new deposit
     function _prepareDeposit(
-        Types.DepositLiquidityParams calldata params,
+        Types.DepositLiquidityParams memory params,
         uint256 depositVaultIndex
     ) internal view returns (Types.DepositVault memory, bytes32) {
         if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
