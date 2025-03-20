@@ -63,6 +63,43 @@ contract RiftReactor is RiftExchange {
         permit2 = IPermit2(_permit2);
     }
 
+    // ---------------------------------------------------------------
+    // Modifiers
+    // ---------------------------------------------------------------
+    /**
+     * @notice Validates the signed intent and ensures the market maker has posted sufficient bond.
+     * @dev Performs these checks:
+     *      1. Validates the EIP‑712 signature of the SignedIntent.
+     *      2. Verifies the auction is active (auction.endBlock > block.number) and the nonce is correct.
+     *      3. Checks that msg.sender (the market maker executing the swap) has posted sufficient cbBTC bond.
+     *          The required bond is computed based on depositLiquidityParams.depositAmount, which now represents
+     *          the expected amount of cbBTC the MM must supply.
+     * @param order The SignedIntent containing the intent and signature data.
+     */
+    modifier validateIntentAndBond(Types.SignedIntent calldata order) {
+        // NOTE: Do less gas intensive checks first, then if those fail more gas
+        // will be returned.
+        if (order.info.auction.endBlock <= block.number) {
+            revert Errors.AuctionEnded();
+        }
+        if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
+            revert Errors.InvalidNonce();
+        }
+
+        // Step 1: Validate the EIP‑712 signature of the SignedIntent.
+        order.validateEIP712(DOMAIN_SEPARATOR);
+
+        // Step 3: Validate that the market maker has posted sufficient bond.
+        // depositAmount represents the expected amount of cbBTC the MM must supply.
+        uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
+        uint96 requiredBond = _computeBond(depositAmount);
+        uint96 bondPosted = _getBondPosted(msg.sender);
+        if (bondPosted < requiredBond) {
+            revert Errors.InsufficientBond();
+        }
+        _;
+    }
+
     // -----------------------------------------------------------------------
     //                   PUBLIC/EXTERNAL FUNCTIONS
     // -----------------------------------------------------------------------
@@ -85,10 +122,10 @@ contract RiftReactor is RiftExchange {
      * @param route The liquidity route containing swap details and routing information
      * @param order The signed intent containing deposit parameters and permit2 transfer info
      */
-    function executeIntentWithSwap(Types.LiquidityRoute calldata route, Types.SignedIntent calldata order) external {
-        // Step 1-3: Validate the intent, EIP-712 signature, auction status, nonce, and bond.
-        _validateIntentAndBond(order);
-
+    function executeIntentWithSwap(
+        Types.LiquidityRoute calldata route,
+        Types.SignedIntent calldata order
+    ) external validateIntentAndBond(order) {
         // Compute required bond based on the deposit amount.
         uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
         uint96 requiredBond = _computeBond(depositAmount);
@@ -110,47 +147,17 @@ contract RiftReactor is RiftExchange {
             order.info.permit2TransferInfo.signature
         );
 
-        // Step 5: Fetch contracts current balance of cbBTC (preCallcbBTC)
-        uint256 preCallcbBTC = cbBTC.balanceOf(address(this));
+        // Steps 5-8: Execute the swap and validate sufficient cbBTC was received
+        _executeSwap(route, order, depositAmount);
 
-        // Step 6: Give approval to callback contract for ERC20
-        cbBTC.approve(address(route.router), depositAmount);
-
-        // Step 7: Call solver provided router with routeCalldata
-        (bool success, ) = route.router.call(route.routeData);
-        if (!success) {
-            revert Errors.RouterCallFailed();
-        }
-
-        // Step 8: Validate sufficient cbBTC was sent ((postCallcbBTC - preCallcbBTC) >= order.depositLiquidtyParams.depositAmount)
-        uint256 postCallcbBTC = cbBTC.balanceOf(address(this));
-        if ((postCallcbBTC - preCallcbBTC) < depositAmount) {
-            revert Errors.InsufficientCbBTC();
-        }
         //    ((postCallcbBTC - preCallcbBTC) >= order.depositLiquidtyParams.depositAmount)
         // 9. Compute expected sats based on linear model defined in above
         //    footnotes.
-        uint256 expectedSats = _computeAuctionSats(order.info.auction);
         //10. Build final deposit call using calculated expectedSats, msg.sender for
         //    specifiedPayoutAddress and original user signed deposit data.
-        //11. Call depositLiquidity()/depositLiquidityWithOverwrite()
-        //     TODO: Double check that the depositOwnerAddress is the intended
-        //     recipient.
-
-        depositLiquidity(
-            Types.DepositLiquidityParams({
-                depositOwnerAddress: order.info.depositLiquidityParams.depositOwnerAddress,
-                specifiedPayoutAddress: msg.sender,
-                depositAmount: order.info.depositLiquidityParams.depositAmount,
-                expectedSats: uint64(expectedSats),
-                btcPayoutScriptPubKey: order.info.depositLiquidityParams.btcPayoutScriptPubKey,
-                depositSalt: order.info.depositLiquidityParams.depositSalt,
-                confirmationBlocks: order.info.depositLiquidityParams.confirmationBlocks,
-                safeBlockLeaf: order.info.depositLiquidityParams.safeBlockLeaf,
-                safeBlockSiblings: order.info.depositLiquidityParams.safeBlockSiblings,
-                safeBlockPeaks: order.info.depositLiquidityParams.safeBlockPeaks
-            })
-        );
+        //11. Call depositLiquidity()/depositLiquidityWithOverwrite
+        uint256 expectedSats = _computeAuctionSats(order.info.auction);
+        depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
     }
 
     /**
@@ -167,29 +174,13 @@ contract RiftReactor is RiftExchange {
      */
     // For pure cbBTC deposits:
     // Steps 1-3 and 9-10 from executeIntentWithSwap()
-    function executeIntent(Types.SignedIntent calldata order) external {
-        // Step 1-3: Validate the intent, EIP-712 signature, auction status, nonce, and bond.
-        _validateIntentAndBond(order);
-
+    function executeIntent(Types.SignedIntent calldata order) external validateIntentAndBond(order) {
         // 9. Compute expected sats based on linear model defined in above footnotes
-        uint256 expectedSats = _computeAuctionSats(order.info.auction);
         //10. Build final deposit call using calculated expectedSats, msg.sender for
         //    specifiedPayoutAddress and original user signed deposit data.
         //11. Call depositLiquidity()/depositLiquidityWithOverwrite()
-        depositLiquidity(
-            Types.DepositLiquidityParams(
-                order.info.depositLiquidityParams.depositOwnerAddress,
-                msg.sender,
-                order.info.depositLiquidityParams.depositAmount,
-                uint64(expectedSats),
-                order.info.depositLiquidityParams.btcPayoutScriptPubKey,
-                order.info.depositLiquidityParams.depositSalt,
-                order.info.depositLiquidityParams.confirmationBlocks,
-                order.info.depositLiquidityParams.safeBlockLeaf,
-                order.info.depositLiquidityParams.safeBlockSiblings,
-                order.info.depositLiquidityParams.safeBlockPeaks
-            )
-        );
+        uint256 expectedSats = _computeAuctionSats(order.info.auction);
+        depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
     }
 
     // calls releaseLiquidityBatch() and releases bond back to mm
@@ -220,6 +211,68 @@ contract RiftReactor is RiftExchange {
     //                     INTERNAL FUNCTIONS
     // ---------------------------------------------------------------
 
+    /**
+     * @notice Executes a token swap through a router and validates the resulting cbBTC amount
+     * @dev Handles steps 5-8 of the swap execution process:
+     *      5. Fetch contract's current balance of cbBTC
+     *      6. Approve the router contract to spend the tokens
+     *      7. Call the router with the provided route data
+     *      8. Validate that sufficient cbBTC was received after the swap
+     * @param route The liquidity route containing swap details and routing information
+     * @param order The signed intent containing deposit parameters
+     * @param depositAmount The expected amount of cbBTC to receive from the swap
+     */
+    function _executeSwap(
+        Types.LiquidityRoute calldata route,
+        Types.SignedIntent calldata order,
+        uint256 depositAmount
+    ) internal {
+        // Step 5: Fetch contracts current balance of cbBTC (preCallcbBTC)
+        uint256 preCallcbBTC = cbBTC.balanceOf(address(this));
+
+        // Step 6: Give approval to callback contract for ERC20
+        IERC20(order.info.tokenIn).approve(address(route.router), depositAmount);
+
+        // Step 7: Call solver provided router with routeCalldata
+        (bool success, ) = route.router.call(route.routeData);
+        if (!success) {
+            revert Errors.RouterCallFailed();
+        }
+
+        // Step 8: Validate sufficient cbBTC was sent
+        uint256 postCallcbBTC = cbBTC.balanceOf(address(this));
+        if ((postCallcbBTC - preCallcbBTC) < depositAmount) {
+            revert Errors.InsufficientCbBTC();
+        }
+    }
+
+    /**
+     * @notice Builds the DepositLiquidityParams struct for deposit functions
+     * @param baseParams The base deposit liquidity parameters from the order
+     * @param specifiedPayoutAddress The address that will receive payout (usually the MM)
+     * @param expectedSats The calculated expected satoshis based on the auction
+     * @return params The fully constructed DepositLiquidityParams struct
+     */
+    function _buildDepositLiquidityParams(
+        Types.ReactorDepositLiquidityParams calldata baseParams,
+        address specifiedPayoutAddress,
+        uint256 expectedSats
+    ) internal pure returns (Types.DepositLiquidityParams memory params) {
+        return
+            Types.DepositLiquidityParams({
+                depositOwnerAddress: baseParams.depositOwnerAddress,
+                specifiedPayoutAddress: specifiedPayoutAddress,
+                depositAmount: baseParams.depositAmount,
+                expectedSats: uint64(expectedSats),
+                btcPayoutScriptPubKey: baseParams.btcPayoutScriptPubKey,
+                depositSalt: baseParams.depositSalt,
+                confirmationBlocks: baseParams.confirmationBlocks,
+                safeBlockLeaf: baseParams.safeBlockLeaf,
+                safeBlockSiblings: baseParams.safeBlockSiblings,
+                safeBlockPeaks: baseParams.safeBlockPeaks
+            });
+    }
+
     // ---------------------------------------------------------------
     // Bond Management Functions
     // ---------------------------------------------------------------
@@ -232,47 +285,10 @@ contract RiftReactor is RiftExchange {
         return mmBondDeposits[mm];
     }
 
-    // ---------------------------------------------------------------
-    // Validation Functions
-    // ---------------------------------------------------------------
-    // Steps 1-3 from executeIntentWithSwap()
-    /**
-     * @notice Validates the signed intent and ensures the market maker has posted sufficient bond.
-     * @dev Performs these checks:
-     *      1. Validates the EIP‑712 signature of the SignedIntent.
-     *      2. Verifies the auction is active (auction.endBlock > block.number) and the nonce is correct.
-     *      3. Checks that msg.sender (the market maker executing the swap) has posted sufficient cbBTC bond.
-     *          The required bond is computed based on depositLiquidityParams.depositAmount, which now represents
-     *          the expected amount of cbBTC the MM must supply.
-     * @param order The SignedIntent containing the intent and signature data.
-     */
-    function _validateIntentAndBond(Types.SignedIntent calldata order) internal view {
-        // NOTE: Do less gas intensive checks first, then if those fail more gas
-        // will be returned.
-        if (order.info.auction.endBlock <= block.number) {
-            revert Errors.AuctionEnded();
-        }
-        if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
-            revert Errors.InvalidNonce();
-        }
-
-        // Step 1: Validate the EIP‑712 signature of the SignedIntent.
-        order.validateEIP712(DOMAIN_SEPARATOR);
-
-        // Step 3: Validate that the market maker has posted sufficient bond.
-        // depositAmount represents the expected amount of cbBTC the MM must supply.
-        uint256 depositAmount = order.info.depositLiquidityParams.depositAmount;
-        uint96 requiredBond = _computeBond(depositAmount);
-        uint96 bondPosted = _getBondPosted(msg.sender);
-        if (bondPosted < requiredBond) {
-            revert Errors.InsufficientBond();
-        }
-    }
-
     // -----------------------------------------------------------------------
     //                             HELPER FUNCTIONS
     // -----------------------------------------------------------------------
-    // TODO: Possibly replace the less precise integer math with FixedPointMathLib.
+    // TODO Possibly replace the less precise integer math with FixedPointMathLib.
     /**
      * @notice Computes the bond required for a given deposit amount.
      * @dev The bond is the greater of (depositAmount * BOND_BIPS / 10,000) or MIN_BOND.
