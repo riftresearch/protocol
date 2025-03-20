@@ -87,7 +87,7 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity by overwriting an existing empty vault
-    function depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams calldata params) internal {
+    function depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams memory params) internal {
         // Create deposit liquidity request
         uint256 vaultIndex = params.overwriteVault.vaultIndex;
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params.depositParams, vaultIndex);
