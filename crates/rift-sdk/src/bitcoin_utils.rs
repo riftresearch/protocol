@@ -82,7 +82,7 @@ impl From<TransportError> for bitcoincore_rpc_async::jsonrpc::Error {
     fn from(e: TransportError) -> Self {
         use bitcoincore_rpc_async::jsonrpc::error::RpcError;
         bitcoincore_rpc_async::jsonrpc::Error::Rpc(RpcError {
-            code: -32603,
+            code: -32001,
             message: e.to_string(),
             data: None,
         })
@@ -193,28 +193,24 @@ where
         let res = operation().await;
         match res {
             Ok(val) => Ok(val),
-            Err(bitcoincore_rpc_async::Error::JsonRpc(
-                bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
-            )) if rpcerr.code == -32603 => {
-                // Various bitcoin errors are under the -32603 code, so we check against ones we know are not transient
-                if rpcerr.message.contains("(401 Unauthorized)") {
-                    return Err(BackoffError::permanent(
-                        bitcoincore_rpc_async::Error::JsonRpc(
-                            bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
-                        ),
-                    ));
+            Err(e) => match e {
+                bitcoincore_rpc_async::Error::JsonRpc(
+                    bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
+                ) if rpcerr.code == -32603 => {
+                    info!("Retrying RPC call due to error: {:?}", rpcerr);
+                    Err(BackoffError::transient(e))
                 }
-                info!("Retrying RPC call due to error: {:?}", rpcerr);
-                Err(BackoffError::transient(
-                    bitcoincore_rpc_async::Error::JsonRpc(
-                        bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
-                    ),
-                ))
-            }
-            Err(e) => {
-                info!("RPC error: {:?}", e);
-                Err(BackoffError::permanent(e))
-            }
+                bitcoincore_rpc_async::Error::JsonRpc(
+                    bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
+                ) if rpcerr.code == -32001 => {
+                    tracing::error!("Caught transport error: {:?}", rpcerr);
+                    Err(BackoffError::permanent(e))
+                }
+                _ => {
+                    info!("RPC error: {:?}", e);
+                    Err(BackoffError::permanent(e))
+                }
+            },
         }
     })
     .await

@@ -235,8 +235,6 @@ impl<H: LeafHasher> BlockTree<H> {
 
     /// Find the Lowest Common Ancestor (LCA) between two leaf hashes in the block tree.
     /// Returns the LCA leaf hash, and the paths from the LCA to the two leaves.
-    /// Find the Lowest Common Ancestor (LCA) between two leaf hashes in the block tree.
-    /// Returns the LCA leaf hash, and the paths from the LCA to the two leaves.
     async fn find_lca(
         &self,
         leaf1: &BlockTreeValue,

@@ -29,7 +29,7 @@ use sol_bindings::{
 async fn test_txn_broadcast_success() {
     // devnet needs to be kept in scope so that the chains are kept alive
     let (_devnet, rift_exchange, deposit_params, maker, transaction_broadcaster) =
-        create_deposit().await;
+        create_deposit(false).await;
 
     let deposit_call = rift_exchange.depositLiquidity(deposit_params);
 
@@ -78,7 +78,7 @@ async fn test_txn_broadcast_success() {
 async fn test_txn_broadcast_handles_revert_in_sim() {
     // Setup is identical to test_txn_broadcast_success
     let (_devnet, rift_exchange, mut deposit_params, maker, transaction_broadcaster) =
-        create_deposit().await;
+        create_deposit(false).await;
 
     // Modify deposit params to have insufficient confirmation blocks
     deposit_params.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
@@ -119,7 +119,7 @@ async fn test_txn_broadcast_handles_revert_in_sim() {
 async fn test_txn_broadcast_handles_revert_in_send() {
     // Setup is identical to test_txn_broadcast_success
     let (_devnet, rift_exchange, mut deposit_params, maker, transaction_broadcaster) =
-        create_deposit().await;
+        create_deposit(false).await;
 
     // Modify deposit params to have insufficient confirmation blocks
     deposit_params.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error

@@ -1,6 +1,6 @@
 use alloy::{
     eips::BlockId,
-    primitives::{Address, Bytes},
+    primitives::Bytes,
     providers::{Provider, WalletProvider},
     rpc::{
         json_rpc::ErrorPayload,
@@ -9,17 +9,14 @@ use alloy::{
     transports::RpcError,
 };
 use rift_sdk::WebsocketWalletProvider;
-use sol_bindings::RiftExchange;
-use std::{collections::VecDeque, sync::Arc};
+use std::sync::Arc;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        oneshot, Mutex,
+        oneshot,
     },
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
 };
-use tokio_util::task::TaskTracker;
-use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct RevertInfo {

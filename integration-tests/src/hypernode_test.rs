@@ -1,7 +1,7 @@
 use alloy::{
     network::EthereumWallet,
     primitives::{utils::format_units, U256},
-    providers::{ProviderBuilder, WsConnect},
+    providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
     signers::local::LocalSigner,
     sol_types::SolEvent,
 };
@@ -11,6 +11,7 @@ use bitcoin::{
     Amount, Transaction,
 };
 use bitcoincore_rpc_async::RpcApi;
+use data_engine::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
 use rift_core::vaults::hash_deposit_vault;
@@ -22,12 +23,14 @@ use rift_sdk::{
 };
 use sol_bindings::{RiftExchange, Types::DepositLiquidityParams};
 use tokio::signal::{self, unix::signal};
-use tracing_subscriber::EnvFilter;
 
-use crate::test_utils::{create_deposit, MultichainAccount};
+use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
 
 #[tokio::test]
+// Serial anything that uses alot of bitcoin mining
+#[serial_test::serial]
 async fn test_hypernode_simple_swap() {
+    setup_test_tracing();
     // ---1) Spin up devnet with default config---
     //    Interactive = false => no local HTTP servers / Docker containers
     //    No pre-funded EVM or Bitcoin address => we can do that ourselves below
@@ -307,12 +310,6 @@ async fn test_hypernode_simple_swap() {
         .await
         .unwrap();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     let rpc_url_with_cookie = devnet.bitcoin.rpc_url_with_cookie.clone();
     let hypernode_handle = tokio::spawn(async move {
         let hypernode_args = HypernodeArgs {
@@ -335,11 +332,49 @@ async fn test_hypernode_simple_swap() {
         "Hypernode Bitcoin RPC URL: {:?}",
         devnet.bitcoin.rpc_url_with_cookie
     );
+    let otc_swap = loop {
+        let otc_swap = devnet
+            .contract_data_engine
+            .get_otc_swap_by_deposit_id(vault_commitment)
+            .await
+            .unwrap();
+        println!("OTCSwap: {:#?}", otc_swap);
+        if otc_swap
+            .clone()
+            .is_some_and(|otc_swap| otc_swap.swap_status() == SwapStatus::ChallengePeriod)
+        {
+            break otc_swap.unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    };
+    // Now warp ahead on the eth chain to the timestamp that unlocks the swap
+    let swap_unlock_timestamp = otc_swap.swap_proofs[0].swap.liquidityUnlockTimestamp;
+    devnet
+        .ethereum
+        .funded_provider
+        .anvil_set_time(swap_unlock_timestamp)
+        .await
+        .unwrap();
 
-    // Add some code to subscribe to new events in the data engine
-    // sleep for 15 seconds
-    tokio::time::sleep(std::time::Duration::from_secs(1000)).await;
-
+    devnet
+        .ethereum
+        .funded_provider
+        .anvil_mine(Some(U256::from(1)), None)
+        .await
+        .unwrap();
+    // now check again for ever until the swap is completed
+    loop {
+        let otc_swap = devnet
+            .contract_data_engine
+            .get_otc_swap_by_deposit_id(vault_commitment)
+            .await
+            .unwrap();
+        println!("OTCSwap Post Swap: {:#?}", otc_swap);
+        if otc_swap.is_some_and(|otc_swap| otc_swap.swap_status() == SwapStatus::Completed) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
     // stop the hypernode
     hypernode_handle.abort();
 }

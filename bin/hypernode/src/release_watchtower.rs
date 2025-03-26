@@ -25,7 +25,7 @@ use sol_bindings::{
 };
 use tokio::{sync::watch, task::JoinSet};
 use tokio_util::task::TaskTracker;
-use tracing::info;
+use tracing::{info, info_span, Instrument};
 
 use crate::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 
@@ -55,20 +55,21 @@ impl ReleaseWatchtower {
 
         let combined_stream = setup_block_stream(evm_rpc.clone()).await?;
 
-        // Spawn block stream handler
         join_set.spawn(async move { pump_blocks_into_watch(combined_stream, tx).await });
 
-        // Spawn search handler with cloned dependencies
-        join_set.spawn(async move {
-            search_on_new_evm_blocks(
-                rift_exchange_address,
-                transaction_broadcaster,
-                evm_rpc,
-                contract_data_engine,
-                rx,
-            )
-            .await
-        });
+        join_set.spawn(
+            async move {
+                search_on_new_evm_blocks(
+                    rift_exchange_address,
+                    transaction_broadcaster,
+                    evm_rpc,
+                    contract_data_engine,
+                    rx,
+                )
+                .await
+            }
+            .instrument(info_span!("Release Watchtower")),
+        );
 
         Ok(Self {})
     }
@@ -111,7 +112,7 @@ async fn search_on_new_evm_blocks(
                 &rift_exchange,
                 transaction_broadcaster.clone(),
                 contract_data_engine.clone(),
-                latest_block_header.number,
+                latest_block_header.timestamp,
             )
             .await?;
         }
@@ -123,10 +124,14 @@ async fn search_for_releases(
     rift_exchange: &RiftExchangeClient,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
     contract_data_engine: Arc<ContractDataEngine>,
-    block_number: u64,
+    block_timestamp: u64,
 ) -> eyre::Result<()> {
+    info!(
+        "Searching for releases at evm block timestamp {}",
+        block_timestamp
+    );
     let swaps_ready_to_be_released = contract_data_engine
-        .get_swaps_ready_to_be_released(block_number)
+        .get_swaps_ready_to_be_released(block_timestamp)
         .await?;
 
     if swaps_ready_to_be_released.is_empty() {

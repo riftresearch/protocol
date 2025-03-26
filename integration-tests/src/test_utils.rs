@@ -3,6 +3,7 @@ use alloy::{
     primitives::{keccak256, Address},
     signers::local::LocalSigner,
 };
+use once_cell::sync::OnceCell;
 use rift_sdk::txn_builder::P2WPKHBitcoinWallet;
 
 use futures::channel::oneshot;
@@ -13,8 +14,10 @@ use std::{
 };
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
+    fmt,
     layer::{Context, Layer, SubscriberExt},
     util::SubscriberInitExt,
+    EnvFilter,
 };
 
 use bitcoincore_rpc_async::RpcApi;
@@ -90,7 +93,9 @@ impl MultichainAccount {
     }
 }
 
-pub async fn create_deposit() -> (
+pub async fn create_deposit(
+    using_bitcoin: bool,
+) -> (
     devnet::RiftDevnet,
     Arc<RiftExchangeWebsocket>,
     DepositLiquidityParams,
@@ -99,7 +104,7 @@ pub async fn create_deposit() -> (
 ) {
     let maker = MultichainAccount::new(1);
     let (mut devnet, deploy_block_number) = RiftDevnet::builder()
-        .using_bitcoin(true)
+        .using_bitcoin(using_bitcoin)
         .funded_evm_address(maker.ethereum_address.to_string())
         .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
@@ -368,14 +373,19 @@ where
     }
 }
 
-pub fn setup_tracing_subscriber_with_log_watcher() -> WaitForLogLayer {
-    let filter = tracing_subscriber::filter::LevelFilter::INFO;
-    let watcher = WaitForLogLayer::new();
+static LOGGING: OnceCell<()> = OnceCell::new();
 
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(filter))
-        .with(watcher.clone().with_filter(filter))
-        .init();
-
-    watcher
+pub fn setup_test_tracing() {
+    LOGGING.get_or_init(|| {
+        // Only init tracing if --nocapture is passed
+        let has_nocapture = std::env::args().any(|arg| arg == "--nocapture");
+        if has_nocapture {
+            println!("Setting up test tracing");
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .init();
+        }
+    });
 }

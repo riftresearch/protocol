@@ -79,6 +79,7 @@ tokio-rusqlite = { version = "0.6.0", features = ["bundled"] }
 axum = { version = "0.7", features = ["json", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tempfile = { version = "3.6.0" }
+serial_test = "3.2.0"
 
 alloy-sol-types = { version = "0.8.0", features = ["json"] }
 alloy-contract = "0.8.0"

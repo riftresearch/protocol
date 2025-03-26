@@ -32,9 +32,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     db::{
-        add_deposit, add_proposed_swap, get_deposits_for_recipient, get_proposed_swap_id,
-        get_swaps_ready_to_be_released, get_virtual_swaps, setup_swaps_database,
-        update_deposit_to_withdrawn, update_proposed_swap_to_released,
+        add_deposit, add_proposed_swap, get_deposits_for_recipient, get_otc_swap_by_deposit_id,
+        get_proposed_swap_id, get_swaps_ready_to_be_released, get_virtual_swaps,
+        setup_swaps_database, update_deposit_to_withdrawn, update_proposed_swap_to_released,
         ChainAwareProposedSwapWithDeposit,
     },
     models::{ChainAwareDeposit, ChainAwareProposedSwap},
@@ -214,6 +214,13 @@ impl ContractDataEngine {
         current_block_timestamp: u64,
     ) -> Result<Option<ChainAwareDeposit>> {
         get_oldest_active_deposit(&self.swap_database_connection, current_block_timestamp).await
+    }
+
+    pub async fn get_otc_swap_by_deposit_id(
+        &self,
+        deposit_id: [u8; 32],
+    ) -> Result<Option<OTCSwap>> {
+        get_otc_swap_by_deposit_id(&self.swap_database_connection, deposit_id).await
     }
 
     pub async fn get_swaps_ready_to_be_released(

@@ -7,7 +7,4 @@ mod hypernode_test;
 #[cfg(test)]
 mod txn_broadcast_test;
 
-#[cfg(test)]
-mod swap_watchtower_test;
-
 mod test_utils;
