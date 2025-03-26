@@ -1335,6 +1335,8 @@ dependencies = [
  "hex",
  "rift-sdk",
  "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -1893,7 +1895,7 @@ version = "0.6.0"
 source = "git+https://github.com/rust-bitcoin/corepc?rev=7949505ebc29a478887852b6c0bc773f6a50baf7#7949505ebc29a478887852b6c0bc773f6a50baf7"
 dependencies = [
  "anyhow",
- "bitcoin_hashes 0.13.0",
+ "bitcoin_hashes 0.14.0",
  "corepc-client",
  "flate2",
  "log",
@@ -2336,6 +2338,7 @@ dependencies = [
  "sol-bindings",
  "tempfile",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3467,6 +3470,7 @@ dependencies = [
  "serde_json",
  "sol-bindings",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3764,6 +3768,9 @@ dependencies = [
  "sol-bindings",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4078,6 +4085,7 @@ dependencies = [
  "sol-bindings",
  "tokio",
  "tokio-rusqlite",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

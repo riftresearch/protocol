@@ -2,6 +2,7 @@ use crate::models::{
     ChainAwareDeposit, ChainAwareProposedSwap, ChainAwareRelease, ChainAwareWithdraw, OTCSwap,
 };
 use alloy::{
+    hex,
     primitives::{keccak256, Address},
     sol_types::SolValue,
 };
@@ -10,6 +11,7 @@ use rift_core::vaults::hash_deposit_vault;
 use sol_bindings::Types::{DepositVault, ProposedSwap};
 use std::str::FromStr;
 use tokio_rusqlite::{params, Connection, Error::Rusqlite};
+use tracing::info;
 
 /// Run initial table creation / migrations on an existing `tokio_sqlite::Connection`.
 pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
@@ -79,7 +81,7 @@ pub async fn get_oldest_active_deposit(
             deposit_block_hash,
             deposit_txid
         FROM deposits
-        WHERE deposit_unlock_timestamp < ?
+        WHERE deposit_unlock_timestamp > ?
         ORDER BY deposit_unlock_timestamp ASC
         LIMIT 1
     "#;
@@ -170,6 +172,12 @@ pub async fn add_proposed_swap(
         Ok(())
     })
     .await?;
+    info!(
+        message = "Proposed swap added",
+        proposed_swap_id = hex::encode(proposed_swap_id),
+        deposit_id = hex::encode(swap.depositVaultCommitment),
+        operation = "add_proposed_swap"
+    );
     Ok(())
 }
 
@@ -199,6 +207,11 @@ pub async fn update_proposed_swap_to_released(
         Ok(())
     })
     .await?;
+    info!(
+        message = "Proposed swap released",
+        proposed_swap_id = hex::encode(proposed_swap_id),
+        operation = "update_proposed_swap_to_released"
+    );
     Ok(())
 }
 
@@ -228,6 +241,10 @@ pub async fn update_deposit_to_withdrawn(
         Ok(())
     })
     .await?;
+    info!(
+        message = "Deposit vault withdrawn",
+        deposit_commitment = hex::encode(deposit_id)
+    );
     Ok(())
 }
 
@@ -242,7 +259,7 @@ pub async fn add_deposit(
     let deposit_vault_str = serde_json::to_string(&deposit)
         .map_err(|e| eyre::eyre!("Failed to serialize DepositVault: {:?}", e))?;
 
-    println!("Adding deposit: {:?}", deposit);
+    info!("Adding deposit: {:?}", hex::encode(deposit_id));
 
     conn.call(move |conn| {
         conn.execute(
@@ -251,16 +268,18 @@ pub async fn add_deposit(
             deposit_id,
             depositor,
             recipient,
+            deposit_unlock_timestamp,
             deposit_vault,
             deposit_block_number,
             deposit_block_hash,
             deposit_txid
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         "#,
             params![
                 deposit_id,
                 deposit.ownerAddress.to_string(),
                 deposit.specifiedPayoutAddress.to_string(),
+                deposit.depositUnlockTimestamp,
                 deposit_vault_str,
                 deposit_block_number as i64,
                 deposit_block_hash.to_vec(),
@@ -270,6 +289,12 @@ pub async fn add_deposit(
         Ok(())
     })
     .await?;
+    info!(
+        message = "Deposit added",
+        deposit_commitment = hex::encode(deposit_id),
+        deposit = format!("{:?}", deposit),
+        operation = "add_deposit"
+    );
 
     Ok(())
 }
@@ -574,4 +599,144 @@ pub async fn get_deposit_by_id(
     })
     .await
     .map_err(|e| eyre::eyre!(e))
+}
+
+pub struct ChainAwareProposedSwapWithDeposit {
+    pub swap: ChainAwareProposedSwap,
+    pub deposit: ChainAwareDeposit,
+}
+
+pub async fn get_swaps_ready_to_be_released(
+    conn: &Connection,
+    current_block_timestamp: u64,
+) -> Result<Vec<ChainAwareProposedSwapWithDeposit>> {
+    let sql = r#"
+        SELECT
+            ps.proposed_swap_id,
+            ps.deposit_id,
+            ps.proposed_block_number,
+            ps.proposed_block_hash,
+            ps.proposed_txid,
+            ps.swap_proof,
+            ps.proposed_release_txid,
+            ps.proposed_release_block_number,
+            ps.proposed_release_block_hash,
+
+            d.deposit_vault,
+            d.deposit_block_number,
+            d.deposit_block_hash,
+            d.deposit_txid
+        FROM proposed_swaps ps
+        JOIN deposits d ON ps.deposit_id = d.deposit_id
+        WHERE ps.proposed_release_block_number < ?
+          AND ps.proposed_release_txid IS NULL
+    "#;
+
+    let swaps_with_deposit = conn
+        .call(move |conn| {
+            let mut stmt = conn.prepare(sql)?;
+            let mut rows = stmt.query(params![current_block_timestamp])?;
+
+            let mut results = Vec::new();
+            while let Some(row) = rows.next()? {
+                //
+                // --- Parse the ProposedSwap portion ---
+                //
+                let _proposed_swap_id_vec: Vec<u8> = row.get(0)?; // not strictly needed for reconstruction
+                let _deposit_id_vec: Vec<u8> = row.get(1)?;
+
+                let proposed_block_number: i64 = row.get(2)?;
+                let proposed_block_hash_vec: Vec<u8> = row.get(3)?;
+                let proposed_block_hash: [u8; 32] =
+                    proposed_block_hash_vec.try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid proposed_block_hash length".into())
+                    })?;
+
+                let proposed_txid_vec: Vec<u8> = row.get(4)?;
+                let proposed_txid: [u8; 32] = proposed_txid_vec.try_into().map_err(|_| {
+                    tokio_rusqlite::Error::Other("Invalid proposed_txid length".into())
+                })?;
+
+                let swap_proof_str: String = row.get(5)?;
+                let swap: ProposedSwap = serde_json::from_str(&swap_proof_str).map_err(|e| {
+                    tokio_rusqlite::Error::Other(
+                        format!("Failed to deserialize ProposedSwap: {:?}", e).into(),
+                    )
+                })?;
+
+                // release columns
+                let proposed_release_txid_vec: Option<Vec<u8>> = row.get(6)?;
+                let proposed_release_block_number: Option<i64> = row.get(7)?;
+                let proposed_release_block_hash_vec: Option<Vec<u8>> = row.get(8)?;
+
+                let release =
+                    if let (Some(rel_txid_vec), Some(rel_block_num), Some(rel_block_hash_vec)) = (
+                        proposed_release_txid_vec,
+                        proposed_release_block_number,
+                        proposed_release_block_hash_vec,
+                    ) {
+                        Some(ChainAwareRelease {
+                            release_txid: rel_txid_vec.try_into().map_err(|_| {
+                                tokio_rusqlite::Error::Other("Invalid release_txid length".into())
+                            })?,
+                            release_block_hash: rel_block_hash_vec.try_into().map_err(|_| {
+                                tokio_rusqlite::Error::Other(
+                                    "Invalid release_block_hash length".into(),
+                                )
+                            })?,
+                            release_block_number: rel_block_num as u64,
+                        })
+                    } else {
+                        None
+                    };
+
+                let chain_swap = ChainAwareProposedSwap {
+                    swap,
+                    swap_proof_txid: proposed_txid,
+                    swap_proof_block_hash: proposed_block_hash,
+                    swap_proof_block_number: proposed_block_number as u64,
+                    release,
+                };
+
+                //
+                // --- Parse the associated Deposit portion ---
+                //
+                let deposit_vault_str: String = row.get(9)?;
+                let deposit_vault: DepositVault = serde_json::from_str(&deposit_vault_str)
+                    .map_err(|_| {
+                        tokio_rusqlite::Error::Other("Failed to deserialize DepositVault".into())
+                    })?;
+
+                let deposit_block_number: i64 = row.get(10)?;
+                let deposit_block_hash_vec: Vec<u8> = row.get(11)?;
+                let deposit_block_hash: [u8; 32] =
+                    deposit_block_hash_vec.try_into().map_err(|_| {
+                        tokio_rusqlite::Error::Other("Invalid deposit_block_hash length".into())
+                    })?;
+
+                let deposit_txid_vec: Vec<u8> = row.get(12)?;
+                let deposit_txid: [u8; 32] = deposit_txid_vec.try_into().map_err(|_| {
+                    tokio_rusqlite::Error::Other("Invalid deposit_txid length".into())
+                })?;
+
+                let chain_deposit = ChainAwareDeposit {
+                    deposit: deposit_vault,
+                    deposit_block_number: deposit_block_number as u64,
+                    deposit_block_hash,
+                    deposit_txid,
+                };
+
+                //
+                // --- Combine them into ChainAwareProposedSwapWithDeposit ---
+                //
+                results.push(ChainAwareProposedSwapWithDeposit {
+                    swap: chain_swap,
+                    deposit: chain_deposit,
+                });
+            }
+            Ok(results)
+        })
+        .await?;
+
+    Ok(swaps_with_deposit)
 }

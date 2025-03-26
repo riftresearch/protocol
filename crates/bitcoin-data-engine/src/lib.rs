@@ -7,7 +7,7 @@ use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{BlockHash, BlockHeader};
 use tokio::signal;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex, RwLock};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::sleep;
 
 use bitcoin_light_client_core::hasher::{Digest, Hasher, Keccak256Hasher};
@@ -18,7 +18,9 @@ use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, ChainTipStatus};
 
 use hex;
 use rift_sdk::indexed_mmr::IndexedMMR;
-use rift_sdk::DatabaseLocation; // assumed to be defined in your code base
+use rift_sdk::DatabaseLocation;
+use tokio_util::task::TaskTracker;
+use tracing::Instrument; // assumed to be defined in your code base
 
 /// Our async Bitcoin Data Engine.
 /// This struct spawns its own tasks:
@@ -30,8 +32,6 @@ pub struct BitcoinDataEngine {
     pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
     /// Async RPC client for bitcoind.
     bitcoin_rpc: Arc<AsyncBitcoinClient>,
-    /// JoinHandle for our block watchtower task.
-    block_watchtower_handle: JoinHandle<Result<(), eyre::Report>>,
     /// Map of (block_height -> oneshot Senders), for tasks waiting on that height.
     watchers: Arc<Mutex<HashMap<u32, Vec<oneshot::Sender<BlockLeaf>>>>>,
     /// Collection of watchers waiting for initial sync to complete.
@@ -50,6 +50,7 @@ impl BitcoinDataEngine {
         bitcoin_rpc: Arc<AsyncBitcoinClient>,
         download_chunk_size: usize,
         block_search_interval: Duration,
+        join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Self {
         // Open the IndexedMMR.
         let mmr = Arc::new(RwLock::new(
@@ -69,21 +70,32 @@ impl BitcoinDataEngine {
         let (block_broadcaster, _) = broadcast::channel(100);
 
         // Spawn the block watchtower in a separate task
-        let block_watchtower_handle = tokio::spawn(block_watchtower(
-            mmr.clone(),
-            initial_sync_complete.clone(),
-            initial_sync_watchers.clone(),
-            watchers.clone(),
-            bitcoin_rpc.clone(),
-            block_broadcaster.clone(), // pass the broadcaster
-            download_chunk_size,
-            block_search_interval,
-        ));
+        let mmr_clone = mmr.clone();
+        let initial_sync_complete_clone = initial_sync_complete.clone();
+        let initial_sync_watchers_clone = initial_sync_watchers.clone();
+        let watchers_clone = watchers.clone();
+        let bitcoin_rpc_clone = bitcoin_rpc.clone();
+        let block_broadcaster_clone = block_broadcaster.clone();
+        join_set.spawn(
+            async move {
+                block_watchtower(
+                    mmr_clone,
+                    initial_sync_complete_clone,
+                    initial_sync_watchers_clone,
+                    watchers_clone,
+                    bitcoin_rpc_clone,
+                    block_broadcaster_clone, // pass the broadcaster
+                    download_chunk_size,
+                    block_search_interval,
+                )
+                .await
+            }
+            .instrument(tracing::info_span!("BDE Block Watchtower")),
+        );
 
         Self {
             indexed_mmr: mmr,
             bitcoin_rpc,
-            block_watchtower_handle,
             watchers,
             initial_sync_watchers,
             initial_sync_complete,
@@ -180,9 +192,7 @@ async fn block_watchtower(
         let chain_tips = match bitcoin_rpc.get_chain_tips().await {
             Ok(tips) => tips,
             Err(e) => {
-                eprintln!("Error getting chain tips: {e}");
-                sleep(block_search_interval).await;
-                continue;
+                return Err(eyre::eyre!("Error getting chain tips: {e}"));
             }
         };
 
@@ -479,8 +489,13 @@ mod tests {
     use corepc_node::{types::GetTransaction, Client as BitcoinClient, Node as BitcoinRegtest};
     use tokio::signal;
 
-    async fn setup_bitcoin_regtest_and_client(
-    ) -> (BitcoinRegtest, AsyncBitcoinClient, BitcoinAddress) {
+    async fn setup_bitcoin_regtest_and_client() -> (
+        BitcoinRegtest,
+        AsyncBitcoinClient,
+        BitcoinAddress,
+        JoinSet<eyre::Result<()>>,
+    ) {
+        let mut join_set = JoinSet::new();
         let bitcoin_regtest = BitcoinRegtest::from_downloaded().unwrap();
         let cookie = bitcoin_regtest.params.cookie_file.clone();
         let bitcoin_address = bitcoin_regtest
@@ -496,13 +511,13 @@ mod tests {
         )
         .await
         .unwrap();
-        (bitcoin_regtest, bitcoin_rpc, bitcoin_address)
+        (bitcoin_regtest, bitcoin_rpc, bitcoin_address, join_set)
     }
 
     #[tokio::test]
     async fn test_wait_for_block_height() {
         let db_loc = DatabaseLocation::InMemory;
-        let (bitcoin_regtest, bitcoin_rpc, bitcoin_address) =
+        let (bitcoin_regtest, bitcoin_rpc, bitcoin_address, mut join_set) =
             setup_bitcoin_regtest_and_client().await;
         let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
@@ -517,6 +532,7 @@ mod tests {
             bitcoin_rpc.clone(),
             100,
             Duration::from_millis(250),
+            &mut join_set,
         )
         .await;
 

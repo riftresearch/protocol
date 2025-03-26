@@ -3,6 +3,8 @@ pub mod leaves;
 pub mod light_client;
 pub mod mmr;
 
+use core::fmt;
+
 use crypto_bigint::U256;
 use serde::{Deserialize, Serialize};
 use sol_bindings::Types::LightClientPublicInput;
@@ -143,13 +145,13 @@ pub struct ProvenLeaf {
     pub proof: MMRProof,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct VerifiedBlock {
     pub header: Header,
     pub mmr_data: ProvenLeaf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ChainTransition {
     // Previous MMR state
     pub current_mmr_root: Digest,
@@ -164,6 +166,45 @@ pub struct ChainTransition {
     pub parent_leaf_peaks: Vec<Digest>, // peaks of the MMR with parent as the tip
     pub disposed_leaf_hashes: Vec<Digest>, // leaves that are being removed from the old MMR => all of the leaves after parent in the old MMR
     pub new_headers: Vec<Header>,
+}
+
+impl fmt::Debug for ChainTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChainTransition")
+            .field("current_mmr_root", &hex::encode(self.current_mmr_root))
+            .field(
+                "current_mmr_bagged_peak",
+                &hex::encode(self.current_mmr_bagged_peak),
+            )
+            .field("parent", &self.parent)
+            .field("parent_retarget", &self.parent_retarget)
+            .field("current_tip", &self.current_tip)
+            .field(
+                "parent_leaf_peaks",
+                &self
+                    .parent_leaf_peaks
+                    .iter()
+                    .map(hex::encode)
+                    .collect::<Vec<_>>(),
+            )
+            .field(
+                "disposed_leaf_hashes",
+                &self
+                    .disposed_leaf_hashes
+                    .iter()
+                    .map(hex::encode)
+                    .collect::<Vec<_>>(),
+            )
+            .field(
+                "new_headers",
+                &self
+                    .new_headers
+                    .iter()
+                    .map(|h| hex::encode(h.as_bytes()))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

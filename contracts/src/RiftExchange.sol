@@ -224,11 +224,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
                 revert Errors.InvalidVaultCommitment();
             }
 
-            Types.BlockLeaf memory swapBlockLeaf = Types.BlockLeaf({
-                blockHash: paramsArray[i].swap.swapBitcoinBlockHash,
-                height: paramsArray[i].swapBlockHeight,
-                cumulativeChainwork: paramsArray[i].swapBlockChainwork
-            });
+            Types.BlockLeaf memory swapBlockLeaf = paramsArray[i].swap.swapBitcoinBlockLeaf;
 
             // TODO: consider how to optimize this so this is only called the minimum amount for a given collection of releases
             _ensureBitcoinInclusion(
@@ -392,7 +388,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
             swaps[i] = Types.ProposedSwap({
                 swapIndex: swapIndex,
-                swapBitcoinBlockHash: params.swapBitcoinBlockLeaf.blockHash,
+                swapBitcoinBlockLeaf: params.swapBitcoinBlockLeaf,
                 confirmationBlocks: params.vault.confirmationBlocks,
                 liquidityUnlockTimestamp: uint64(
                     block.timestamp +

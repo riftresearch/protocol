@@ -7,15 +7,16 @@ use axum::{extract::State, routing::get, Json, Router};
 use bitcoin_light_client_core::hasher::Digest;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use clap::{command, Parser};
-use data_engine::engine::DataEngine;
+use data_engine::engine::ContractDataEngine;
 use data_engine::models::OTCSwap;
 use eyre::Result;
 use regex::Regex;
 use rift_sdk::{create_websocket_provider, DatabaseLocation};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
+use tokio::task::JoinSet;
 use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone, Parser)]
@@ -38,15 +39,18 @@ pub struct ServerConfig {
 /// DataEngineServer holds the underlying data engine, starting the Axum server in the background.
 /// It provides a getter method for easy access to the inner engine.
 pub struct DataEngineServer {
-    data_engine: Arc<DataEngine>,
-    pub server_handle: JoinHandle<()>,
+    data_engine: Arc<ContractDataEngine>,
 }
 
 impl DataEngineServer {
     /// Spawns an Axum server that serves the API endpoints.
     ///
     /// This helper method abstracts the common server startup logic.
-    fn spawn_server(data_engine: Arc<DataEngine>, port: u16) -> JoinHandle<()> {
+    fn spawn_server(
+        data_engine: Arc<ContractDataEngine>,
+        port: u16,
+        join_set: &mut JoinSet<eyre::Result<()>>,
+    ) -> Result<()> {
         // Build the Axum application.
         let cors = CorsLayer::new()
             .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
@@ -68,13 +72,15 @@ impl DataEngineServer {
         tracing::info!("Listening on {}", addr);
 
         // Spawn the server in a non-blocking fashion.
-        tokio::spawn(async move {
+        join_set.spawn(async move {
             if let Err(e) =
                 axum::serve(tokio::net::TcpListener::bind(&addr).await.unwrap(), app).await
             {
                 tracing::error!("Server error: {:?}", e);
             }
-        })
+            Ok(())
+        });
+        Ok(())
     }
 
     /// Asynchronously creates a new DataEngineServer.
@@ -82,41 +88,45 @@ impl DataEngineServer {
     /// This method sets up the data engine. If needed, it seeds
     /// the underlying MMR with the initial block leaves.
     /// It then starts the HTTP server on the specified port in a background task.
-    pub async fn start(config: ServerConfig, checkpoint_leaves: Vec<BlockLeaf>) -> Result<Self> {
+    pub async fn start(
+        config: ServerConfig,
+        checkpoint_leaves: Vec<BlockLeaf>,
+        join_set: &mut JoinSet<eyre::Result<()>>,
+    ) -> Result<Self> {
         // Create provider and initialize the data engine.
         let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
+        let rift_exchange_address = Address::from_str(&config.rift_exchange_address)?;
         let data_engine = Arc::new(
-            DataEngine::start(
+            ContractDataEngine::start(
                 &config.database_location,
                 Arc::new(provider),
-                config.rift_exchange_address,
+                rift_exchange_address,
                 config.deploy_block_number,
                 checkpoint_leaves,
+                join_set,
             )
             .await?,
         );
 
-        let server_handle = Self::spawn_server(data_engine.clone(), config.port);
-        Ok(Self {
-            data_engine,
-            server_handle,
-        })
+        Self::spawn_server(data_engine.clone(), config.port, join_set)?;
+        Ok(Self { data_engine })
     }
 
     /// Creates a new DataEngineServer from an existing Arc<DataEngine> and the provided port.
     ///
     /// This variant accepts a pre-configured DataEngine and immediately starts
     /// the HTTP server on the specified port in a background task.
-    pub async fn from_engine(data_engine: Arc<DataEngine>, port: u16) -> Result<Self> {
-        let server_handle = Self::spawn_server(data_engine.clone(), port);
-        Ok(Self {
-            data_engine,
-            server_handle,
-        })
+    pub async fn from_engine(
+        data_engine: Arc<ContractDataEngine>,
+        port: u16,
+        join_set: &mut JoinSet<eyre::Result<()>>,
+    ) -> Result<Self> {
+        Self::spawn_server(data_engine.clone(), port, join_set)?;
+        Ok(Self { data_engine })
     }
 
     /// Returns a clone of the inner `Arc<DataEngine>`.
-    pub fn engine(&self) -> Arc<DataEngine> {
+    pub fn engine(&self) -> Arc<ContractDataEngine> {
         self.data_engine.clone()
     }
 }
@@ -142,7 +152,7 @@ struct VirtualSwapQuery {
 
 #[axum::debug_handler]
 async fn get_swaps_for_address(
-    State(data_engine): State<Arc<DataEngine>>,
+    State(data_engine): State<Arc<ContractDataEngine>>,
     axum::extract::Query(query): axum::extract::Query<VirtualSwapQuery>,
 ) -> Result<Json<Vec<OTCSwap>>, (axum::http::StatusCode, String)> {
     let swaps = data_engine
@@ -166,7 +176,7 @@ struct TipProofResponse {
 
 #[axum::debug_handler]
 async fn get_tip_proof(
-    State(data_engine): State<Arc<DataEngine>>,
+    State(data_engine): State<Arc<ContractDataEngine>>,
 ) -> Result<Json<TipProofResponse>, (axum::http::StatusCode, String)> {
     let (leaf, siblings, peaks) = data_engine.get_tip_proof().await.map_err(|e| {
         (
@@ -183,7 +193,7 @@ async fn get_tip_proof(
 
 #[axum::debug_handler]
 async fn get_latest_contract_block(
-    State(data_engine): State<Arc<DataEngine>>,
+    State(data_engine): State<Arc<ContractDataEngine>>,
 ) -> Result<Json<u64>, (axum::http::StatusCode, String)> {
     let block_number = data_engine
         .get_leaf_count()

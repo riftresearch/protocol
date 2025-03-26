@@ -7,7 +7,7 @@ use std::fmt;
 use crate::hasher::Hasher;
 use crate::light_client::Header;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default)]
 pub struct BlockLeaf {
     pub height: u32,
     pub block_hash: [u8; 32],           // Stored in reverse byte order
@@ -46,11 +46,15 @@ impl BlockLeaf {
         U256::from_be_bytes(self.cumulative_chainwork)
     }
 
-    // Compare internal hash (which is always reverse byte order) to a "natural" hash (as returned by hash(header))
-    pub fn compare_by_natural_block_hash(&self, other: &[u8; 32]) -> bool {
+    pub fn natural_block_hash(&self) -> [u8; 32] {
         let mut natural_block_hash = self.block_hash;
         natural_block_hash.reverse();
-        natural_block_hash == *other
+        natural_block_hash
+    }
+
+    // Compare internal hash (which is always reverse byte order) to a "natural" hash (as returned by hash(header))
+    pub fn compare_by_natural_block_hash(&self, other: &[u8; 32]) -> bool {
+        self.natural_block_hash() == *other
     }
 
     pub fn hash<H: Hasher>(&self) -> [u8; 32] {
@@ -89,11 +93,28 @@ impl fmt::Display for BlockLeaf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "BlockLeaf {{ height: {}, block_hash: {}, chainwork: {} }}",
+            "BlockLeaf {{
+                height: {},
+                block_hash: {},
+                chainwork: {}
+            }}",
             self.height,
             hex::encode(self.block_hash),
             hex::encode(self.cumulative_chainwork)
         )
+    }
+}
+
+impl std::fmt::Debug for BlockLeaf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockLeaf")
+            .field("height", &self.height)
+            .field("block_hash", &hex::encode(self.block_hash))
+            .field(
+                "cumulative_chainwork",
+                &hex::encode(self.cumulative_chainwork),
+            )
+            .finish()
     }
 }
 

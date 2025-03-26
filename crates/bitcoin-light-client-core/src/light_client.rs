@@ -1,10 +1,19 @@
+use std::fmt;
+use std::fmt::Debug;
+
 use crypto_bigint::CheckedAdd;
 use crypto_bigint::Encoding;
 use crypto_bigint::U256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Header(pub [u8; 80]);
+
+impl Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Header({})", hex::encode(self.0))
+    }
+}
 
 impl Header {
     pub fn as_bytes(&self) -> [u8; 80] {

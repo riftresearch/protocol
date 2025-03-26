@@ -12,16 +12,11 @@ use accumulators::mmr::{
     map_leaf_index_to_element_index, AppendResult, PeaksOptions, Proof as ClientMMRProof,
     ProofOptions, MMR as ClientMMR,
 };
-use accumulators::{
-    hasher::keccak::KeccakHasher as AccumulatorsKeccakHasher,
-    store::{memory::InMemoryStore, sqlite::SQLiteStore, Store},
-};
+use accumulators::store::{memory::InMemoryStore, sqlite::SQLiteStore, Store};
 
 use bitcoin_light_client_core::hasher::{Digest as LeafDigest, Hasher as LeafHasher};
 use bitcoin_light_client_core::leaves::BlockLeaf;
-use bitcoin_light_client_core::mmr::get_root as circuit_get_root;
 use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
-use tracing::info;
 
 use crate::errors::{Result, RiftSdkError};
 use crate::indexed_mmr::IndexedMMR;

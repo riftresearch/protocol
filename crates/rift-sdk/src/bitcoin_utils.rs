@@ -2,9 +2,10 @@ use alloy::signers::k256;
 use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{Block, BlockHash, BlockHeader};
-use bitcoincore_rpc_async::json::GetBlockHeaderResult;
+use bitcoincore_rpc_async::json::{GetBlockHeaderResult, GetBlockResult};
 use serde_json::value::RawValue;
 use tokio::time::Instant;
+use tracing::info;
 
 use crate::errors::RiftSdkError;
 use backoff::future::retry;
@@ -195,7 +196,15 @@ where
             Err(bitcoincore_rpc_async::Error::JsonRpc(
                 bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
             )) if rpcerr.code == -32603 => {
-                println!("Retrying RPC call due to error: {:?}", rpcerr);
+                // Various bitcoin errors are under the -32603 code, so we check against ones we know are not transient
+                if rpcerr.message.contains("(401 Unauthorized)") {
+                    return Err(BackoffError::permanent(
+                        bitcoincore_rpc_async::Error::JsonRpc(
+                            bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
+                        ),
+                    ));
+                }
+                info!("Retrying RPC call due to error: {:?}", rpcerr);
                 Err(BackoffError::transient(
                     bitcoincore_rpc_async::Error::JsonRpc(
                         bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(rpcerr.clone()),
@@ -203,7 +212,7 @@ where
                 ))
             }
             Err(e) => {
-                println!("Real RPC error: {:?}", e);
+                info!("RPC error: {:?}", e);
                 Err(BackoffError::permanent(e))
             }
         }
@@ -403,10 +412,12 @@ pub trait BitcoinClientExt {
         &self,
         target_timestamp: u64,
     ) -> crate::errors::Result<u32>;
-    async fn get_leaf_from_block_hash(
+
+    async fn get_headers_from_hashes(
         &self,
-        block_hash: BlockHash,
-    ) -> crate::errors::Result<BlockLeaf>;
+        hashes: &[BlockHash],
+        concurrency_limit: usize,
+    ) -> crate::errors::Result<Vec<BlockHeader>>;
 }
 
 #[async_trait::async_trait]
@@ -477,6 +488,55 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         Ok(left as u32)
     }
+
+    async fn get_headers_from_hashes(
+        &self,
+        hashes: &[BlockHash],
+        concurrency_limit: usize,
+    ) -> crate::errors::Result<Vec<BlockHeader>> {
+        use bitcoincore_rpc_async::bitcoin::consensus::encode::deserialize;
+        use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
+
+        // Build a batched JSON-RPC request for each hash using "getblockheader" (verbose=false)
+        let requests: Vec<BitcoinCoreJsonRpcRequest<String>> = hashes
+            .iter()
+            .map(|block_hash| BitcoinCoreJsonRpcRequest {
+                method: "getblockheader",
+                args: vec![
+                    serde_json::json!(block_hash.to_string()),
+                    serde_json::json!(false), // verbose = false => hex-encoded header
+                ],
+                response_type: PhantomData,
+            })
+            .collect();
+
+        // Send the batch. Passing `None` means "send them all in one or more batches",
+        // but you can also supply `Some(concurrency_limit)` if you want chunked concurrency.
+        let raw_headers: Vec<String> = self
+            .send_batch(&requests, Some(concurrency_limit))
+            .await
+            .map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!(
+                    "Error fetching block headers by hash: {}",
+                    e
+                ))
+            })?;
+
+        // Decode the hex-encoded headers into `BlockHeader` structs
+        let mut block_headers = Vec::with_capacity(raw_headers.len());
+        for raw in raw_headers {
+            let bytes = Vec::from_hex(&raw).map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!("Error decoding block header hex: {}", e))
+            })?;
+            let header: BlockHeader = deserialize(&bytes).map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!("Error deserializing block header: {}", e))
+            })?;
+            block_headers.push(header);
+        }
+
+        Ok(block_headers)
+    }
+
     async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<BlockHeader> {
         let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!(
@@ -507,39 +567,36 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         concurrency_limit: usize,
     ) -> crate::errors::Result<Vec<Block>> {
         let block_hashes: Vec<[u8; 32]> = leaves.iter().map(|leaf| leaf.block_hash).collect();
-        let blocks_requests: Vec<BitcoinCoreJsonRpcRequest<Block>> = block_hashes
+
+        let blocks_requests: Vec<BitcoinCoreJsonRpcRequest<String>> = block_hashes
             .iter()
             .map(|block_hash| BitcoinCoreJsonRpcRequest {
                 method: "getblock",
-                args: vec![serde_json::json!(hex::encode(block_hash))],
+                args: vec![
+                    serde_json::json!(hex::encode(block_hash)),
+                    0.into(), // verbosity 0 => hex-encoded block
+                ],
                 response_type: PhantomData,
             })
             .collect();
 
-        let blocks = self
+        let blocks: Vec<String> = self
             .send_batch(&blocks_requests, Some(concurrency_limit))
             .await
             .map_err(|e| RiftSdkError::BitcoinRpcError(format!("Error getting blocks: {}", e)))?;
-        Ok(blocks)
-    }
 
-    async fn get_leaf_from_block_hash(
-        &self,
-        block_hash: BlockHash,
-    ) -> crate::errors::Result<BlockLeaf> {
-        let block = self
-            .get_block_header_info(&block_hash)
-            .await
-            .map_err(|e| RiftSdkError::BitcoinRpcError(format!("Error getting block: {}", e)))?;
-        let chainwork = block
-            .chainwork
-            .as_slice()
-            .try_into()
-            .expect("Chainwork is not 32 bytes");
-        let mut explorer_block_hash: [u8; 32] = block_hash.as_hash().into_inner();
-        explorer_block_hash.reverse();
-        let leaf = BlockLeaf::new(explorer_block_hash, block.height as u32, chainwork);
-        Ok(leaf)
+        let blocks: Vec<Block> = blocks
+            .iter()
+            .map(|block| {
+                let bytes: Vec<u8> = FromHex::from_hex(block).map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!("Error decoding block: {}", e))
+                })?;
+                bitcoincore_rpc_async::bitcoin::consensus::encode::deserialize(&bytes).map_err(
+                    |e| RiftSdkError::BitcoinRpcError(format!("Error deserializing block: {}", e)),
+                )
+            })
+            .collect::<Result<Vec<Block>, RiftSdkError>>()?;
+        Ok(blocks)
     }
 
     async fn get_leaves_from_block_range(

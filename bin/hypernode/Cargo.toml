@@ -20,6 +20,7 @@ checkpoint-downloader = { workspace = true }
 bitcoincore-rpc-async2 = { workspace = true }
 accumulators = { workspace = true }
 
+tokio-util = { workspace = true }
 tokio = { workspace = true }
 alloy = { workspace = true }
 futures-util = { workspace = true }

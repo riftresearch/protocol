@@ -1,9 +1,10 @@
 use super::*;
 use bitcoin_light_client_core::leaves::BlockLeaf;
-use data_engine::engine::DataEngine;
+use data_engine::engine::ContractDataEngine;
 use devnet::{EthDevnet, RiftDevnet};
 use rift_sdk::DatabaseLocation;
-use tokio::signal;
+use tokio::{signal, task::JoinSet};
+use tokio_util::task::TaskTracker;
 
 #[tokio::test]
 async fn test_data_engine_with_real_file() {
@@ -21,12 +22,14 @@ async fn test_data_engine_with_real_file() {
     deploy_block_number: u64,
     checkpoint_leaves: Vec<BlockLeaf>,
     */
-    let data_engine = DataEngine::start(
+    let mut join_set = JoinSet::new();
+    let data_engine = ContractDataEngine::start(
         &DatabaseLocation::Directory(temp_dir.path().to_str().unwrap().to_string()),
         eth_devnet.funded_provider,
-        eth_devnet.rift_exchange_contract.address().to_string(),
+        *eth_devnet.rift_exchange_contract.address(),
         deploy_block_number,
         vec![],
+        &mut join_set,
     )
     .await
     .unwrap();

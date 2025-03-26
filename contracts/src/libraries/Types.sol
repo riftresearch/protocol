@@ -40,7 +40,7 @@ library Types {
     struct ProposedSwap {
         uint256 swapIndex;
         bytes32 depositVaultCommitment;
-        bytes32 swapBitcoinBlockHash;
+        BlockLeaf swapBitcoinBlockLeaf;
         // number of Bitcoin block confirmations required after the swap transaction
         // (e.g., 1 = only the block containing the swap, 2 = swap block + 1 confirmation, etc.)
         uint8 confirmationBlocks;
@@ -208,8 +208,6 @@ library Types {
      */
     struct ReleaseLiquidityParams {
         Types.ProposedSwap swap;
-        uint256 swapBlockChainwork;
-        uint32 swapBlockHeight;
         bytes32[] bitcoinSwapBlockSiblings;
         bytes32[] bitcoinSwapBlockPeaks;
         Types.DepositVault utilizedVault;

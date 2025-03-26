@@ -16,9 +16,11 @@ use log::info;
 use sol_bindings::RiftExchange;
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::NamedTempFile;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
-use data_engine::engine::DataEngine;
+use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 
 use rift_sdk::{get_rift_program_hash, DatabaseLocation, WebsocketWalletProvider};
@@ -157,95 +159,223 @@ pub async fn deploy_contracts(
 pub struct RiftDevnet {
     pub bitcoin: BitcoinDevnet,
     pub ethereum: EthDevnet,
-    pub contract_data_engine: Arc<DataEngine>,
-    pub _data_engine_server: Option<DataEngineServer>,
+    pub contract_data_engine: Arc<ContractDataEngine>,
     pub checkpoint_file_path: String,
+    pub join_set: JoinSet<eyre::Result<()>>,
+    checkpoint_file_handle: NamedTempFile,
+    data_engine_server: Option<DataEngineServer>,
 }
 
 impl RiftDevnet {
-    /// The main entry point to set up a devnet with both sides plus data engine.
-    /// Returns `(RiftDevnet, funding_sats)`.
-    pub async fn setup(
-        interactive: bool,
-        // If not actually using bitcoin, we can only mine a single block instead of the standard 101
-        // which speeds up the setup
-        using_bitcoin: bool,
-        funded_evm_address: Option<String>,
-        funded_bitcoin_address: Option<String>,
-        fork_config: Option<ForkConfig>,
-        data_engine_db_location: DatabaseLocation,
-    ) -> Result<(Self, u64)> {
-        println!("Setting up RiftDevnet...");
+    pub fn builder() -> RiftDevnetBuilder {
+        RiftDevnetBuilder::default()
+    }
+}
+
+/// A builder for configuring a `RiftDevnet` instantiation.
+pub struct RiftDevnetBuilder {
+    interactive: bool,
+    using_bitcoin: bool,
+    funded_evm_address: Option<String>,
+    funded_bitcoin_address: Option<String>,
+    fork_config: Option<ForkConfig>,
+    data_engine_db_location: DatabaseLocation,
+}
+
+impl Default for RiftDevnetBuilder {
+    fn default() -> Self {
+        Self {
+            interactive: false,
+            using_bitcoin: true,
+            funded_evm_address: None,
+            funded_bitcoin_address: None,
+            fork_config: None,
+            data_engine_db_location: DatabaseLocation::InMemory,
+        }
+    }
+}
+
+impl RiftDevnetBuilder {
+    /// Create a new builder with all default values.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Toggle whether the devnet runs in "interactive" mode:
+    /// - If true, binds Anvil on a stable port and starts a local DataEngineServer.
+    /// - If false, does minimal ephemeral setup.
+    pub fn interactive(mut self, value: bool) -> Self {
+        self.interactive = value;
+        self
+    }
+
+    /// If `false`, the devnet only mines 1 Bitcoin block instead of 101,
+    /// avoiding full Bitcoin usage for speed. Defaults to `true`.
+    pub fn using_bitcoin(mut self, value: bool) -> Self {
+        self.using_bitcoin = value;
+        self
+    }
+
+    /// Optionally fund a given EVM address with Ether and tokens.
+    pub fn funded_evm_address<T: Into<String>>(mut self, address: T) -> Self {
+        self.funded_evm_address = Some(address.into());
+        self
+    }
+
+    /// Optionally fund a given Bitcoin address.
+    pub fn funded_bitcoin_address<T: Into<String>>(mut self, address: T) -> Self {
+        self.funded_bitcoin_address = Some(address.into());
+        self
+    }
+
+    /// Provide a fork configuration (RPC URL/block) if you want to fork a public chain.
+    pub fn fork_config(mut self, config: ForkConfig) -> Self {
+        self.fork_config = Some(config);
+        self
+    }
+
+    /// Location of the DataEngine’s database — defaults to in-memory.
+    pub fn data_engine_db_location(mut self, loc: DatabaseLocation) -> Self {
+        self.data_engine_db_location = loc;
+        self
+    }
+
+    /// Actually build the `RiftDevnet`, consuming this builder.
+    ///
+    /// Returns a tuple of:
+    ///   - The devnet instance
+    ///   - The number of satoshis funded to `funded_bitcoin_address` (if any)
+    pub async fn build(self) -> Result<(crate::RiftDevnet, u64)> {
+        // All logic is adapted from the old `RiftDevnet::setup`.
+        let Self {
+            interactive,
+            using_bitcoin,
+            funded_evm_address,
+            funded_bitcoin_address,
+            fork_config,
+            data_engine_db_location,
+        } = self;
+
+        let mut join_set = JoinSet::new();
+
         // 1) Bitcoin side
-        let (bitcoin_devnet, current_mined_height) =
-            BitcoinDevnet::setup(funded_bitcoin_address, using_bitcoin).await?;
+        let (bitcoin_devnet, current_mined_height) = crate::bitcoin_devnet::BitcoinDevnet::setup(
+            funded_bitcoin_address,
+            using_bitcoin,
+            &mut join_set,
+        )
+        .await?;
         let funding_sats = bitcoin_devnet.funded_sats;
 
-        // 2) Grab some additional info (like checkpoint leaves)
-        info!("Downloading checkpoint leaves from block range 0..101");
+        // 2) Collect Bitcoin checkpoint leaves
+        log::info!(
+            "Downloading checkpoint leaves from block range 0..{}",
+            current_mined_height
+        );
         let checkpoint_leaves = bitcoin_devnet
             .rpc_client
             .get_leaves_from_block_range(0, current_mined_height, 100, None)
             .await?;
 
+        // 3) Save compressed leaves to a named temp file
         let named_temp_file = tempfile::NamedTempFile::new()?;
         let output_file_path = named_temp_file.path().to_string_lossy().to_string();
-
         checkpoint_downloader::compress_checkpoint_leaves(
             &checkpoint_leaves,
             output_file_path.as_str(),
         )?;
+        let tip_block_leaf = checkpoint_leaves.last().unwrap().clone();
 
-        let tip_block_leaf = &checkpoint_leaves.last().unwrap().clone();
+        // 4) Create/seed DataEngine
+        log::info!("Seeding data engine with checkpoint leaves...");
+        let t = tokio::time::Instant::now();
+        let mut contract_data_engine = data_engine::engine::ContractDataEngine::seed(
+            &data_engine_db_location,
+            checkpoint_leaves,
+        )
+        .await?;
+        log::info!("Data engine seeded in {:?}", t.elapsed());
 
-        // 4) Data Engine
-        info!("Seeding data engine with checkpoint leaves...");
-        let t = Instant::now();
-        let mut contract_data_engine =
-            DataEngine::seed(&data_engine_db_location, checkpoint_leaves).await?;
-        info!("Data engine seeded in {:?}", t.elapsed());
-
-        // 3) Start EVM side
-        let circuit_verification_key_hash = get_rift_program_hash();
-        let (ethereum_devnet, deployment_block_number) = EthDevnet::setup(
+        // 5) Ethereum side
+        let circuit_verification_key_hash = rift_sdk::get_rift_program_hash();
+        let (ethereum_devnet, deployment_block_number) = crate::evm_devnet::EthDevnet::setup(
             circuit_verification_key_hash,
             contract_data_engine.get_mmr_root().await.unwrap(),
-            *tip_block_leaf,
+            tip_block_leaf,
             fork_config,
             interactive,
         )
         .await?;
 
-        // Start listening for on-chain events from RiftExchange
+        // 6) Start listening to on-chain events
         contract_data_engine
             .start_event_listener(
                 ethereum_devnet.funded_provider.clone(),
-                ethereum_devnet.rift_exchange_contract.address().to_string(),
+                *ethereum_devnet.rift_exchange_contract.address(),
                 deployment_block_number,
+                &mut join_set,
             )
             .await?;
 
-        let contract_data_engine = Arc::new(contract_data_engine);
+        // 7) Wait for initial sync
+        let contract_data_engine = std::sync::Arc::new(contract_data_engine);
         println!("Waiting for contract data engine initial sync...");
-        let t = Instant::now();
+        let t = tokio::time::Instant::now();
         contract_data_engine.wait_for_initial_sync().await?;
         println!(
             "Contract data engine initial sync complete in {:?}",
             t.elapsed()
         );
 
-        // Possibly run a local data-engine HTTP server
+        // 8) Possibly run data-engine server in interactive mode
         let contract_data_engine_server = if interactive {
-            let server = DataEngineServer::from_engine(
-                contract_data_engine.clone(),
-                CONTRACT_DATA_ENGINE_SERVER_PORT,
+            Some(
+                data_engine_server::DataEngineServer::from_engine(
+                    contract_data_engine.clone(),
+                    crate::CONTRACT_DATA_ENGINE_SERVER_PORT,
+                    &mut join_set,
+                )
+                .await?,
             )
-            .await?;
-            Some(server)
         } else {
             None
         };
 
+        // 9) Fund optional EVM address with Ether + tokens
+        if let Some(addr_str) = funded_evm_address {
+            use alloy::primitives::Address;
+            use std::str::FromStr;
+            let address = Address::from_str(&addr_str)?;
+
+            // ~10 ETH
+            ethereum_devnet
+                .fund_eth_address(
+                    address,
+                    alloy::primitives::U256::from_str("10000000000000000000")?,
+                )
+                .await?;
+
+            // ~10 tokens with 18 decimals
+            ethereum_devnet
+                .mint_token(
+                    address,
+                    alloy::primitives::U256::from_str("10000000000000000000")?,
+                )
+                .await?;
+
+            // Debugging: check funded balances
+            let eth_balance = ethereum_devnet.funded_provider.get_balance(address).await?;
+            println!("Ether Balance of {} => {:?}", addr_str, eth_balance);
+            let token_balance = ethereum_devnet
+                .token_contract
+                .balanceOf(address)
+                .call()
+                .await?
+                ._0;
+            println!("Token Balance of {} => {:?}", addr_str, token_balance);
+        }
+
+        // 10) Log interactive info
         if interactive {
             println!("---RIFT DEVNET---");
             println!(
@@ -262,7 +392,7 @@ impl RiftDevnet {
             );
             println!(
                 "Data Engine HTTP URL:  http://0.0.0.0:{}",
-                CONTRACT_DATA_ENGINE_SERVER_PORT
+                crate::CONTRACT_DATA_ENGINE_SERVER_PORT
             );
             println!(
                 "Bitcoin RPC URL:       {}",
@@ -270,7 +400,7 @@ impl RiftDevnet {
             );
             println!(
                 "{} Address:  {}",
-                TOKEN_SYMBOL,
+                crate::TOKEN_SYMBOL,
                 ethereum_devnet.token_contract.address()
             );
             println!(
@@ -281,41 +411,15 @@ impl RiftDevnet {
             println!("---RIFT DEVNET---");
         }
 
-        // If we want to fund an EVM address
-        if let Some(addr_str) = funded_evm_address {
-            use alloy::primitives::Address;
-            use std::str::FromStr;
-
-            let address = Address::from_str(&addr_str)?;
-            // Fund with ~100 ETH
-            ethereum_devnet
-                .fund_eth_address(address, U256::from_str("10000000000000000000")?)
-                .await?;
-
-            // Fund with e.g. 1_000_000 tokens
-            ethereum_devnet
-                .mint_token(address, U256::from_str("10000000000000000000")?)
-                .await?;
-
-            // get the balance of the funded address
-            let balance = ethereum_devnet.funded_provider.get_balance(address).await?;
-            println!("Ether Balance: {:?}", balance);
-            let token_balance = ethereum_devnet
-                .token_contract
-                .balanceOf(address)
-                .call()
-                .await?
-                ._0;
-            println!("Token Balance: {:?}", token_balance);
-        }
-
-        // Build final devnet
-        let devnet = Self {
+        // 11) Return the final devnet
+        let devnet = crate::RiftDevnet {
             bitcoin: bitcoin_devnet,
             ethereum: ethereum_devnet,
             contract_data_engine,
-            _data_engine_server: contract_data_engine_server,
             checkpoint_file_path: output_file_path,
+            join_set,
+            data_engine_server: contract_data_engine_server,
+            checkpoint_file_handle: named_temp_file,
         };
 
         Ok((devnet, funding_sats))

@@ -16,8 +16,9 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         oneshot, Mutex,
     },
-    task::JoinHandle,
+    task::{JoinHandle, JoinSet},
 };
+use tokio_util::task::TaskTracker;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -78,23 +79,23 @@ struct Request {
 #[derive(Debug)]
 pub struct TransactionBroadcaster {
     request_sender: UnboundedSender<Request>,
-    pub handle: JoinHandle<eyre::Result<()>>,
 }
 
 impl TransactionBroadcaster {
-    pub fn new(wallet_rpc: Arc<WebsocketWalletProvider>, debug_rpc_url: String) -> Self {
+    pub fn new(
+        wallet_rpc: Arc<WebsocketWalletProvider>,
+        debug_rpc_url: String,
+        join_set: &mut JoinSet<eyre::Result<()>>,
+    ) -> Self {
         // Channel is important, here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
         let (request_sender, request_receiver) = unbounded_channel();
 
         // This never exits even if channel is empty, only if channel breaks/closes
-        let handle = tokio::spawn(async move {
-            Self::consume_queue(wallet_rpc, request_receiver, debug_rpc_url).await
+        join_set.spawn(async move {
+            Self::broadcast_queue(wallet_rpc, request_receiver, debug_rpc_url).await
         });
 
-        Self {
-            request_sender,
-            handle,
-        }
+        Self { request_sender }
     }
 
     // 1. Create a new transaction request
@@ -142,7 +143,7 @@ impl TransactionBroadcaster {
     //    - If successful: *continue*
     //    - For any other errors: Return the specific error decoded from the receipt
     // Open question, how to type safely return the receipt?
-    async fn consume_queue(
+    async fn broadcast_queue(
         wallet_rpc: Arc<WebsocketWalletProvider>,
         mut request_receiver: UnboundedReceiver<Request>,
         debug_rpc_url: String,

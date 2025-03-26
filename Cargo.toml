@@ -25,6 +25,13 @@ rust-version = "1.82.0"
 edition = "2021"
 exclude = [".github/"]
 
+# Ideally, threads propogate their errors properly, but this is a safe fallback in the case of a panic
+[profile.release]
+panic = 'abort'
+
+[profile.dev]
+panic = 'abort'
+
 
 [workspace.dependencies]
 # Internal dependencies
@@ -65,7 +72,7 @@ prettytable = "0.10"
 serde = { version = "1.0.200", features = ["derive"] }
 serde_json = { version = "1.0", features = ["alloc"] }
 thiserror = "1.0.63"
-tracing = "0.1"
+tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 tokio-rusqlite = { version = "0.6.0", features = ["bundled"] }

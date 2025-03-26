@@ -10,7 +10,8 @@ use std::time::Instant;
 use clap::Parser;
 use prettytable::{row, Table};
 use rift_sdk::indexed_mmr::IndexedMMR;
-use rift_sdk::{format_duration, DatabaseLocation, Proof, ProofGeneratorType, RiftProofGenerator};
+use rift_sdk::proof_generator::{format_duration, Proof, ProofGeneratorType, RiftProofGenerator};
+use rift_sdk::DatabaseLocation;
 
 use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS};
 
@@ -318,8 +319,6 @@ async fn prove_bch_overwrite(
     // 3) Execute or prove
     prove_chain_transition(chain_transition, benchmark_type, proof_generator).await
 }
-
-// Optionally, you could also add a simpler “extend from genesis” scenario or others.
 
 #[tokio::main]
 async fn main() {

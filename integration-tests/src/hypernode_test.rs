@@ -1,79 +1,78 @@
-use std::sync::Arc;
-
-use super::*;
 use alloy::{
-    eips::BlockNumberOrTag,
-    primitives::{Address, U256},
-    providers::Provider,
+    network::EthereumWallet,
+    primitives::{utils::format_units, U256},
+    providers::{ProviderBuilder, WsConnect},
+    signers::local::LocalSigner,
+    sol_types::SolEvent,
 };
-use devnet::{RiftDevnet, RiftExchangeWebsocket};
-use eyre::OptionExt;
-use hypernode::{
-    txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult},
-    HypernodeArgs,
+use bitcoin::{
+    consensus::{Decodable, Encodable},
+    hashes::Hash,
+    Amount, Transaction,
 };
-use rift_sdk::{create_websocket_wallet_provider, right_pad_to_25_bytes, DatabaseLocation};
-use sol_bindings::{
-    RiftExchange,
-    Types::{BlockLeaf as ContractBlockLeaf, DepositLiquidityParams},
+use bitcoincore_rpc_async::RpcApi;
+use devnet::RiftDevnet;
+use hypernode::{HypernodeArgs, Provider};
+use rift_core::vaults::hash_deposit_vault;
+use rift_sdk::{
+    proof_generator::{ProofGeneratorType, RiftProofGenerator},
+    right_pad_to_25_bytes,
+    txn_builder::{self, P2WPKHBitcoinWallet},
+    DatabaseLocation,
 };
-use test_utils::create_funded_account;
+use sol_bindings::{RiftExchange, Types::DepositLiquidityParams};
+use tokio::signal::{self, unix::signal};
+use tracing_subscriber::EnvFilter;
 
-async fn setup_deposit_txn() -> (
-    devnet::RiftDevnet,
-    Arc<RiftExchangeWebsocket>,
-    DepositLiquidityParams,
-    Address,
-    TransactionBroadcaster,
-) {
-    let (maker_secret_bytes, maker_evm_wallet, maker_evm_address, maker_btc_wallet) =
-        create_funded_account(1);
-    let maker_evm_address_str = maker_evm_address.to_string();
-    let (devnet, deploy_block_number) = RiftDevnet::setup(
-        false,
-        false,
-        Some(maker_evm_address_str),
-        None,
-        None,
-        DatabaseLocation::InMemory,
-    )
-    .await
-    .unwrap();
+use crate::test_utils::{create_deposit, MultichainAccount};
 
-    let maker_evm_provider = Arc::new(
-        create_websocket_wallet_provider(
-            devnet.ethereum.anvil.ws_endpoint_url().as_str(),
-            maker_secret_bytes,
-        )
+#[tokio::test]
+async fn test_hypernode_simple_swap() {
+    // ---1) Spin up devnet with default config---
+    //    Interactive = false => no local HTTP servers / Docker containers
+    //    No pre-funded EVM or Bitcoin address => we can do that ourselves below
+
+    let maker = MultichainAccount::new(1);
+    let taker = MultichainAccount::new(2);
+
+    println!(
+        "Maker BTC P2WPKH: {:?}",
+        maker.bitcoin_wallet.get_p2wpkh_script().to_hex_string()
+    );
+    println!(
+        "Taker BTC P2WPKH: {:?}",
+        taker.bitcoin_wallet.get_p2wpkh_script().to_hex_string()
+    );
+    println!("Maker BTC wallet: {:?}", maker.bitcoin_wallet.address);
+    println!("Taker BTC wallet: {:?}", taker.bitcoin_wallet.address);
+    println!("Maker EVM wallet: {:?}", maker.ethereum_address);
+    println!("Taker EVM wallet: {:?}", taker.ethereum_address);
+
+    // fund maker evm wallet, and taker btc wallet
+    let (devnet, _funded_sats) = RiftDevnet::builder()
+        .using_bitcoin(true)
+        .funded_evm_address(maker.ethereum_address.to_string())
+        .data_engine_db_location(DatabaseLocation::InMemory)
+        .build()
         .await
-        .unwrap(),
-    );
+        .unwrap();
 
-    let hypernode_args = HypernodeArgs {
-        evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
-        btc_rpc: devnet.bitcoin.regtest.rpc_url(),
-        private_key: hex::encode(maker_secret_bytes),
-        checkpoint_file: devnet.checkpoint_file_path.clone(),
-        database_location: DatabaseLocation::InMemory,
-        rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
-        deploy_block_number,
-        btc_batch_rpc_size: 100,
-        mock_proof: false,
-    };
+    let maker_evm_provider = ProviderBuilder::new()
+        .with_recommended_fillers()
+        .wallet(maker.ethereum_wallet)
+        .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
+        .await
+        .expect("Failed to create maker evm provider");
 
-    let transaction_broadcaster = hypernode::txn_broadcast::TransactionBroadcaster::new(
-        maker_evm_provider.clone(),
-        devnet.ethereum.anvil.endpoint().to_string(),
-    );
-
+    // Quick references
     let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();
     let token_contract = devnet.ethereum.token_contract.clone();
 
     // ---2) "Maker" address gets some ERC20 to deposit---
 
-    println!("Maker address: {:?}", maker_evm_address);
+    println!("Maker address: {:?}", maker.ethereum_address);
 
-    let deposit_amount = U256::from(1_000_000u128); //.01 wrapped bitcoin
+    let deposit_amount = U256::from(100_000_000u128); //1 wrapped bitcoin
     let expected_sats = 100_000_000u64; // The maker wants 1 bitcoin for their 1 million tokens (1 BTC = 1 cbBTC token)
 
     let decimals = devnet
@@ -85,8 +84,13 @@ async fn setup_deposit_txn() -> (
         .unwrap()
         ._0;
 
+    println!(
+        "Approving {} tokens to maker",
+        format_units(deposit_amount, decimals).unwrap()
+    );
+
     // Approve the RiftExchange to spend the maker's tokens
-    let approve_call = token_contract.approve(*rift_exchange.address(), U256::MAX);
+    let approve_call = token_contract.approve(*rift_exchange.address(), deposit_amount);
     maker_evm_provider
         .send_transaction(approve_call.into_transaction_request())
         .await
@@ -133,237 +137,209 @@ async fn setup_deposit_txn() -> (
     println!("Light client height (queried): {:?}", light_client_height);
     println!("Mmr root (queried): {:?}", mmr_root);
 
-    let maker_btc_wallet_script_pubkey = maker_btc_wallet.get_p2wpkh_script();
+    let maker_btc_wallet_script_pubkey = maker.bitcoin_wallet.get_p2wpkh_script();
 
     let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
 
     let deposit_params = DepositLiquidityParams {
-        depositOwnerAddress: maker_evm_address,
-        specifiedPayoutAddress: maker_evm_address,
+        depositOwnerAddress: maker.ethereum_address,
+        specifiedPayoutAddress: taker.ethereum_address,
         depositAmount: deposit_amount,
         expectedSats: expected_sats,
         btcPayoutScriptPubKey: padded_script.into(),
         depositSalt: [0x44; 32].into(), // this can be anything
         confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
         // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: ContractBlockLeaf {
-            blockHash: safe_leaf.blockHash,
-            height: safe_leaf.height,
-            cumulativeChainwork: safe_leaf.cumulativeChainwork,
-        },
+        safeBlockLeaf: safe_leaf,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };
     println!("Deposit params: {:?}", deposit_params);
-    (
-        devnet,
-        rift_exchange,
-        deposit_params,
-        maker_evm_address,
-        transaction_broadcaster,
+
+    let deposit_call = rift_exchange.depositLiquidity(deposit_params);
+
+    let deposit_calldata = deposit_call.calldata();
+
+    let deposit_transaction_request = deposit_call.clone().into_transaction_request();
+
+    let deposit_tx = maker_evm_provider
+        .send_transaction(deposit_transaction_request)
+        .await;
+
+    let receipt = match deposit_tx {
+        Ok(tx) => {
+            let receipt = tx.get_receipt().await.expect("No deposit tx receipt");
+            println!("Deposit receipt: {:?}", receipt);
+            receipt
+        }
+        Err(tx_error) => {
+            println!("Deposit error: {:?}", tx_error);
+            let block_height = devnet
+                .ethereum
+                .funded_provider
+                .get_block_number()
+                .await
+                .map_err(|e| eyre::eyre!(e))
+                .unwrap();
+
+            let data = hex::encode(deposit_calldata);
+            let from = maker.ethereum_address.to_string();
+            let to = rift_exchange.address().to_string();
+            println!(
+                    "To debug failed proof broadcast run: cast call {} --from {} --data {} --trace --block {} --rpc-url {}",
+                    to,
+                    from,
+                    data,
+                    block_height,
+                    devnet.ethereum.anvil.endpoint()
+                );
+            // contorl c pause here
+            signal::ctrl_c().await.unwrap();
+            panic!("Deposit failed");
+        }
+    };
+
+    let receipt_logs = receipt.inner.logs();
+    // this will have only a VaultsUpdated log
+    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+        &receipt_logs
+            .iter()
+            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .unwrap()
+            .inner,
+        false,
     )
-}
+    .unwrap();
 
-#[tokio::test]
-async fn test_txn_broadcast_success() {
-    // devnet needs to be kept in scope so that the chains are kept alive
-    let (_devnet, rift_exchange, deposit_params, maker_evm_address, transaction_broadcaster) =
-        setup_deposit_txn().await;
+    let new_vault = &vaults_updated_log.data.vaults[0];
+    let vault_commitment = hash_deposit_vault(&new_vault);
 
-    let deposit_call = rift_exchange.depositLiquidity(deposit_params);
+    println!("Vault commitment: {:?}", hex::encode(vault_commitment));
 
-    let deposit_calldata = deposit_call.calldata();
+    println!("Created vault: {:?}", new_vault);
 
-    let deposit_transaction_request = deposit_call
-        .clone()
-        .from(maker_evm_address)
-        .into_transaction_request();
+    // send double what we need so we have plenty to cover the fee
+    let funding_amount = 200_000_000u64;
 
-    let response = transaction_broadcaster
-        .broadcast_transaction(
-            deposit_calldata.clone(),
-            deposit_transaction_request,
-            PreflightCheck::Simulate,
-        )
+    // now send some bitcoin to the taker's btc address so we can get a UTXO to spend
+    let funding_utxo = devnet
+        .bitcoin
+        .deal_bitcoin(
+            taker.bitcoin_wallet.address.clone(),
+            Amount::from_sat(funding_amount),
+        ) // 1.5 bitcoin
         .await
         .unwrap();
 
-    assert!(response.is_success(), "Transaction failed: {:?}", response);
-    /*
-    match response {
-        TransactionExecutionResult::Success(receipt) => {
-            println!("Transaction successful: {:?}", receipt);
-        }
-        TransactionExecutionResult::Revert(error) => {
-            let decoded_error = error
-                .error_payload
-                .as_decoded_error::<RiftExchange::RiftExchangeErrors>(false)
-                .ok_or_eyre("Could not decode error")
-                .unwrap();
-            println!("Transaction reverted: {:?}", decoded_error);
-        }
-        TransactionExecutionResult::UnknownError(error) => {
-            println!("Transaction unknown error: {:?}", error);
-        }
-        TransactionExecutionResult::InvalidRequest(error) => {
-            println!("Transaction invalid request: {:?}", error);
-        }
+    let txid = funding_utxo.txid;
+    let wallet = taker.bitcoin_wallet;
+    let fee_sats = 1000;
+    let transaction = funding_utxo.transaction().unwrap();
 
-    }
-    */
-}
-
-#[tokio::test]
-async fn test_txn_broadcast_handles_revert_in_sim() {
-    // Setup is identical to test_txn_broadcast_success
-    let (_devnet, rift_exchange, mut deposit_params, maker_evm_address, transaction_broadcaster) =
-        setup_deposit_txn().await;
-
-    // Modify deposit params to have insufficient confirmation blocks
-    deposit_params.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
-
-    let deposit_call = rift_exchange.depositLiquidity(deposit_params);
-    let deposit_calldata = deposit_call.calldata();
-    let deposit_transaction_request = deposit_call
-        .clone()
-        .from(maker_evm_address)
-        .into_transaction_request();
-
-    let response = transaction_broadcaster
-        .broadcast_transaction(
-            deposit_calldata.clone(),
-            deposit_transaction_request,
-            PreflightCheck::Simulate,
-        )
-        .await
+    // if the predicate is true, we can spend it
+    let txvout = transaction
+        .output
+        .iter()
+        .enumerate()
+        .find(|(_, output)| {
+            output.script_pubkey.as_bytes() == wallet.get_p2wpkh_script().as_bytes()
+                && output.value == funding_amount
+        })
+        .map(|(index, _)| index as u32)
         .unwrap();
 
-    // Assert that the transaction reverted with NotEnoughConfirmationBlocks error
-    match response {
-        TransactionExecutionResult::Revert(error) => {
-            let decoded_error = error
-                .error_payload
-                .as_decoded_error::<RiftExchange::RiftExchangeErrors>(false)
-                .unwrap();
-            println!("Decoded error: {:?}", decoded_error);
-            assert!(matches!(
-                decoded_error,
-                RiftExchange::RiftExchangeErrors::NotEnoughConfirmationBlocks(_)
-            ));
-        }
-        _ => panic!("Expected transaction to revert with NotEnoughConfirmationBlocks error"),
-    }
-}
-#[tokio::test]
-async fn test_txn_broadcast_handles_revert_in_send() {
-    // Setup is identical to test_txn_broadcast_success
-    let (_devnet, rift_exchange, mut deposit_params, maker_evm_address, transaction_broadcaster) =
-        setup_deposit_txn().await;
+    println!("Funding Transaction: {:?}", transaction);
 
-    // Modify deposit params to have insufficient confirmation blocks
-    deposit_params.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
-
-    let deposit_call = rift_exchange.depositLiquidity(deposit_params);
-    let deposit_calldata = deposit_call.calldata();
-    let deposit_transaction_request = deposit_call
-        .clone()
-        .from(maker_evm_address)
-        .into_transaction_request();
-
-    let response = transaction_broadcaster
-        .broadcast_transaction(
-            deposit_calldata.clone(),
-            deposit_transaction_request,
-            PreflightCheck::None,
+    println!(
+        "Funding UTXO: {:?}",
+        hex::encode(
+            bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize::serialize(
+                &transaction
+            )
         )
+    );
+
+    let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&transaction);
+    let mut reader = serialized.as_slice();
+    let canon_bitcoin_tx = Transaction::consensus_decode_from_finite_reader(&mut reader).unwrap();
+    let canon_txid = canon_bitcoin_tx.compute_txid();
+
+    // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
+    let payment_tx = txn_builder::build_rift_payment_transaction(
+        &new_vault,
+        &canon_txid,
+        &canon_bitcoin_tx,
+        txvout,
+        &wallet,
+        fee_sats,
+    )
+    .unwrap();
+
+    let payment_tx_serialized = &mut Vec::new();
+    payment_tx.consensus_encode(payment_tx_serialized).unwrap();
+
+    let payment_tx_serialized = payment_tx_serialized.as_slice();
+
+    let current_block_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
+
+    // broadcast it
+    let broadcast_tx = devnet
+        .bitcoin
+        .rpc_client
+        .send_raw_transaction(payment_tx_serialized)
         .await
         .unwrap();
+    println!("Bitcoin tx sent");
 
-    // Assert that the transaction reverted with NotEnoughConfirmationBlocks error
-    match response {
-        TransactionExecutionResult::Revert(error) => {
-            let decoded_error = error
-                .error_payload
-                .as_decoded_error::<RiftExchange::RiftExchangeErrors>(false)
-                .unwrap();
-            println!("Decoded error: {:?}", decoded_error);
-            assert!(matches!(
-                decoded_error,
-                RiftExchange::RiftExchangeErrors::NotEnoughConfirmationBlocks(_)
-            ));
-        }
-        _ => panic!("Expected transaction to revert with NotEnoughConfirmationBlocks error"),
-    }
-}
+    let payment_tx_id = payment_tx.compute_txid();
+    let bitcoin_txid: [u8; 32] = payment_tx_id.as_raw_hash().to_byte_array();
 
-/*
-// TODO: Ensure txn broadcast is handling nonce errors
-#[tokio::test]
-async fn test_txn_broadcast_handles_nonce_error() {
-    // Setup is identical to test_txn_broadcast_success
-    let (devnet, rift_exchange, deposit_params, maker_evm_address, transaction_broadcaster) =
-        setup_deposit_txn().await;
+    let swap_block_height = current_block_height + 1;
 
-    let deposit_call = rift_exchange.depositLiquidity(deposit_params.clone());
-    let deposit_calldata = deposit_call.calldata();
+    // now mine enough blocks for confirmations (1 + 1 additional)
+    devnet.bitcoin.mine_blocks(2).await.unwrap();
 
-    let nonce = devnet
+    let hypernode_account = MultichainAccount::new(2);
+
+    devnet
         .ethereum
-        .funded_provider
-        .get_transaction_count(maker_evm_address)
+        .fund_eth_address(hypernode_account.ethereum_address, U256::MAX)
         .await
         .unwrap();
 
-    let mut deposit_transaction_request = deposit_call
-        .clone()
-        .from(maker_evm_address)
-        .into_transaction_request();
-    deposit_transaction_request.nonce = Some(nonce);
-
-    // Create a second identical transaction request
-    // This should cause a nonce error since we're trying to use the same nonce
-    let second_deposit_call = rift_exchange.depositLiquidity(deposit_params);
-    let second_deposit_calldata = second_deposit_call.calldata();
-    let mut second_deposit_transaction_request = second_deposit_call
-        .clone()
-        .from(maker_evm_address)
-        .into_transaction_request();
-    second_deposit_transaction_request.nonce = Some(nonce + 1);
-
-    println!("Sending first transaction");
-    // Send first transaction
-    let first_response = transaction_broadcaster
-        .broadcast_transaction(
-            deposit_calldata.clone(),
-            deposit_transaction_request,
-            PreflightCheck::None,
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
-        .await
-        .unwrap();
-    println!("First response: {:?}", first_response);
+        .init();
 
-    // Immediately try to send second transaction with same nonce
-    let second_response = transaction_broadcaster
-        .broadcast_transaction(
-            second_deposit_calldata.clone(),
-            second_deposit_transaction_request,
-            PreflightCheck::None,
-        )
-        .await
-        .unwrap();
-    println!("Second response: {:?}", second_response);
-    // First transaction should succeed
-    assert!(first_response.is_success());
+    let rpc_url_with_cookie = devnet.bitcoin.rpc_url_with_cookie.clone();
+    let hypernode_handle = tokio::spawn(async move {
+        let hypernode_args = HypernodeArgs {
+            evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
+            btc_rpc: rpc_url_with_cookie.clone(),
+            private_key: hex::encode(hypernode_account.secret_bytes),
+            checkpoint_file: devnet.checkpoint_file_path.clone(),
+            database_location: DatabaseLocation::InMemory,
+            rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
+            deploy_block_number: 0,
+            btc_batch_rpc_size: 100,
+            proof_generator: ProofGeneratorType::Execute,
+        };
+        hypernode::run(hypernode_args)
+            .await
+            .expect("Hypernode crashed");
+    });
 
-    // Second transaction should fail with a nonce error
-    match second_response {
-        TransactionExecutionResult::InvalidRequest(error) => {
-            assert!(error.contains("nonce"), "Error should mention nonce issue");
-        }
-        _ => {
-            tokio::signal::ctrl_c().await.unwrap();
-            panic!("Expected transaction to fail with nonce error");
-        }
-    }
+    println!(
+        "Hypernode Bitcoin RPC URL: {:?}",
+        devnet.bitcoin.rpc_url_with_cookie
+    );
+
+    // Add some code to subscribe to new events in the data engine
+    // sleep for 15 seconds
+    tokio::time::sleep(std::time::Duration::from_secs(1000)).await;
+
+    // stop the hypernode
+    hypernode_handle.abort();
 }
-*/

@@ -307,12 +307,6 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let parent = &leaves[0];
         let parent_hash = parent.hash::<H>();
 
-        println!("[in append_or_reorg_based_on_parent] leaves: {:?}", leaves);
-        println!(
-            "[in append_or_reorg_based_on_parent] parent_hash: {:?}",
-            hex::encode(parent_hash)
-        );
-
         let new_leaves = &leaves[1..];
 
         match self.get_leaf_by_leaf_hash(&parent_hash).await? {

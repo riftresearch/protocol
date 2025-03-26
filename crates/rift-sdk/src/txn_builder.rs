@@ -25,7 +25,7 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct P2WPKHBitcoinWallet {
     pub secret_key: SecretKey,
     pub public_key: String,

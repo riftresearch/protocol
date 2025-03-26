@@ -10,7 +10,7 @@ use alloy::rpc::types::BlockTransactionsKind;
 use alloy::sol_types::SolValue;
 use bitcoincore_rpc_async::RpcApi;
 use clap::Parser;
-use data_engine::engine::DataEngine;
+use data_engine::engine::ContractDataEngine;
 use eyre::{eyre, Result};
 use mempool_electrs::{TxStatus, Utxo};
 use rift_core::vaults::hash_deposit_vault;
@@ -22,6 +22,7 @@ use rift_sdk::{
 };
 use sol_bindings::Types::DepositVault;
 use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tokio_rusqlite::{params, Connection};
 use tracing::{error, info};
@@ -96,7 +97,7 @@ struct MarketMaker {
     bitcoin_client: Arc<AsyncBitcoinClient>,
     wallet: P2WPKHBitcoinWallet,
     eth_address: Address,
-    data_engine: DataEngine,
+    data_engine: ContractDataEngine,
     config: MakerConfig,
     mempool_electrs_client: Arc<MempoolElectrsClient>,
     provider: Arc<dyn Provider<PubSubFrontend>>,
@@ -131,13 +132,17 @@ impl MarketMaker {
             Arc::new(create_websocket_provider(&config.evm_ws_url).await?);
         let checkpoint_leaves =
             checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
+        let mut join_set = JoinSet::new();
+        let rift_exchange_address = Address::from_str(&config.rift_contract_address)
+            .map_err(|e| eyre!("Invalid Rift contract address: {}", e))?;
 
-        let data_engine = DataEngine::start(
+        let data_engine = ContractDataEngine::start(
             &config.db_location,
             provider.clone(),
-            config.rift_contract_address,
+            rift_exchange_address,
             config.rift_deployment_block_number,
             checkpoint_leaves,
+            &mut join_set,
         )
         .await?;
 

@@ -5,30 +5,377 @@ use alloy::{
 };
 use rift_sdk::txn_builder::P2WPKHBitcoinWallet;
 
-pub fn create_funded_account(
-    derivation_salt: u32,
-) -> ([u8; 32], EthereumWallet, Address, P2WPKHBitcoinWallet) {
-    let maker_secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
+use futures::channel::oneshot;
+use std::{
+    collections::HashMap,
+    fmt::Write,
+    sync::{Arc, Mutex},
+};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::{
+    layer::{Context, Layer, SubscriberExt},
+    util::SubscriberInitExt,
+};
 
-    let maker_evm_wallet =
-        EthereumWallet::new(LocalSigner::from_bytes(&maker_secret_bytes.into()).unwrap());
+use bitcoincore_rpc_async::RpcApi;
 
-    let maker_evm_address = maker_evm_wallet.default_signer().address();
+use alloy::{eips::BlockNumberOrTag, primitives::U256, providers::Provider};
+use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
+use devnet::{RiftDevnet, RiftExchangeWebsocket};
+use eyre::OptionExt;
+use hypernode::{
+    txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult},
+    HypernodeArgs,
+};
+use rift_sdk::{
+    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, right_pad_to_25_bytes,
+    txn_builder, DatabaseLocation,
+};
+use sol_bindings::{
+    RiftExchange,
+    Types::{BlockLeaf as ContractBlockLeaf, DepositLiquidityParams, DepositVault},
+};
 
-    let maker_btc_wallet =
-        P2WPKHBitcoinWallet::from_secret_bytes(&maker_secret_bytes, ::bitcoin::Network::Regtest);
+/// Holds the components of a multichain account including secret bytes and wallets.
+#[derive(Debug)]
+pub struct MultichainAccount {
+    /// The raw secret bytes used to derive wallets
+    pub secret_bytes: [u8; 32],
+    /// The Ethereum wallet derived from the secret
+    pub ethereum_wallet: EthereumWallet,
+    /// The Ethereum address associated with the wallet
+    pub ethereum_address: Address,
+    /// The Bitcoin wallet derived from the secret
+    pub bitcoin_wallet: P2WPKHBitcoinWallet,
+}
 
-    println!(
-        "BTC P2WPKH: {:?}",
-        maker_btc_wallet.get_p2wpkh_script().to_hex_string()
+impl MultichainAccount {
+    /// Creates a new multichain account from the given derivation salt
+    pub fn new(derivation_salt: u32) -> Self {
+        let secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
+
+        let ethereum_wallet =
+            EthereumWallet::new(LocalSigner::from_bytes(&secret_bytes.into()).unwrap());
+
+        let ethereum_address = ethereum_wallet.default_signer().address();
+
+        let bitcoin_wallet =
+            P2WPKHBitcoinWallet::from_secret_bytes(&secret_bytes, ::bitcoin::Network::Regtest);
+
+        Self {
+            secret_bytes,
+            ethereum_wallet,
+            ethereum_address,
+            bitcoin_wallet,
+        }
+    }
+
+    /// Creates a new multichain account with the Bitcoin network explicitly specified
+    pub fn with_network(derivation_salt: u32, network: ::bitcoin::Network) -> Self {
+        let secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
+
+        let ethereum_wallet =
+            EthereumWallet::new(LocalSigner::from_bytes(&secret_bytes.into()).unwrap());
+
+        let ethereum_address = ethereum_wallet.default_signer().address();
+
+        let bitcoin_wallet = P2WPKHBitcoinWallet::from_secret_bytes(&secret_bytes, network);
+
+        Self {
+            secret_bytes,
+            ethereum_wallet,
+            ethereum_address,
+            bitcoin_wallet,
+        }
+    }
+}
+
+pub async fn create_deposit() -> (
+    devnet::RiftDevnet,
+    Arc<RiftExchangeWebsocket>,
+    DepositLiquidityParams,
+    MultichainAccount,
+    TransactionBroadcaster,
+) {
+    let maker = MultichainAccount::new(1);
+    let (mut devnet, deploy_block_number) = RiftDevnet::builder()
+        .using_bitcoin(true)
+        .funded_evm_address(maker.ethereum_address.to_string())
+        .data_engine_db_location(DatabaseLocation::InMemory)
+        .build()
+        .await
+        .unwrap();
+
+    let maker_evm_provider = Arc::new(
+        create_websocket_wallet_provider(
+            devnet.ethereum.anvil.ws_endpoint_url().as_str(),
+            maker.secret_bytes,
+        )
+        .await
+        .unwrap(),
     );
-    println!("BTC wallet: {:?}", maker_btc_wallet.address);
-    println!("EVM wallet: {:?}", maker_evm_address);
 
+    let transaction_broadcaster = hypernode::txn_broadcast::TransactionBroadcaster::new(
+        maker_evm_provider.clone(),
+        devnet.ethereum.anvil.endpoint().to_string(),
+        &mut devnet.join_set,
+    );
+
+    let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();
+    let token_contract = devnet.ethereum.token_contract.clone();
+
+    // ---2) "Maker" address gets some ERC20 to deposit---
+
+    println!("Maker address: {:?}", maker.ethereum_address);
+
+    let deposit_amount = U256::from(1_000_000u128); //.01 wrapped bitcoin
+    let expected_sats = 100_000_000u64; // The maker wants 1 bitcoin for their 1 million tokens (1 BTC = 1 cbBTC token)
+
+    let decimals = devnet
+        .ethereum
+        .token_contract
+        .decimals()
+        .call()
+        .await
+        .unwrap()
+        ._0;
+
+    // Approve the RiftExchange to spend the maker's tokens
+    let approve_call = token_contract.approve(*rift_exchange.address(), U256::MAX);
+    maker_evm_provider
+        .send_transaction(approve_call.into_transaction_request())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    println!("Approved");
+
+    // ---3) Maker deposits liquidity into RiftExchange---
+    // We'll fill in some "fake" deposit parameters.
+    // This is just an example; in real usage you'd call e.g. depositLiquidity(...) with your chosen params.
+
+    // We can skip real MMR proofs; for dev/test, we can pass dummy MMR proof data or a known "safe block."
+    // For example, we'll craft a dummy "BlockLeaf" that the contract won't reject:
+    let (safe_leaf, safe_siblings, safe_peaks) =
+        devnet.contract_data_engine.get_tip_proof().await.unwrap();
+
+    let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
+
+    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
+
+    println!("Safe leaf tip (data engine): {:?}", safe_leaf);
+    println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
+
+    let light_client_height = devnet
+        .ethereum
+        .rift_exchange_contract
+        .getLightClientHeight()
+        .call()
+        .await
+        .unwrap()
+        ._0;
+
+    let mmr_root = devnet
+        .ethereum
+        .rift_exchange_contract
+        .mmrRoot()
+        .call()
+        .await
+        .unwrap()
+        ._0;
+    println!("Light client height (queried): {:?}", light_client_height);
+    println!("Mmr root (queried): {:?}", mmr_root);
+
+    let maker_btc_wallet_script_pubkey = maker.bitcoin_wallet.get_p2wpkh_script();
+
+    let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
+
+    let deposit_params = DepositLiquidityParams {
+        depositOwnerAddress: maker.ethereum_address,
+        specifiedPayoutAddress: maker.ethereum_address,
+        depositAmount: deposit_amount,
+        expectedSats: expected_sats,
+        btcPayoutScriptPubKey: padded_script.into(),
+        depositSalt: [0x44; 32].into(), // this can be anything
+        confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
+        // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
+        safeBlockLeaf: ContractBlockLeaf {
+            blockHash: safe_leaf.blockHash,
+            height: safe_leaf.height,
+            cumulativeChainwork: safe_leaf.cumulativeChainwork,
+        },
+        safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
+        safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
+    };
+    println!("Deposit params: {:?}", deposit_params);
     (
-        maker_secret_bytes,
-        maker_evm_wallet,
-        maker_evm_address,
-        maker_btc_wallet,
+        devnet,
+        rift_exchange,
+        deposit_params,
+        maker,
+        transaction_broadcaster,
     )
+}
+
+pub async fn send_bitcoin_for_deposit(
+    devnet: &RiftDevnet,
+    taker: &MultichainAccount,
+    vault: &DepositVault,
+) {
+    let dealed_amount = vault.expectedSats * 2; // deal double so we have plenty to cover the fee
+
+    // now send some bitcoin to the taker's btc address so we can get a UTXO to spend
+    let funding_utxo = devnet
+        .bitcoin
+        .deal_bitcoin(
+            taker.bitcoin_wallet.address.clone(),
+            Amount::from_sat(dealed_amount),
+        ) // 1.5 bitcoin
+        .await
+        .unwrap();
+
+    let wallet = &taker.bitcoin_wallet;
+    let fee_sats = 1000;
+    let transaction = funding_utxo.transaction().unwrap();
+
+    // if the predicate is true, we can spend it
+    let txvout = transaction
+        .output
+        .iter()
+        .enumerate()
+        .find(|(_, output)| {
+            output.script_pubkey.as_bytes() == wallet.get_p2wpkh_script().as_bytes()
+                && output.value == dealed_amount
+        })
+        .map(|(index, _)| index as u32)
+        .unwrap();
+
+    let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&transaction);
+    let canon_bitcoin_tx: Transaction = bitcoin::consensus::deserialize(&serialized).unwrap();
+    let canon_txid = canon_bitcoin_tx.compute_txid();
+
+    // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
+    let payment_tx = txn_builder::build_rift_payment_transaction(
+        vault,
+        &canon_txid,
+        &canon_bitcoin_tx,
+        txvout,
+        wallet,
+        fee_sats,
+    )
+    .unwrap();
+
+    let payment_tx_serialized = &mut Vec::new();
+    payment_tx.consensus_encode(payment_tx_serialized).unwrap();
+
+    let payment_tx_serialized = payment_tx_serialized.as_slice();
+
+    let current_block_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
+
+    // broadcast it
+    devnet
+        .bitcoin
+        .rpc_client
+        .send_raw_transaction(payment_tx_serialized)
+        .await
+        .unwrap();
+    println!("Bitcoin tx sent");
+
+    let payment_tx_id = payment_tx.compute_txid();
+    let bitcoin_txid: [u8; 32] = payment_tx_id.as_raw_hash().to_byte_array();
+
+    let swap_block_height = current_block_height + 1;
+
+    // now mine enough blocks for confirmations (1 + 1 additional)
+    devnet.bitcoin.mine_blocks(2).await.unwrap();
+}
+/// A cloneable "Layer" that lets you register watchers for log messages.
+/// Each watcher is associated with a pattern string; when we see a log that
+/// contains that pattern, we notify all watchers listening for it.
+#[derive(Clone)]
+pub struct WaitForLogLayer {
+    inner: Arc<Mutex<Watchers>>,
+}
+
+/// Shared state: a map from pattern -> list of waiting senders
+type Watchers = HashMap<String, Vec<oneshot::Sender<()>>>;
+
+impl WaitForLogLayer {
+    /// Create a new layer
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Register a new log waiter for a given `pattern`. Returns a `Receiver` you can `.await`.
+    /// Once a log arrives containing `pattern`, we'll notify (and remove) all watchers for it.
+    pub fn watch(&self, pattern: impl Into<String>) -> oneshot::Receiver<()> {
+        let pat = pattern.into();
+        let (tx, rx) = oneshot::channel();
+
+        // Insert our sender into the map for this pattern
+        let mut watchers = self.inner.lock().unwrap();
+        watchers.entry(pat).or_default().push(tx);
+
+        rx
+    }
+}
+
+/// Implement a `tracing_subscriber::Layer` so we can inspect all events
+impl<S> Layer<S> for WaitForLogLayer
+where
+    S: Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut msg = String::new();
+
+        // Use a visitor to capture the event's message
+        struct StringVisitor<'a>(&'a mut String);
+
+        impl<'a> tracing::field::Visit for StringVisitor<'a> {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    write!(self.0, "{:?}", value).unwrap();
+                }
+            }
+        }
+
+        event.record(&mut StringVisitor(&mut msg));
+
+        // Lock our watchers so we can see if this message hits any patterns
+        let mut watchers_map = self.inner.lock().unwrap();
+
+        // Gather which patterns matched; we'll remove their watchers and notify them
+        let keys: Vec<_> = watchers_map.keys().cloned().collect();
+        let mut matched = Vec::new();
+        for pattern in keys {
+            if msg.contains(&pattern) {
+                if let Some(watchers) = watchers_map.remove(&pattern) {
+                    matched.push(watchers);
+                }
+            }
+        }
+
+        // Notify all watchers that matched
+        for group in matched {
+            for sender in group {
+                let _ = sender.send(()); // ignore error if receiver is dropped
+            }
+        }
+    }
+}
+
+pub fn setup_tracing_subscriber_with_log_watcher() -> WaitForLogLayer {
+    let filter = tracing_subscriber::filter::LevelFilter::INFO;
+    let watcher = WaitForLogLayer::new();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(filter))
+        .with(watcher.clone().with_filter(filter))
+        .init();
+
+    watcher
 }

@@ -17,6 +17,7 @@ checkpoint-downloader = { workspace = true }
 
 
 reqwest = { workspace = true }
+tokio-util = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-rusqlite = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

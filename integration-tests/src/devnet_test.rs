@@ -30,10 +30,11 @@ use rift_core::vaults::hash_deposit_vault;
 use rift_core::RiftTransaction;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use rift_sdk::indexed_mmr::client_mmr_proof_to_circuit_mmr_proof;
+use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
 use rift_sdk::{
     create_websocket_provider, get_retarget_height_from_block_height, right_pad_to_25_bytes,
-    DatabaseLocation, ProofGeneratorType, RiftProofGenerator,
+    DatabaseLocation,
 };
 use sol_bindings::Types::{DepositLiquidityParams, ReleaseLiquidityParams, SubmitSwapProofParams};
 use sol_bindings::{
@@ -92,16 +93,13 @@ async fn test_simulated_swap_end_to_end() {
         tokio::task::spawn_blocking(|| RiftProofGenerator::new(ProofGeneratorType::Execute));
 
     // fund maker evm wallet, and taker btc wallet
-    let (devnet, _funded_sats) = RiftDevnet::setup(
-        /*interactive=*/ false,
-        /*using_bitcoin=*/ true,
-        /*funded_evm_address=*/ Some(maker_evm_address.to_string()),
-        /*funded_bitcoin_address=*/ None,
-        /*fork_config=*/ None,
-        /*data_engine_db_location=*/ DatabaseLocation::InMemory,
-    )
-    .await
-    .expect("Failed to set up devnet");
+    let (devnet, _funded_sats) = RiftDevnet::builder()
+        .using_bitcoin(true)
+        .funded_evm_address(maker_evm_address.to_string())
+        .data_engine_db_location(DatabaseLocation::InMemory)
+        .build()
+        .await
+        .unwrap();
 
     let maker_evm_provider = ProviderBuilder::new()
         .with_recommended_fillers()
@@ -794,8 +792,6 @@ async fn test_simulated_swap_end_to_end() {
     //   }
     let release_params = ReleaseLiquidityParams {
         swap: proposed_swap.clone(),
-        swapBlockChainwork: swap_leaf.cumulativeChainwork,
-        swapBlockHeight: swap_leaf.height.clone(),
         bitcoinSwapBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
         bitcoinSwapBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
         utilizedVault: new_vault.clone(),

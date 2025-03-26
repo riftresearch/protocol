@@ -23,7 +23,9 @@ sol-bindings= { workspace = true }
 bitcoin-data-engine = { workspace = true }
 accumulators = { workspace = true }
 hypernode = { workspace = true }
-
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio-util = { workspace = true }
 hex = { workspace = true }
 alloy = { workspace = true }
 clap = { workspace = true }
