@@ -120,7 +120,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
     /// @notice Withdraws liquidity from a deposit vault after the lockup period
     /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
-    function withdrawLiquidity(Types.DepositVault calldata vault) internal {
+    function _withdrawLiquidity(Types.DepositVault calldata vault) internal {
         VaultLib.validateDepositVaultCommitment(vault, vaultCommitments);
         if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
         if (block.timestamp < vault.depositUnlockTimestamp) {

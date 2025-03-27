@@ -8,12 +8,13 @@ import {VaultLib} from "../../src/libraries/VaultLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
-import {RiftTest} from "../utils/RiftTest.sol";
+// import {RiftTest} from "../utils/RiftTest.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
+import {RiftTestSetup} from "../utils/RiftTestSetup.t.sol";
 
 import "forge-std/src/console.sol";
 
-contract RiftExchangeUnitTest is RiftTest {
+contract RiftExchangeUnitTest is RiftTestSetup {
     // hacky way to get nice formatting for the vault in logs
     event VaultLog(Types.DepositVault vault);
     event VaultCommitmentLog(bytes32 vaultCommitment);

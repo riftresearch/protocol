@@ -454,9 +454,24 @@ contract PRNG {
     }
 }
 
+contract RiftExchangeExposed is RiftExchange {
+    constructor(
+        bytes32 _mmrRoot,
+        address _depositToken,
+        bytes32 _circuitVerificationKey,
+        address _verifier,
+        address _feeRouter,
+        Types.BlockLeaf memory _tipBlockLeaf
+    ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _tipBlockLeaf) {}
+
+    function depositLiquidityPublic(Types.DepositLiquidityParams memory params) external {
+        depositLiquidity(params);
+    }
+}
+
 contract RiftTest is Test, PRNG {
     address exchangeOwner = address(0xbeef);
-    RiftExchange public exchange;
+    RiftExchangeExposed public exchange;
     MockToken public mockToken;
     SP1MockVerifier public verifier;
 
@@ -466,7 +481,7 @@ contract RiftTest is Test, PRNG {
 
         Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
-        exchange = new RiftExchange({
+        exchange = new RiftExchangeExposed({
             _mmrRoot: initial_mmr_proof.mmrRoot,
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
@@ -598,7 +613,7 @@ contract RiftTest is Test, PRNG {
             safeBlockPeaks: mmr_proof.peaks
         });
 
-        exchange.depositLiquidity(args);
+        exchange.depositLiquidityPublic(args);
 
         // [4] grab the logs, find the vault
         Types.DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());

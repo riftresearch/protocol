@@ -6,7 +6,7 @@ import {EIP712Hashing} from "./libraries/Hashing.sol";
 import {Types} from "./libraries/Types.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin-contracts/token/ERC20/IERC20.sol";
+import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {IPermit2} from "uniswap-permit2/src/interfaces/IPermit2.sol";
 
 contract RiftReactor is RiftExchange {
@@ -103,6 +103,8 @@ contract RiftReactor is RiftExchange {
     ) external {
         uint256 expectedSats = _executeIntentAndSwapShared(route, order);
 
+        intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
+
         depositLiquidityWithOverwrite(
             Types.DepositLiquidityWithOverwriteParams({
                 depositParams: _buildDepositLiquidityParams(
@@ -113,7 +115,6 @@ contract RiftReactor is RiftExchange {
                 overwriteVault: depositVault
             })
         );
-        intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
     }
 
     /**
@@ -136,28 +137,6 @@ contract RiftReactor is RiftExchange {
         uint256 expectedSats = _computeAuctionSats(order.info.auction);
         depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
         intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
-    }
-
-    /** Shared functionality between depositLiquidity and depositLiquidityOverride */
-    function _executeIntentAndSwapShared(
-        Types.LiquidityRoute calldata route,
-        Types.SignedIntent calldata order
-    ) internal returns (uint256 expectedSats) {
-        _validateBondAndRecord(order);
-
-        // Step 4: Transfer ERC20 tokens from the user's account into the
-        // reactor using Permit2.
-        PERMIT2.permitTransferFrom(
-            order.info.permit2TransferInfo.permitTransferFrom,
-            order.info.permit2TransferInfo.transferDetails,
-            order.info.permit2TransferInfo.owner,
-            order.info.permit2TransferInfo.signature
-        );
-
-        // Steps 5-8: Execute the swap and validate sufficient cbBTC was received
-        _executeSwap(route, order, order.info.depositLiquidityParams.depositAmount);
-
-        expectedSats = _computeAuctionSats(order.info.auction);
     }
 
     /**
@@ -251,15 +230,31 @@ contract RiftReactor is RiftExchange {
     //                     INTERNAL FUNCTIONS
     // ---------------------------------------------------------------
 
+    /** Shared functionality between depositLiquidity and depositLiquidityOverride */
+    function _executeIntentAndSwapShared(
+        Types.LiquidityRoute calldata route,
+        Types.SignedIntent calldata order
+    ) internal returns (uint256 expectedSats) {
+        _validateBondAndRecord(order);
+
+        // Step 4: Transfer ERC20 tokens from the user's account into the
+        // reactor using Permit2.
+        PERMIT2.permitTransferFrom(
+            order.info.permit2TransferInfo.permitTransferFrom,
+            order.info.permit2TransferInfo.transferDetails,
+            order.info.permit2TransferInfo.owner,
+            order.info.permit2TransferInfo.signature
+        );
+
+        // Steps 5-8: Execute the swap and validate sufficient cbBTC was received
+        _executeSwap(route, order, order.info.depositLiquidityParams.depositAmount);
+
+        expectedSats = _computeAuctionSats(order.info.auction);
+    }
+
     /**
-     * @notice Validates and records a bond payment for an intent execution
-     * @dev Checks the nonce, calculates the required bond amount based on the deposit size,
-     *      transfers the bond from the market maker to the contract, and
-     *      records the bonded swap in the swapBonds mapping.
-     * @dev The bond amount is either a percentage of the deposit amount (BOND_BIPS/10000)
-     *      or the minimum bond amount (MIN_BOND), whichever is greater.
-     * @param order The signed intent containing deposit parameters
-     * @custom:throws BondDepositTransferFailed If the bond transfer from msg.sender fails
+     * @notice Validates and records a bond payment for an intent execution.
+     * @dev Follows CEI by recording the bond first then performing the external call.
      */
     function _validateBondAndRecord(Types.SignedIntent calldata order) internal {
         if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
@@ -267,20 +262,22 @@ contract RiftReactor is RiftExchange {
         }
 
         uint96 requiredBond = _computeBond(order.info.depositLiquidityParams.depositAmount);
+        bytes32 orderId = order.orderHash;
 
-        // Do ERC20 transfer of bond amount from msg.sender to this contract
-        bool success = CB_BTC.transferFrom(msg.sender, address(this), requiredBond);
-        if (!success) {
-            revert Errors.BondDepositTransferFailed();
-        }
-
+        // --- EFFECTS: Update state before external interaction ---
         // Record the bonded swap.
-        bytes32 orderId = order.orderHash; // Alternatively, compute a unique identifier.
         swapBonds[orderId] = Types.BondedSwap({
             marketMaker: msg.sender,
             bond: requiredBond,
             endBlock: order.info.auction.endBlock
         });
+        // --- INTERACTIONS: External call after state update ---
+        bool success = CB_BTC.transferFrom(msg.sender, address(this), requiredBond);
+        if (!success) {
+            // Rollback the state update if external call fails.
+            delete swapBonds[orderId];
+            revert Errors.BondDepositTransferFailed();
+        }
     }
 
     /**
@@ -348,7 +345,6 @@ contract RiftReactor is RiftExchange {
     // -----------------------------------------------------------------------
     //                             HELPER FUNCTIONS
     // -----------------------------------------------------------------------
-    // TODO Possibly replace the less precise integer math with FixedPointMathLib.
     /**
      * @notice Computes the bond required for a given deposit amount.
      * @dev The bond is the greater of (depositAmount * BOND_BIPS / 10,000) or MIN_BOND.
