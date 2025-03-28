@@ -73,7 +73,7 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity into a new vault
-    function depositLiquidity(Types.DepositLiquidityParams memory params) internal {
+    function _depositLiquidity(Types.DepositLiquidityParams memory params) internal {
         // Determine vault index
         uint256 vaultIndex = vaultCommitments.length;
         // Create deposit liquidity request
@@ -87,7 +87,7 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Deposits new liquidity by overwriting an existing empty vault
-    function depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams memory params) internal {
+    function _depositLiquidityWithOverwrite(Types.DepositLiquidityWithOverwriteParams memory params) internal {
         // Create deposit liquidity request
         uint256 vaultIndex = params.overwriteVault.vaultIndex;
         (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params.depositParams, vaultIndex);
@@ -185,7 +185,7 @@ contract RiftExchange is BitcoinLightClient {
     }
 
     /// @notice Releases locked liquidity for multiple swaps
-    function releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) internal {
+    function _releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) internal {
         Types.ProposedSwap[] memory updatedSwaps = new Types.ProposedSwap[](paramsArray.length);
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](paramsArray.length);
 

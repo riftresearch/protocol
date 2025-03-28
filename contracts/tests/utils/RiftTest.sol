@@ -465,7 +465,19 @@ contract RiftExchangeExposed is RiftExchange {
     ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _tipBlockLeaf) {}
 
     function depositLiquidityPublic(Types.DepositLiquidityParams memory params) external {
-        depositLiquidity(params);
+        _depositLiquidity(params);
+    }
+
+    function withdrawLiquidityPublic(Types.DepositVault calldata vault) external {
+        _withdrawLiquidity(vault);
+    }
+
+    function depositLiquidityWithOverwritePublic(Types.DepositLiquidityWithOverwriteParams memory params) external {
+        _depositLiquidityWithOverwrite(params);
+    }
+
+    function releaseLiquidityBatchPublic(Types.ReleaseLiquidityParams[] calldata params) external {
+        _releaseLiquidityBatch(params);
     }
 }
 
