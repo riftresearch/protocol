@@ -206,7 +206,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
     }
 
     /// @notice Releases locked liquidity for multiple swaps
-    function releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) internal {
+    function _releaseLiquidityBatch(Types.ReleaseLiquidityParams[] calldata paramsArray) internal {
         Types.ProposedSwap[] memory updatedSwaps = new Types.ProposedSwap[](paramsArray.length);
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](paramsArray.length);
 

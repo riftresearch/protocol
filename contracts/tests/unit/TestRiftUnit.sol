@@ -8,13 +8,12 @@ import {VaultLib} from "../../src/libraries/VaultLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
-// import {RiftTest} from "../utils/RiftTest.sol";
+import {RiftTest} from "../utils/RiftTest.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
-import {RiftTestSetup} from "../utils/RiftTestSetup.t.sol";
 
 import "forge-std/src/console.sol";
 
-contract RiftExchangeUnitTest is RiftTestSetup {
+contract RiftExchangeUnitTest is RiftTest {
     // hacky way to get nice formatting for the vault in logs
     event VaultLog(Types.DepositVault vault);
     event VaultCommitmentLog(bytes32 vaultCommitment);
@@ -153,7 +152,7 @@ contract RiftExchangeUnitTest is RiftTestSetup {
         // [2] warp and withdraw to empty the vault
         vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
         vm.recordLogs();
-        exchange.withdrawLiquidity({vault: fullVault});
+        exchange.withdrawLiquidityPublic({vault: fullVault});
         Types.DepositVault memory emptyVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [3] burn the USDC withdrawn from the vault
@@ -184,7 +183,7 @@ contract RiftExchangeUnitTest is RiftTestSetup {
             overwriteVault: emptyVault
         });
 
-        exchange.depositLiquidityWithOverwrite(args);
+        exchange.depositLiquidityWithOverwritePublic(args);
 
         // [6] grab the logs, find the new vault
         Types.DepositVault memory overwrittenVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
@@ -229,7 +228,7 @@ contract RiftExchangeUnitTest is RiftTestSetup {
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
-        exchange.withdrawLiquidity(vault);
+        exchange.withdrawLiquidityPublic(vault);
         Types.DepositVault memory updatedVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
@@ -451,6 +450,8 @@ contract RiftExchangeUnitTest is RiftTestSetup {
             Types.MMRProof memory tipMmrProof
         ) = _setupVaultsAndSubmitSwap(params);
 
+        bytes32 orderHash = keccak256(abi.encode(createdSwap));
+
         // Record initial balances
         uint256 initialBalance = mockToken.balanceOf(address(this));
         uint256 initialFeeBalance = exchange.accumulatedFeeBalance();
@@ -480,13 +481,14 @@ contract RiftExchangeUnitTest is RiftTestSetup {
             bitcoinSwapBlockSiblings: swapMmrProof.siblings,
             bitcoinSwapBlockPeaks: swapMmrProof.peaks,
             utilizedVault: vault,
-            tipBlockHeight: tipMmrProof.blockLeaf.height
+            tipBlockHeight: tipMmrProof.blockLeaf.height,
+            orderHash: orderHash
         });
 
         Types.ReleaseLiquidityParams[] memory releaseLiquidityParamsArray = new Types.ReleaseLiquidityParams[](1);
         releaseLiquidityParamsArray[0] = releaseLiquidityParams;
 
-        exchange.releaseLiquidityBatch(releaseLiquidityParamsArray);
+        exchange.releaseLiquidityBatchPublic(releaseLiquidityParamsArray);
 
         // Verify swap completion
         Types.ProposedSwap memory updatedSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());

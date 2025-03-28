@@ -31,7 +31,6 @@ contract RiftReactor is RiftExchange {
     // Nonce mapping: deposit owner address => nonce
     mapping(address => uint256) public intentNonce;
 
-    IERC20 immutable CB_BTC;
     IPermit2 immutable PERMIT2;
 
     constructor(
@@ -41,7 +40,6 @@ contract RiftReactor is RiftExchange {
         address _verifier,
         address _feeRouter,
         Types.BlockLeaf memory _tipBlockLeaf,
-        address _cbbtc_address,
         address _permit2_address
     ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _tipBlockLeaf) {
         DOMAIN_SEPARATOR = keccak256(
@@ -54,7 +52,6 @@ contract RiftReactor is RiftExchange {
             )
         );
 
-        CB_BTC = IERC20(_cbbtc_address);
         PERMIT2 = IPermit2(_permit2_address);
     }
 
@@ -84,7 +81,7 @@ contract RiftReactor is RiftExchange {
     function executeIntentWithSwap(Types.LiquidityRoute calldata route, Types.SignedIntent calldata order) external {
         uint256 expectedSats = _executeIntentAndSwapShared(route, order);
 
-        depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
+        _depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
         intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
     }
 
@@ -105,7 +102,7 @@ contract RiftReactor is RiftExchange {
 
         intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
 
-        depositLiquidityWithOverwrite(
+        _depositLiquidityWithOverwrite(
             Types.DepositLiquidityWithOverwriteParams({
                 depositParams: _buildDepositLiquidityParams(
                     order.info.depositLiquidityParams,
@@ -135,7 +132,7 @@ contract RiftReactor is RiftExchange {
         _validateBondAndRecord(order);
 
         uint256 expectedSats = _computeAuctionSats(order.info.auction);
-        depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
+        _depositLiquidity(_buildDepositLiquidityParams(order.info.depositLiquidityParams, msg.sender, expectedSats));
         intentNonce[order.info.depositLiquidityParams.depositOwnerAddress] += 1;
     }
 
@@ -158,7 +155,7 @@ contract RiftReactor is RiftExchange {
     function releaseAndFree(Types.ReleaseLiquidityParams[] calldata paramsArray) external {
         // Call the underlying liquidity release function.
         // (Assumes that releaseLiquidityBatch processes all the deposit releases correctly.)
-        releaseLiquidityBatch(paramsArray);
+        _releaseLiquidityBatch(paramsArray);
 
         uint256 i;
         uint256 paramsArrayLength = paramsArray.length;
@@ -171,7 +168,7 @@ contract RiftReactor is RiftExchange {
             if (swapInfo.marketMaker == address(0)) revert Errors.BondNotFoundOrAlreadyReleased();
 
             // Release the full bond amount back to the market maker (no penalty applied here).
-            bool success = CB_BTC.transfer(swapInfo.marketMaker, swapInfo.bond);
+            bool success = DEPOSIT_TOKEN.transfer(swapInfo.marketMaker, swapInfo.bond);
             if (!success) revert Errors.BondReleaseTransferFailed();
 
             // Clear the bond record to prevent double releasing.
@@ -219,7 +216,7 @@ contract RiftReactor is RiftExchange {
         slashedBondFees += penalty;
 
         // Transfer the remaining bond amount back to the MM.
-        bool success = CB_BTC.transfer(swapInfo.marketMaker, refundAmount);
+        bool success = DEPOSIT_TOKEN.transfer(swapInfo.marketMaker, refundAmount);
         if (!success) revert Errors.BondReleaseTransferFailed();
 
         // Clear the bonded swap record to prevent double withdrawals.
@@ -272,7 +269,7 @@ contract RiftReactor is RiftExchange {
             endBlock: order.info.auction.endBlock
         });
         // --- INTERACTIONS: External call after state update ---
-        bool success = CB_BTC.transferFrom(msg.sender, address(this), requiredBond);
+        bool success = DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), requiredBond);
         if (!success) {
             // Rollback the state update if external call fails.
             delete swapBonds[orderId];
@@ -297,7 +294,7 @@ contract RiftReactor is RiftExchange {
         uint256 depositAmount
     ) internal {
         // Step 5: Fetch contracts current balance of cbBTC (preCallcbBTC)
-        uint256 preCallcbBTC = CB_BTC.balanceOf(address(this));
+        uint256 preCallcbBTC = DEPOSIT_TOKEN.balanceOf(address(this));
 
         // Step 6: Give approval to callback contract for ERC20
         IERC20(order.info.tokenIn).approve(address(route.router), depositAmount);
@@ -309,7 +306,7 @@ contract RiftReactor is RiftExchange {
         }
 
         // Step 8: Validate sufficient cbBTC was sent
-        uint256 postCallcbBTC = CB_BTC.balanceOf(address(this));
+        uint256 postCallcbBTC = DEPOSIT_TOKEN.balanceOf(address(this));
         if ((postCallcbBTC - preCallcbBTC) < depositAmount) {
             revert Errors.InsufficientCbBTC();
         }
