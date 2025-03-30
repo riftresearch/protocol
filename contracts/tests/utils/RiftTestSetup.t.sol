@@ -44,6 +44,16 @@ contract RiftReactorExposed is RiftReactor, RiftTest {
     function withdrawLiquidity(Types.DepositVault calldata vault) internal {
         _withdrawLiquidity(vault);
     }
+
+    // Access the swapBonds mapping - make this virtual
+    function getBondedSwap(bytes32 orderHash) public view virtual returns (Types.BondedSwap memory) {
+        return swapBonds[orderHash];
+    }
+
+    // Set a value in the swapBonds mapping
+    function setSwapBond(bytes32 orderHash, Types.BondedSwap memory bond) public {
+        swapBonds[orderHash] = bond;
+    }
 }
 
 contract RiftTestSetup is RiftTest {

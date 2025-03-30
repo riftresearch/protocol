@@ -8,7 +8,7 @@ import {Test} from "forge-std/src/Test.sol";
 import {console} from "forge-std/src/console.sol";
 import {MockToken} from "../../utils/MockToken.sol";
 
-// Enhanced exposed contract to include the functions we need to test
+// Enhanced exposed contract for withdraw and penalize tests
 contract RiftReactorExposedForWithdrawTests is RiftReactorExposed {
     constructor(
         bytes32 _mmrRoot,
@@ -30,19 +30,19 @@ contract RiftReactorExposedForWithdrawTests is RiftReactorExposed {
         )
     {}
 
-    // Function to create a bonded swap for testing
+    // Function to create a bonded swap for testing with finished auction
     function createBondedSwap(bytes32 orderHash, address marketMaker, uint96 bondAmount, uint256 endBlock) public {
         swapBonds[orderHash] = Types.BondedSwap({marketMaker: marketMaker, bond: bondAmount, endBlock: endBlock});
     }
 
-    // Function to get current slashed bond fees
-    function getSlashedBondFees() public view returns (uint256) {
-        return slashedBondFees;
+    // Get a bonded swap by order hash
+    function getBondedSwap(bytes32 orderHash) public view override returns (Types.BondedSwap memory) {
+        return swapBonds[orderHash];
     }
 
-    // Get a bonded swap by order hash
-    function getBondedSwap(bytes32 orderHash) public view returns (Types.BondedSwap memory) {
-        return swapBonds[orderHash];
+    // Get current slashed bond fees
+    function getSlashedBondFees() public view returns (uint256) {
+        return slashedBondFees;
     }
 }
 

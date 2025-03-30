@@ -36,7 +36,7 @@ contract RiftReactorExposedForReleaseTests is RiftReactorExposed {
     }
 
     // Get a bonded swap by order hash
-    function getBondedSwap(bytes32 orderHash) public view returns (Types.BondedSwap memory) {
+    function getBondedSwap(bytes32 orderHash) public view override returns (Types.BondedSwap memory) {
         return swapBonds[orderHash];
     }
 
