@@ -1,7 +1,8 @@
 use alloy::signers::k256;
+use bitcoincore_rpc_async::bitcoin::block::Header;
 use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
-use bitcoincore_rpc_async::bitcoin::{Block, BlockHash, BlockHeader};
+use bitcoincore_rpc_async::bitcoin::{Block, BlockHash};
 use bitcoincore_rpc_async::json::{GetBlockHeaderResult, GetBlockResult};
 use serde_json::value::RawValue;
 use tokio::time::Instant;
@@ -308,7 +309,7 @@ pub trait HeaderChainValidator {
     fn validate_header_chain(&self) -> Result<(), RiftSdkError>;
 }
 
-impl HeaderChainValidator for Vec<BlockHeader> {
+impl HeaderChainValidator for Vec<Header> {
     fn validate_header_chain(&self) -> Result<(), RiftSdkError> {
         for i in 1..self.len() {
             if self[i].prev_blockhash != self[i - 1].block_hash() {
@@ -388,7 +389,7 @@ pub trait BitcoinClientExt {
         end_block_height: u32,
         concurrency_limit: usize,
         expected_parent: Option<[u8; 32]>,
-    ) -> crate::errors::Result<Vec<BlockHeader>>;
+    ) -> crate::errors::Result<Vec<Header>>;
 
     // unsorted
     async fn get_blocks_from_leaves(
@@ -398,7 +399,7 @@ pub trait BitcoinClientExt {
     ) -> crate::errors::Result<Vec<Block>>;
 
     async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>>;
-    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<BlockHeader>;
+    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<Header>;
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
@@ -413,7 +414,7 @@ pub trait BitcoinClientExt {
         &self,
         hashes: &[BlockHash],
         concurrency_limit: usize,
-    ) -> crate::errors::Result<Vec<BlockHeader>>;
+    ) -> crate::errors::Result<Vec<Header>>;
 }
 
 #[async_trait::async_trait]
@@ -489,7 +490,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         &self,
         hashes: &[BlockHash],
         concurrency_limit: usize,
-    ) -> crate::errors::Result<Vec<BlockHeader>> {
+    ) -> crate::errors::Result<Vec<Header>> {
         use bitcoincore_rpc_async::bitcoin::consensus::encode::deserialize;
         use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 
@@ -518,13 +519,13 @@ impl BitcoinClientExt for AsyncBitcoinClient {
                 ))
             })?;
 
-        // Decode the hex-encoded headers into `BlockHeader` structs
+        // Decode the hex-encoded headers into `Header` structs
         let mut block_headers = Vec::with_capacity(raw_headers.len());
         for raw in raw_headers {
             let bytes = Vec::from_hex(&raw).map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!("Error decoding block header hex: {}", e))
             })?;
-            let header: BlockHeader = deserialize(&bytes).map_err(|e| {
+            let header: Header = deserialize(&bytes).map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!("Error deserializing block header: {}", e))
             })?;
             block_headers.push(header);
@@ -533,7 +534,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         Ok(block_headers)
     }
 
-    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<BlockHeader> {
+    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<Header> {
         let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!(
                 "Error getting block hash for height {}: {}",
@@ -654,7 +655,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             let header = &header_results[i];
 
             // Convert block hash to an array of 32 bytes and reverse (as in your original code)
-            let mut explorer_block_hash: [u8; 32] = block_hash.as_hash().into_inner();
+            let mut explorer_block_hash: [u8; 32] = block_hash.as_raw_hash().to_byte_array();
             explorer_block_hash.reverse();
 
             // Extract chainwork from header (expecting exactly 32 bytes)
@@ -665,7 +666,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
                 .expect("Chainwork is not 32 bytes");
 
             let leaf = BlockLeaf::new(explorer_block_hash, height, chainwork);
-            // Note: if GetBlockHeaderResult isn't Copy, you may need to clone it.
+            // Note: if GetHeaderResult isn't Copy, you may need to clone it.
             results.push((height, leaf, header.clone()));
         }
 
@@ -688,8 +689,8 @@ impl BitcoinClientExt for AsyncBitcoinClient {
                 .ok_or_else(|| {
                     RiftSdkError::ParentValidationFailed("Missing previous block hash".to_string())
                 })?
-                .as_hash()
-                .into_inner();
+                .as_raw_hash()
+                .to_byte_array();
 
             // Reverse the byte order
             let first_prev_rev: Vec<u8> = first_prev.iter().rev().copied().collect();
@@ -713,7 +714,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         end_block_height: u32,
         concurrency_limit: usize,
         expected_parent: Option<[u8; 32]>,
-    ) -> crate::errors::Result<Vec<BlockHeader>> {
+    ) -> crate::errors::Result<Vec<Header>> {
         // Number of blocks in the requested range
         let num_blocks = (end_block_height - start_block_height + 1) as usize;
 
@@ -740,7 +741,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         // Batch #2: getblockheader (verbose=false)
         //
         // This returns the **hex-encoded** serialized block header.
-        // We can parse that into `BlockHeader` using Bitcoin's consensus_decode.
+        // We can parse that into `Header` using Bitcoin's consensus_decode.
         // ===============================
         let header_requests: Vec<BitcoinCoreJsonRpcRequest<String>> = block_hashes
             .iter()
@@ -754,7 +755,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             })
             .collect();
 
-        let headers: Vec<BlockHeader> = self
+        let headers: Vec<Header> = self
             .send_batch(&header_requests, Some(concurrency_limit))
             .await
             .map_err(|e| {
@@ -765,13 +766,13 @@ impl BitcoinClientExt for AsyncBitcoinClient {
                 let bytes: Vec<u8> = FromHex::from_hex(header).unwrap();
                 bitcoincore_rpc_async::bitcoin::consensus::encode::deserialize(&bytes)
             })
-            .collect::<Result<Vec<BlockHeader>, bitcoincore_rpc_async::bitcoin::consensus::encode::Error>>()
+            .collect::<Result<Vec<Header>, bitcoincore_rpc_async::bitcoin::consensus::encode::Error>>()
             .map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!("Error deserializing block headers: {}", e))
             })?;
 
         // ===============================
-        // Parse each hex string into a BlockHeader
+        // Parse each hex string into a Header
         // ===============================
         let mut headers_with_height = Vec::with_capacity(num_blocks);
         for (i, header) in headers.into_iter().enumerate() {
@@ -784,7 +785,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         headers_with_height.sort_by_key(|(h, _)| *h);
 
         // Unzip the vector of (height, header) into just the headers
-        let headers: Vec<BlockHeader> = headers_with_height
+        let headers: Vec<Header> = headers_with_height
             .into_iter()
             .map(|(_, header)| header)
             .collect();
@@ -796,11 +797,11 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             let actual_parent = headers[0].prev_blockhash;
             // The internal byte order of `BlockHash` is reversed vs typical hex.
             // If your `expected_parent` is already reversed, compare directly:
-            if actual_parent.into_inner() != expected_parent {
+            if actual_parent.as_raw_hash().to_byte_array() != expected_parent {
                 return Err(RiftSdkError::ParentValidationFailed(format!(
                     "Expected parent {} but got {} for the first header",
                     hex::encode(expected_parent),
-                    hex::encode(actual_parent.into_inner())
+                    hex::encode(actual_parent.as_raw_hash().to_byte_array())
                 )));
             }
         }

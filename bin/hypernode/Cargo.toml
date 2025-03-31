@@ -17,7 +17,7 @@ rift-sdk = { workspace = true }
 rift-program = { workspace = true }
 data-engine = { workspace = true }
 checkpoint-downloader = { workspace = true }
-bitcoincore-rpc-async2 = { workspace = true }
+bitcoincore-rpc-async = { workspace = true }
 accumulators = { workspace = true }
 
 tokio-util = { workspace = true }

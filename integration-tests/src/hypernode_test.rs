@@ -18,7 +18,7 @@ use rift_core::vaults::hash_deposit_vault;
 use rift_sdk::{
     proof_generator::{ProofGeneratorType, RiftProofGenerator},
     right_pad_to_25_bytes,
-    txn_builder::{self, P2WPKHBitcoinWallet},
+    txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
 use sol_bindings::{RiftExchange, Types::DepositLiquidityParams};
@@ -246,7 +246,7 @@ async fn test_hypernode_simple_swap() {
         .enumerate()
         .find(|(_, output)| {
             output.script_pubkey.as_bytes() == wallet.get_p2wpkh_script().as_bytes()
-                && output.value == funding_amount
+                && output.value == Amount::from_sat(funding_amount)
         })
         .map(|(index, _)| index as u32)
         .unwrap();
@@ -255,11 +255,7 @@ async fn test_hypernode_simple_swap() {
 
     println!(
         "Funding UTXO: {:?}",
-        hex::encode(
-            bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize::serialize(
-                &transaction
-            )
-        )
+        hex::encode(&serialize_no_segwit(&transaction).unwrap())
     );
 
     let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&transaction);

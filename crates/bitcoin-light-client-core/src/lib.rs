@@ -23,20 +23,20 @@ fn validate_leaf_block_hashes(
 ) {
     assert!(
         parent_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
+            &bitcoin_core_rs::get_block_hash(parent_header.as_bytes())
                 .expect("Failed to get parent header block hash")
         ),
         "Parent leaf block hash {} does not match parent header block hash {}",
         hex::encode(parent_leaf.block_hash),
         hex::encode(
-            bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
+            bitcoin_core_rs::get_block_hash(parent_header.as_bytes())
                 .expect("Failed to get parent header block hash")
         )
     );
 
     assert!(
         parent_retarget_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(&parent_retarget_header.as_bytes())
+            &bitcoin_core_rs::get_block_hash(parent_retarget_header.as_bytes())
                 .expect("Failed to get parent retarget header block hash")
         ),
         "Parent retarget leaf block hash does not match parent retarget header block hash"

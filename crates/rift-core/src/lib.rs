@@ -33,7 +33,7 @@ pub struct RiftTransaction {
 
 impl RiftTransaction {
     pub fn verify(&self) -> SwapPublicInput {
-        let block_header = &self.block_header.as_bytes();
+        let block_header = self.block_header.as_bytes();
 
         // [0] Validate Bitcoin merkle proof of the transaction hash
         let block_header_merkle_root = deserialize::<bitcoin::block::Header>(block_header)

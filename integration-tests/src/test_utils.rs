@@ -252,7 +252,7 @@ pub async fn send_bitcoin_for_deposit(
         .enumerate()
         .find(|(_, output)| {
             output.script_pubkey.as_bytes() == wallet.get_p2wpkh_script().as_bytes()
-                && output.value == dealed_amount
+                && output.value == Amount::from_sat(dealed_amount)
         })
         .map(|(index, _)| index as u32)
         .unwrap();

@@ -30,4 +30,4 @@ env_logger = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
-bitcoincore-rpc-async2 = { workspace = true }
+bitcoincore-rpc-async = { workspace = true }

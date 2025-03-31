@@ -20,7 +20,6 @@ use bitcoin_light_client_core::light_client::Header;
 use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
 use bitcoin_light_client_core::{ChainTransition, ProvenLeaf, VerifiedBlock};
 use bitcoincore_rpc_async::bitcoin::hashes::Hash as BitcoinHash;
-use bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize as AsyncSerialize;
 use bitcoincore_rpc_async::bitcoin::BlockHash;
 use bitcoincore_rpc_async::RpcApi;
 use devnet::RiftDevnet;
@@ -288,7 +287,7 @@ async fn test_simulated_swap_end_to_end() {
         .enumerate()
         .find(|(_, output)| {
             output.script_pubkey.as_bytes() == wallet.get_p2wpkh_script().as_bytes()
-                && output.value == funding_amount
+                && output.value == Amount::from_sat(funding_amount)
         })
         .map(|(index, _)| index as u32)
         .unwrap();
@@ -297,11 +296,7 @@ async fn test_simulated_swap_end_to_end() {
 
     println!(
         "Funding UTXO: {:?}",
-        hex::encode(
-            bitcoincore_rpc_async::bitcoin::util::psbt::serialize::Serialize::serialize(
-                &transaction
-            )
-        )
+        hex::encode(&serialize_no_segwit(&transaction).unwrap())
     );
 
     let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&transaction);
@@ -630,7 +625,7 @@ async fn test_simulated_swap_end_to_end() {
         &swap_full_block
             .txdata
             .iter()
-            .map(|t| t.txid().to_vec().try_into().unwrap())
+            .map(|t| t.compute_txid().as_raw_hash().to_byte_array())
             .collect::<Vec<_>>(),
         bitcoin_txid,
     );

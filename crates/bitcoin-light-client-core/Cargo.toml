@@ -11,7 +11,6 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 tiny-keccak = { workspace = true }
 serde = { workspace = true }
-bincode = { workspace = true }
 sol-bindings= { workspace = true }
 hex-literal = { workspace = true }
 

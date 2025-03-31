@@ -164,7 +164,7 @@ async fn block_watchtower(
             }
         };
 
-        let remote_best_block_hash: [u8; 32] = best_block.hash.as_hash().into_inner();
+        let remote_best_block_hash: [u8; 32] = best_block.hash.as_raw_hash().to_byte_array();
         let remote_best_block_height = best_block.height;
 
         // If the local best and remote best are the same, we're in sync

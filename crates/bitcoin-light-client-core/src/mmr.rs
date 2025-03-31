@@ -204,16 +204,6 @@ impl fmt::Debug for MMRProof {
     }
 }
 
-impl MMRProof {
-    pub fn from_vec(vec: Vec<u8>) -> Self {
-        bincode::deserialize(&vec).unwrap()
-    }
-
-    pub fn to_vec(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
-    }
-}
-
 /// Verify a proof for a leaf in the MMR
 pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
     // First verify the proof up to a peak

@@ -3,14 +3,14 @@ use alloy::{
     eips::eip7251::ConsolidationRequest, primitives::Address, providers::Provider,
     pubsub::PubSubFrontend, sol_types::SolValue,
 };
-use bitcoin::consensus::Decodable;
+use bitcoin::{block::Version, consensus::Decodable, CompactTarget};
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::{
     hasher::Keccak256Hasher, leaves::BlockLeaf, light_client::Header, ChainTransition, ProvenLeaf,
     VerifiedBlock,
 };
 use bitcoincore_rpc_async::{
-    bitcoin::{hashes::Hash, Block, BlockHash, BlockHeader, Txid},
+    bitcoin::{block::Header as BlockHeader, hashes::Hash, Block, BlockHash, Txid},
     json::GetBlockResult,
     RpcApi,
 };
@@ -308,7 +308,7 @@ impl SwapWatchtower {
                     .get_circuit_proof(swap.payment_block_leaf.height as usize, None)
                     .await?;
                 swap_params.push(SubmitSwapProofParams {
-                    swapBitcoinTxid: swap.payment_txid.into_inner().into(),
+                    swapBitcoinTxid: swap.payment_txid.as_raw_hash().to_byte_array().into(),
                     vault: swap.chain_aware_deposit.deposit.clone(),
                     // TODO: Implement overwrite strategy
                     storageStrategy: 0,     // Append
@@ -573,7 +573,7 @@ async fn find_pending_swaps_with_sufficient_confirmations(
 
             let txn: bitcoin::Transaction = bitcoin::consensus::deserialize(&txn_result.hex)
                 .map_err(|e| eyre::eyre!("Failed to deserialize transaction: {}", e))?;
-            let tx_hash = txn_result.txid.into_inner();
+            let tx_hash = txn_result.txid.as_raw_hash().to_byte_array();
 
             let block_header: Header =
                 bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&block_header)
@@ -584,7 +584,7 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                 &block_info
                     .tx
                     .iter()
-                    .map(|txid| txid.into_inner())
+                    .map(|txid| txid.as_raw_hash().to_byte_array())
                     .collect::<Vec<[u8; 32]>>(),
                 tx_hash,
             );
@@ -620,7 +620,7 @@ fn get_leaf_and_block_header_from_block_info(
         .as_slice()
         .try_into()
         .expect("Chainwork is not 32 bytes");
-    let mut explorer_block_hash: [u8; 32] = block.hash.as_hash().into_inner();
+    let mut explorer_block_hash: [u8; 32] = block.hash.as_raw_hash().to_byte_array();
     explorer_block_hash.reverse();
     let leaf = BlockLeaf::new(explorer_block_hash, block.height as u32, chainwork);
 
@@ -629,13 +629,13 @@ fn get_leaf_and_block_header_from_block_info(
         .map_err(|e| eyre::eyre!("Block {} has invalid bits: {}", block.hash, e))?;
 
     let block_header = BlockHeader {
-        version: block.version,
+        version: Version::from_consensus(block.version),
         prev_blockhash: block
             .previousblockhash
             .ok_or_else(|| eyre::eyre!("Block {} has no previous block hash", block.hash))?,
         merkle_root: block.merkleroot,
         time: block.time as u32,
-        bits: parsed_bits,
+        bits: CompactTarget::from_consensus(parsed_bits),
         nonce: block.nonce,
     };
 

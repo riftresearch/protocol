@@ -12,7 +12,7 @@ bitcoin = { workspace = true }
 data-engine = { workspace = true }
 rift-core = { workspace = true }
 sol-bindings= { workspace = true }
-bitcoincore-rpc-async2 = { workspace = true }
+bitcoincore-rpc-async = { workspace = true }
 checkpoint-downloader = { workspace = true }
 
 

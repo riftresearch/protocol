@@ -16,8 +16,8 @@ impl Debug for Header {
 }
 
 impl Header {
-    pub fn as_bytes(&self) -> [u8; 80] {
-        self.0
+    pub fn as_bytes(&self) -> &[u8; 80] {
+        &self.0
     }
 }
 
@@ -91,8 +91,8 @@ pub fn validate_header_chain(
 
         assert!(
             bitcoin_core_rs::check_header_connection(
-                &current_header.as_bytes(),
-                &previous_header.as_bytes(),
+                current_header.as_bytes(),
+                previous_header.as_bytes(),
             ),
             "Header chain link is not connected"
         );
@@ -277,7 +277,7 @@ pub mod tests {
         let genesis_header = &Header(TEST_HEADERS[0].1);
 
         // Modify the nonce to invalidate PoW (bytes 76..=79)
-        let mut header_bytes = Header(TEST_HEADERS[1].1).as_bytes();
+        let mut header_bytes = *Header(TEST_HEADERS[1].1).as_bytes();
         header_bytes[76..=79].copy_from_slice(&[0; 4]);
         let invalid_header = Header(header_bytes.try_into().unwrap());
 
@@ -290,7 +290,7 @@ pub mod tests {
         let genesis_header = &Header(TEST_HEADERS[0].1);
 
         // Modify the previous block hash (bytes 4..=35)
-        let mut header_bytes = Header(TEST_HEADERS[1].1).as_bytes();
+        let mut header_bytes = *Header(TEST_HEADERS[1].1).as_bytes();
         header_bytes[4..=35].copy_from_slice(&[190; 32]);
         let disconnected_header = Header(header_bytes.try_into().unwrap());
 
@@ -307,7 +307,7 @@ pub mod tests {
             .collect::<Vec<_>>();
 
         // Create a new modified header
-        let mut modified_bytes = chain[2015].as_bytes();
+        let mut modified_bytes = *chain[2015].as_bytes();
         modified_bytes[72..=75].copy_from_slice(&[0xff; 4]);
         chain[2015] = Header(modified_bytes);
 
@@ -319,7 +319,7 @@ pub mod tests {
     fn test_calculate_cumulative_work_overflow() {
         // Create a header that would cause work calculation overflow
         let mut overflow_header = Header(TEST_HEADERS[0].1);
-        let mut header_bytes = overflow_header.as_bytes();
+        let mut header_bytes = *overflow_header.as_bytes();
         header_bytes[28..32].copy_from_slice(&[0x01; 4]);
         overflow_header = Header(header_bytes.try_into().unwrap());
 

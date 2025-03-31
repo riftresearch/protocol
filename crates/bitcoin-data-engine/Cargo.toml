@@ -7,7 +7,7 @@ exclude.workspace = true
 
 [dependencies]
 tokio-util = { workspace = true }
-bitcoincore-rpc-async2 = { workspace = true } 
+bitcoincore-rpc-async = { workspace = true } 
 bitcoin-light-client-core = { workspace = true }
 rift-sdk = { workspace = true }
 tokio = { workspace = true }
