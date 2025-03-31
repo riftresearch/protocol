@@ -86,7 +86,7 @@ impl ContractDataEngine {
         let mut initial_sync_complete_watcher = self.initial_sync_complete_watcher.lock().await;
         if self
             .initial_sync_complete
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(std::sync::atomic::Ordering::SeqCst)
         {
             return Ok(());
         }
@@ -369,7 +369,7 @@ pub async fn listen_for_events(
     );
 
     // Signal that the initial sync is complete
-    initial_sync_complete.store(true, std::sync::atomic::Ordering::Relaxed);
+    initial_sync_complete.store(true, std::sync::atomic::Ordering::SeqCst);
     {
         let mut initial_sync_complete_watcher = initial_sync_complete_watcher.lock().await;
         for tx in initial_sync_complete_watcher.drain(..) {

@@ -90,6 +90,13 @@ const BITCOIN_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 pub async fn run(args: HypernodeArgs) -> Result<()> {
     let rift_exchange_address = Address::from_str(&args.rift_exchange_address)?;
+
+    let checkpoint_leaves = decompress_checkpoint_file(&args.checkpoint_file)?;
+    info!(
+        checkpoint_blocks = checkpoint_leaves.len(),
+        "Loaded bitcoin blocks from checkpoint file"
+    );
+
     // [1] create rpc providers for both chains
     let evm_rpc = Arc::new(
         create_websocket_wallet_provider(
@@ -121,12 +128,6 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         info!("Starting proof generator initialization");
         Arc::new(RiftProofGenerator::new(args.proof_generator))
     });
-
-    let checkpoint_leaves = decompress_checkpoint_file(&args.checkpoint_file)?;
-    info!(
-        checkpoint_blocks = checkpoint_leaves.len(),
-        "Loaded bitcoin blocks from checkpoint file"
-    );
 
     let contract_data_engine = {
         info!("Starting contract data engine initialization");
@@ -161,6 +162,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
             &mut join_set,
         )
         .await;
+        // Handle the bitcoin data engine background thread crashing before the initial sync completes
         tokio::select! {
             _ = engine.wait_for_initial_sync() => {
                 info!("Bitcoin data engine initialization complete");

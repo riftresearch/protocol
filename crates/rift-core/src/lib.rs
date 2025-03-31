@@ -175,13 +175,6 @@ pub mod giga {
         }
     }
 
-    /*
-    pub enum ProofType {
-        SwapOnly,
-        LightClientOnly,
-        Combined,
-    }
-    */
     impl RiftProgramInput {
         pub fn get_auxiliary_light_client_data(
             &self,

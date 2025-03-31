@@ -83,7 +83,7 @@ impl SwapWatchtower {
 
         join_set.spawn(
             async move {
-                Self::search_for_swaps(
+                Self::search_for_swap_payments(
                     evm_rpc_clone,
                     btc_rpc_clone,
                     contract_data_engine_clone,
@@ -122,7 +122,7 @@ impl SwapWatchtower {
     }
 
     // called by search_for_swaps thread
-    async fn search_for_swaps(
+    async fn search_for_swap_payments(
         evm_rpc: Arc<dyn Provider<PubSubFrontend>>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         contract_data_engine: Arc<ContractDataEngine>,
@@ -243,9 +243,20 @@ impl SwapWatchtower {
     ) -> eyre::Result<()> {
         let rift_exchange = RiftExchange::new(evm_address, evm_rpc);
         loop {
-            let confirmed_swaps = confirmed_swaps_rx.recv().await.ok_or_else(|| {
+            let mut confirmed_swaps = confirmed_swaps_rx.recv().await.ok_or_else(|| {
                 eyre::eyre!("Confirmed swaps channel receiver unexpectedly closed")
             })?;
+
+            loop {
+                // drain the channel of any additional confirmed swaps to handle in one batch
+                match confirmed_swaps_rx.try_recv() {
+                    Ok(new_confirmed_swaps) => {
+                        confirmed_swaps.extend(new_confirmed_swaps);
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(e) => return Err(eyre::eyre!("Confirmed swaps channel error: {}", e)),
+                }
+            }
 
             // TODO: Some validation that the TXNS are still in the longest chain and then pushing them back to the
             // pending swaps queue if they do not would be ideal
@@ -520,7 +531,7 @@ async fn find_new_swaps_in_blocks(
     Ok(pending_swaps)
 }
 
-#[instrument(skip(btc_rpc, pending_swaps))]
+#[instrument(level = "info", skip(btc_rpc, pending_swaps))]
 async fn find_pending_swaps_with_sufficient_confirmations(
     btc_rpc: Arc<AsyncBitcoinClient>,
     pending_swaps: &mut Vec<PendingSwap>,
@@ -645,6 +656,7 @@ fn get_leaf_and_block_header_from_block_info(
 /// # Returns
 ///
 /// A Result containing the ChainTransition if successful, or an error otherwise
+#[instrument(level = "info", skip(btc_rpc, bitcoin_mmr, light_client_mmr))]
 pub async fn build_chain_transition_for_light_client_update<'a>(
     btc_rpc: Arc<AsyncBitcoinClient>,
     bitcoin_mmr: &RwLockReadGuard<'a, IndexedMMR<Keccak256Hasher>>,

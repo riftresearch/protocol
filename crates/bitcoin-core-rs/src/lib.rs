@@ -190,7 +190,6 @@ pub fn validate_next_work_required(
     previous_header: &[u8; 80],
     current_header: &[u8; 80],
 ) -> Result<[u8; 80]> {
-    // time of
     if (previous_height + 1) % DIFFICULTY_ADJUSTMENT_INTERVAL == 0 {
         let current_header_difficulty = current_header.bits();
 

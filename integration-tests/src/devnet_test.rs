@@ -327,6 +327,8 @@ async fn test_simulated_swap_end_to_end() {
 
     let current_block_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
 
+    let mut new_block_subscription = devnet.bitcoin.data_engine.subscribe_to_new_blocks();
+
     // broadcast it
     let broadcast_tx = devnet
         .bitcoin
@@ -344,13 +346,13 @@ async fn test_simulated_swap_end_to_end() {
     // now mine enough blocks for confirmations (1 + 1 additional)
     devnet.bitcoin.mine_blocks(2).await.unwrap();
 
-    // wait for the block height to be included in the data engine
-    let swap_leaf = devnet
-        .bitcoin
-        .data_engine
-        .wait_for_block_height(swap_block_height as u32)
-        .await
-        .unwrap();
+    let swap_leaf = loop {
+        let new_block_leaf = new_block_subscription.recv().await.unwrap();
+        println!("New block leaf: {:?}", new_block_leaf);
+        if new_block_leaf.height == swap_block_height as u32 {
+            break new_block_leaf;
+        }
+    };
 
     println!("Swap block height (mined): {:?}", swap_block_height);
     println!("Broadcast tx: {:?}", broadcast_tx);

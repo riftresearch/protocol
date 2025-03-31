@@ -13,3 +13,4 @@ test-crates: | build
 
 test: | build test-contracts test-crates
 	@echo "All tests passed"
+

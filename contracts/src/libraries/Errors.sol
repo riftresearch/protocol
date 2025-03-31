@@ -20,7 +20,7 @@ library Errors {
     error InvalidConfirmationBlockInclusionProof();
     error CannotOverwriteOngoingSwap();
     error NoFeeToPay();
-    error InvalidVaultCommitment();
+    error InvalidVaultCommitment(bytes32 vaultCommitment);
     error StillInChallengePeriod();
     error SwapNotProved();
     error InvalidConfirmationBlockDelta();

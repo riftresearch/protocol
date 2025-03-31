@@ -396,7 +396,7 @@ impl RiftDevnetBuilder {
             );
             println!(
                 "Bitcoin RPC URL:       {}",
-                bitcoin_devnet.regtest.rpc_url()
+                bitcoin_devnet.rpc_url_with_cookie
             );
             println!(
                 "{} Address:  {}",

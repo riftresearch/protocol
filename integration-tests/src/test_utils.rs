@@ -380,7 +380,6 @@ pub fn setup_test_tracing() {
         // Only init tracing if --nocapture is passed
         let has_nocapture = std::env::args().any(|arg| arg == "--nocapture");
         if has_nocapture {
-            println!("Setting up test tracing");
             tracing_subscriber::fmt()
                 .with_env_filter(
                     EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
