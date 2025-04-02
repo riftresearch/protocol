@@ -89,7 +89,7 @@ base = { key = "${BASE_ETHERSCAN_API_KEY}" }
 "sp1-contracts" = { version = "4.0.0", url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip" }
 solmate = "6.7.0"
 solady = "0.1.12"
-uniswap-permit2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+uniswap-permit2 = { version = "1.0.0", git = "https://github.com/jhubbardsf/permit2.git", branch = "main" }
 
 [soldeer]
 # whether Soldeer manages remappings

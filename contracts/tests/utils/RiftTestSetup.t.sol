@@ -9,6 +9,7 @@ import {console} from "forge-std/src/console.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
 import {MockToken} from "./MockToken.sol";
 import {IPermit2, ISignatureTransfer} from "uniswap-permit2/src/interfaces/IPermit2.sol";
+import {Permit2} from "uniswap-permit2/src/Permit2.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {RiftTest, RiftExchangeExposed} from "./RiftTest.sol";
 import {VaultLib} from "../../src/libraries/VaultLib.sol";
@@ -58,12 +59,15 @@ contract RiftReactorExposed is RiftReactor, RiftTest {
 }
 
 contract RiftTestSetup is RiftTest {
-    MockPermit2 public permit2;
+    IPermit2 public permit2;
     RiftReactorExposed public riftReactor;
 
     function setUp() public virtual override {
         mockToken = new MockToken("Mock Token", "MTK", 6);
         verifier = new SP1MockVerifier();
+
+        // Deploy the real Permit2 contract
+        permit2 = IPermit2(address(new Permit2()));
 
         Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
 

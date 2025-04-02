@@ -1,52 +1,17 @@
 // SPDX-License-Identifier: MIT
-pragma solidity =0.8.28;
+pragma solidity ^0.8.28;
 
 import {RiftTestSetup, RiftReactorExposed} from "../../utils/RiftTestSetup.t.sol";
-import {RiftReactor} from "../../../src/RiftReactor.sol";
 import {Types} from "../../../src/libraries/Types.sol";
-import {Errors} from "../../../src/libraries/Errors.sol";
 import {EIP712Hashing} from "../../../src/libraries/Hashing.sol";
+import {ECDSA} from "@openzeppelin-contracts/utils/cryptography/ECDSA.sol";
+import {Errors} from "../../../src/libraries/Errors.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {IPermit2, ISignatureTransfer} from "uniswap-permit2/src/interfaces/IPermit2.sol";
 import {Test} from "forge-std/src/Test.sol";
 import {console} from "forge-std/src/console.sol";
 import {Events} from "../../../src/libraries/Events.sol";
 import {MockToken} from "../../utils//MockToken.sol";
-
-/**
- * @title MockPermit2
- * @notice Mock implementation of the Permit2 contract for testing
- */
-contract MockPermit2 {
-    function permitTransferFrom(
-        ISignatureTransfer.PermitTransferFrom calldata permit,
-        ISignatureTransfer.SignatureTransferDetails calldata transferDetails,
-        address owner,
-        bytes calldata /*signature*/
-    ) external {
-        console.log("MockPermit2: permitTransferFrom called");
-        console.log("  token:", permit.permitted.token);
-        console.log("  amount:", permit.permitted.amount);
-        console.log("  owner:", owner);
-        console.log("  to:", transferDetails.to);
-
-        // Get the token from the permitted struct
-        address token = permit.permitted.token;
-
-        // Check balance and allowance
-        uint256 balance = IERC20(token).balanceOf(owner);
-        require(balance >= transferDetails.requestedAmount, "Insufficient balance");
-
-        uint256 allowance = IERC20(token).allowance(owner, address(this));
-        require(allowance >= transferDetails.requestedAmount, "Insufficient allowance");
-
-        // Perform the transfer
-        bool success = IERC20(token).transferFrom(owner, transferDetails.to, transferDetails.requestedAmount);
-        console.log("  transfer success:", success);
-
-        require(success, "Transfer failed");
-    }
-}
 
 // Mock Router/Solver for the swap functionality
 contract MockRouter {
