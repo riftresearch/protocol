@@ -3,4 +3,4 @@ forge-std/=dependencies/forge-std-1.9.3/
 solady/=dependencies/solady-0.1.12/
 solmate/=dependencies/solmate-6.7.0/
 sp1-contracts/=dependencies/sp1-contracts-4.0.0/
-uniswap-permit2/=dependencies/uniswap-permit2-0x000000000022D473030F116dDEE9F6B43aC78BA3/
+uniswap-permit2/=dependencies/uniswap-permit2-1.0.0/

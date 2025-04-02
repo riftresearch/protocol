@@ -7,7 +7,6 @@ integrity = "81dfe91a4a5693db197d3f77f399215f433e5ad8cad25e5e7c77d103965f44c7"
 
 [[dependencies]]
 name = "uniswap-permit2"
-version = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
-url = "https://soldeer-revisions.s3.amazonaws.com/uniswap-permit2/0x000000000022D473030F116dDEE9F6B43aC78BA3_11-11-2024_08:00:23_permit2.zip"
-checksum = "d4fb59a5d0b9bb91c6800b55a0fa4037dcf4d2a17e55750ffb369572a4dd5906"
-integrity = "0557449748fa1d64e1e0caa3928c16a06932a16f16bc14cb37023526ed5228cc"
+version = "1.0.0"
+git = "https://github.com/jhubbardsf/permit2.git"
+rev = "d585af5c7a73689db5d5ccf9dc8f4644c7219eb0"

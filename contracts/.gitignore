@@ -5,3 +5,4 @@ src/rift_contracts.code-workspace
 .env
 dependencies/*
 notionSpecs
+.cursorignore

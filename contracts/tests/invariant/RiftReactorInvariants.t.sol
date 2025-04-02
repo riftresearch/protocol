@@ -10,44 +10,7 @@ import {MockToken} from "../utils/MockToken.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
 import {IPermit2} from "uniswap-permit2/src/interfaces/IPermit2.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
-
-// Exposed version of RiftReactor for testing internal functions
-contract RiftReactorExposed is RiftReactor {
-    constructor(
-        bytes32 _mmrRoot,
-        address _depositToken,
-        bytes32 _circuitVerificationKey,
-        address _verifier,
-        address _feeRouter,
-        Types.BlockLeaf memory _tipBlockLeaf,
-        address _permit2_address
-    )
-        RiftReactor(
-            _mmrRoot,
-            _depositToken,
-            _circuitVerificationKey,
-            _verifier,
-            _feeRouter,
-            _tipBlockLeaf,
-            _permit2_address
-        )
-    {}
-
-    // Expose internal functions for testing
-    function computeAuctionSats(Types.DutchAuctionInfo calldata auction) public view returns (uint256) {
-        return _computeAuctionSats(auction);
-    }
-
-    // Expose internal function for testing
-    function setSwapBond(bytes32 orderHash, Types.BondedSwap memory bond) public {
-        swapBonds[orderHash] = bond;
-    }
-
-    // Expose internal function for testing
-    function getBondedSwap(bytes32 orderHash) public view returns (Types.BondedSwap memory) {
-        return swapBonds[orderHash];
-    }
-}
+import {RiftReactorExposed} from "../utils/RiftTestSetup.t.sol";
 
 /**
  * @title RiftReactorHandler
@@ -393,7 +356,37 @@ contract RiftReactorInvariantTest is Test {
     }
 
     /**
-     * @notice Invariant: Intent nonces should be unique per user
+     * @notice Invariant: Sum of all bonds and slashed fees should equal the token balance
+     */
+    function invariant_AccountingConsistency() public {
+        uint256 contractBalance = depositToken.balanceOf(address(reactor));
+        uint256 slashedFees = reactor.slashedBondFees();
+        uint256 activeBonds = handler.totalBondAmount();
+
+        assertEq(
+            contractBalance,
+            slashedFees + activeBonds,
+            "Contract balance should equal slashed fees plus active bonds"
+        );
+    }
+
+    /**
+     * @notice Invariant: Bonds cannot be double-released
+     */
+    function invariant_NoBondDoubleRelease() public {
+        // Count the number of bonds created and released/slashed
+        uint256 totalBondsCreated = handler.totalBondsCreated();
+        uint256 totalBondsReleased = handler.totalBondsReleased();
+        uint256 totalBondsSlashed = handler.totalBondsSlashed();
+
+        assertTrue(
+            totalBondsReleased + totalBondsSlashed <= totalBondsCreated,
+            "Number of bonds released/slashed should never exceed bonds created"
+        );
+    }
+
+    /**
+     * @notice Intent nonces should be unique per user
      */
     function invariant_UniqueIntentNonces() public {
         uint256 currentNonce = reactor.intentNonce(user);
