@@ -166,8 +166,10 @@ contract RiftReactor is RiftExchange {
             Types.BondedSwap memory swapInfo = swapBonds[param.orderHash];
             // Ensure a valid bond is recorded.
             if (swapInfo.marketMaker == address(0)) revert Errors.BondNotFoundOrAlreadyReleased();
+            // COMMMENT ABOUT POSSIBLE BUG: Is this a valid comment ("This should probably hardcode the transfer details or I can create a fake order that steals a permit but sets the transfer details to me instead?")? Look at the types of these thingsm we're Doesnt validateBondAndRecord validate this or somewhre else?
 
-            // Release the full bond amount back to the market maker (no penalty applied here).
+            // Release the full bond amount back to the market maker (no penalty
+            // applied here).
             bool success = DEPOSIT_TOKEN.transfer(swapInfo.marketMaker, swapInfo.bond);
             if (!success) revert Errors.BondReleaseTransferFailed();
 
@@ -231,7 +233,7 @@ contract RiftReactor is RiftExchange {
     function _executeIntentAndSwapShared(
         Types.LiquidityRoute calldata route,
         Types.SignedIntent calldata order
-    ) internal returns (uint256 expectedSats) {
+    ) internal virtual returns (uint256 expectedSats) {
         _validateBondAndRecord(order);
 
         // Step 4: Transfer ERC20 tokens from the user's account into the
@@ -254,6 +256,9 @@ contract RiftReactor is RiftExchange {
      * @dev Follows CEI by recording the bond first then performing the external call.
      */
     function _validateBondAndRecord(Types.SignedIntent calldata order) internal {
+        // Validate the intent signature
+        order.validateEIP712(DOMAIN_SEPARATOR);
+
         if (order.info.nonce != intentNonce[order.info.depositLiquidityParams.depositOwnerAddress]) {
             revert Errors.InvalidNonce();
         }
@@ -272,27 +277,22 @@ contract RiftReactor is RiftExchange {
         bool success = DEPOSIT_TOKEN.transferFrom(msg.sender, address(this), requiredBond);
         if (!success) {
             // Rollback the state update if external call fails.
-            delete swapBonds[orderId];
+            delete swapBonds[orderId]; // JSH Comment: Is this needed? Since we're reverting the swapBond[orderId] shouldn't be createdd...
             revert Errors.BondDepositTransferFailed();
         }
     }
 
     /**
-     * @notice Executes a token swap through a router and validates the resulting cbBTC amount
-     * @dev Handles steps 5-8 of the swap execution process:
-     *      5. Fetch contract's current balance of cbBTC
-     *      6. Approve the router contract to spend the tokens
-     *      7. Call the router with the provided route data
-     *      8. Validate that sufficient cbBTC was received after the swap
-     * @param route The liquidity route containing swap details and routing information
-     * @param order The signed intent containing deposit parameters
-     * @param depositAmount The expected amount of cbBTC to receive from the swap
+     * @notice Executes the swap using the provided route
+     * @param route The route data for the swap
+     * @param order The signed intent containing swap information
+     * @param depositAmount The amount to be deposited
      */
     function _executeSwap(
         Types.LiquidityRoute calldata route,
         Types.SignedIntent calldata order,
         uint256 depositAmount
-    ) internal {
+    ) internal virtual {
         // Step 5: Fetch contracts current balance of cbBTC (preCallcbBTC)
         uint256 preCallcbBTC = DEPOSIT_TOKEN.balanceOf(address(this));
 
@@ -370,13 +370,13 @@ contract RiftReactor is RiftExchange {
     function _computeAuctionSats(Types.DutchAuctionInfo calldata info) internal view returns (uint256 expectedSats) {
         uint256 currentBlock = block.number;
 
-        // Return maxSats if auction hasn't started yet.
-        if (currentBlock <= info.startBlock) {
-            return info.maxSats;
-        }
         // Return minSats if auction has already ended.
         if (currentBlock >= info.endBlock) {
             return info.minSats;
+        }
+        // Return maxSats if auction hasn't started yet.
+        if (currentBlock <= info.startBlock) {
+            return info.maxSats;
         }
 
         // Calculate the proportion of blocks elapsed in the auction period.
