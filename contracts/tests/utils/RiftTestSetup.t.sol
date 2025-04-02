@@ -5,6 +5,7 @@ import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftReactor} from "../../src/RiftReactor.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {Test} from "forge-std/src/Test.sol";
+import {console} from "forge-std/src/console.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
 import {MockToken} from "./MockToken.sol";
 import {IPermit2, ISignatureTransfer} from "uniswap-permit2/src/interfaces/IPermit2.sol";
@@ -86,28 +87,65 @@ contract RiftTestSetup is RiftTest {
 
 /**
  * @title MockPermit2
- * @notice Mock implementation of the Permit2 contract for testing
+ * @notice Simplified mock implementation of the Permit2 contract for testing
+ * @dev This mock doesn't validate signatures at all for simplicity
  */
 contract MockPermit2 {
     function permitTransferFrom(
         ISignatureTransfer.PermitTransferFrom calldata permit,
         ISignatureTransfer.SignatureTransferDetails calldata transferDetails,
         address owner,
-        bytes calldata /*signature*/
+        bytes calldata /* signature - ignored */
     ) external {
-        // Get the token from the permitted struct
-        address token = permit.permitted.token;
+        console.log("MockPermit2.permitTransferFrom called");
+        console.log("- Owner:", owner);
+        console.log("- Token:", permit.permitted.token);
+        console.log("- Amount:", permit.permitted.amount);
+        console.log("- To:", transferDetails.to);
+        console.log("- Requested amount:", transferDetails.requestedAmount);
 
-        // Check balance and allowance
-        uint256 balance = IERC20(token).balanceOf(owner);
-        require(balance >= transferDetails.requestedAmount, "Insufficient balance");
+        // Skip signature validation completely in the mock
 
-        uint256 allowance = IERC20(token).allowance(owner, address(this));
-        require(allowance >= transferDetails.requestedAmount, "Insufficient allowance");
+        // Check balance
+        uint256 balance = IERC20(permit.permitted.token).balanceOf(owner);
+        console.log("- Owner balance:", balance);
+
+        if (balance < transferDetails.requestedAmount) {
+            console.log("INSUFFICIENT BALANCE!");
+            revert("Insufficient balance");
+        }
+
+        uint256 allowance = IERC20(permit.permitted.token).allowance(owner, address(this));
+        console.log("- Owner allowance to permit2:", allowance);
+
+        if (allowance < transferDetails.requestedAmount) {
+            console.log("INSUFFICIENT ALLOWANCE!");
+            revert("Insufficient allowance");
+        }
 
         // Perform the transfer
-        bool success = IERC20(token).transferFrom(owner, transferDetails.to, transferDetails.requestedAmount);
+        console.log("- Transferring tokens...");
+        bool success = IERC20(permit.permitted.token).transferFrom(
+            owner,
+            transferDetails.to,
+            transferDetails.requestedAmount
+        );
 
-        require(success, "Transfer failed");
+        if (!success) {
+            console.log("TRANSFER FAILED!");
+            revert("Transfer failed");
+        }
+
+        console.log("- Transfer successful");
+    }
+
+    // For the tests that need a hash function
+    function hash(
+        ISignatureTransfer.PermitTransferFrom memory /* permit */,
+        uint256 /* requestedAmount */,
+        address /* to */
+    ) public pure returns (bytes32) {
+        // Just return a dummy hash for testing
+        return bytes32(uint256(0x123456));
     }
 }
