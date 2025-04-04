@@ -29,6 +29,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::marker::PhantomData;
 
+// arbitrary error code for transport errors that doesn't collide with bitcoin rpc error codes
+const TRANSPORT_ERROR_CODE: i32 = -32001;
+
 /// A minimal error type for the transport.
 #[derive(Debug)]
 pub enum TransportError {
@@ -83,14 +86,13 @@ impl From<TransportError> for bitcoincore_rpc_async::jsonrpc::Error {
     fn from(e: TransportError) -> Self {
         use bitcoincore_rpc_async::jsonrpc::error::RpcError;
         bitcoincore_rpc_async::jsonrpc::Error::Rpc(RpcError {
-            code: -32001,
+            code: TRANSPORT_ERROR_CODE,
             message: e.to_string(),
             data: None,
         })
     }
 }
 
-// Then update the Transport implementation to map the errors
 #[async_trait]
 impl Transport for ReqwestTransport {
     async fn send_request(
@@ -203,7 +205,7 @@ where
                 }
                 bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
-                ) if rpcerr.code == -32001 => {
+                ) if rpcerr.code == TRANSPORT_ERROR_CODE => {
                     tracing::error!("Caught transport error: {:?}", rpcerr);
                     Err(BackoffError::permanent(e))
                 }
@@ -290,9 +292,6 @@ impl AsyncBitcoinClient {
         Ok(results)
     }
 }
-
-const RETRY_ATTEMPTS: u8 = 10;
-const INTERVAL: u64 = 100;
 
 #[async_trait::async_trait]
 impl RpcApi for AsyncBitcoinClient {

@@ -158,11 +158,6 @@ pub async fn create_deposit(
     println!("Approved");
 
     // ---3) Maker deposits liquidity into RiftExchange---
-    // We'll fill in some "fake" deposit parameters.
-    // This is just an example; in real usage you'd call e.g. depositLiquidity(...) with your chosen params.
-
-    // We can skip real MMR proofs; for dev/test, we can pass dummy MMR proof data or a known "safe block."
-    // For example, we'll craft a dummy "BlockLeaf" that the contract won't reject:
     let (safe_leaf, safe_siblings, safe_peaks) =
         devnet.contract_data_engine.get_tip_proof().await.unwrap();
 
@@ -295,82 +290,6 @@ pub async fn send_bitcoin_for_deposit(
 
     // now mine enough blocks for confirmations (1 + 1 additional)
     devnet.bitcoin.mine_blocks(2).await.unwrap();
-}
-/// A cloneable "Layer" that lets you register watchers for log messages.
-/// Each watcher is associated with a pattern string; when we see a log that
-/// contains that pattern, we notify all watchers listening for it.
-#[derive(Clone)]
-pub struct WaitForLogLayer {
-    inner: Arc<Mutex<Watchers>>,
-}
-
-/// Shared state: a map from pattern -> list of waiting senders
-type Watchers = HashMap<String, Vec<oneshot::Sender<()>>>;
-
-impl WaitForLogLayer {
-    /// Create a new layer
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Register a new log waiter for a given `pattern`. Returns a `Receiver` you can `.await`.
-    /// Once a log arrives containing `pattern`, we'll notify (and remove) all watchers for it.
-    pub fn watch(&self, pattern: impl Into<String>) -> oneshot::Receiver<()> {
-        let pat = pattern.into();
-        let (tx, rx) = oneshot::channel();
-
-        // Insert our sender into the map for this pattern
-        let mut watchers = self.inner.lock().unwrap();
-        watchers.entry(pat).or_default().push(tx);
-
-        rx
-    }
-}
-
-/// Implement a `tracing_subscriber::Layer` so we can inspect all events
-impl<S> Layer<S> for WaitForLogLayer
-where
-    S: Subscriber,
-{
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let mut msg = String::new();
-
-        // Use a visitor to capture the event's message
-        struct StringVisitor<'a>(&'a mut String);
-
-        impl<'a> tracing::field::Visit for StringVisitor<'a> {
-            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-                if field.name() == "message" {
-                    write!(self.0, "{:?}", value).unwrap();
-                }
-            }
-        }
-
-        event.record(&mut StringVisitor(&mut msg));
-
-        // Lock our watchers so we can see if this message hits any patterns
-        let mut watchers_map = self.inner.lock().unwrap();
-
-        // Gather which patterns matched; we'll remove their watchers and notify them
-        let keys: Vec<_> = watchers_map.keys().cloned().collect();
-        let mut matched = Vec::new();
-        for pattern in keys {
-            if msg.contains(&pattern) {
-                if let Some(watchers) = watchers_map.remove(&pattern) {
-                    matched.push(watchers);
-                }
-            }
-        }
-
-        // Notify all watchers that matched
-        for group in matched {
-            for sender in group {
-                let _ = sender.send(()); // ignore error if receiver is dropped
-            }
-        }
-    }
 }
 
 static LOGGING: OnceCell<()> = OnceCell::new();

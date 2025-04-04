@@ -22,7 +22,7 @@ use bitcoin_light_client_core::light_client::Header;
 use bitcoin_light_client_core::mmr::MMRProof;
 use bitcoin_light_client_core::{validate_chainwork, ChainTransition, ProvenLeaf, VerifiedBlock};
 
-use accumulators::mmr::{element_index_to_leaf_index, map_leaf_index_to_element_index};
+use accumulators::mmr::element_index_to_leaf_index;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
