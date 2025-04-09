@@ -9,8 +9,9 @@ use std::time::Instant;
 
 use clap::Parser;
 use prettytable::{row, Table};
-use rift_sdk::mmr::IndexedMMR;
-use rift_sdk::{format_duration, DatabaseLocation, Proof, ProofGeneratorType, RiftProofGenerator};
+use rift_sdk::indexed_mmr::IndexedMMR;
+use rift_sdk::proof_generator::{format_duration, Proof, ProofGeneratorType, RiftProofGenerator};
+use rift_sdk::DatabaseLocation;
 
 use test_data_utils::{EXHAUSTIVE_TEST_HEADERS, TEST_BCH_HEADERS};
 
@@ -19,9 +20,9 @@ use bitcoin_light_client_core::leaves::{create_new_leaves, get_genesis_leaf, Blo
 use bitcoin_light_client_core::light_client::Header;
 
 use bitcoin_light_client_core::mmr::MMRProof;
-use bitcoin_light_client_core::{validate_chainwork, BlockPosition, ChainTransition};
+use bitcoin_light_client_core::{validate_chainwork, ChainTransition, ProvenLeaf, VerifiedBlock};
 
-use accumulators::mmr::{element_index_to_leaf_index, map_leaf_index_to_element_index};
+use accumulators::mmr::element_index_to_leaf_index;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -258,20 +259,23 @@ async fn create_bch_overwrite_chain_transition(
     let chain_transition = ChainTransition {
         current_mmr_root,
         current_mmr_bagged_peak,
-        parent: BlockPosition {
+        parent: VerifiedBlock {
             header: state.parent_header,
-            leaf: state.parent_leaf,
-            inclusion_proof: parent_inclusion_proof,
+            mmr_data: ProvenLeaf {
+                leaf: state.parent_leaf,
+                proof: parent_inclusion_proof,
+            },
         },
-        parent_retarget: BlockPosition {
+        parent_retarget: VerifiedBlock {
             header: state.parent_retarget_header,
-            leaf: state.parent_retarget_leaf,
-            inclusion_proof: parent_retarget_inclusion_proof,
+            mmr_data: ProvenLeaf {
+                leaf: state.parent_retarget_leaf,
+                proof: parent_retarget_inclusion_proof,
+            },
         },
-        current_tip: BlockPosition {
-            header: current_tip_header,
+        current_tip: ProvenLeaf {
             leaf: current_tip_leaf,
-            inclusion_proof: current_tip_proof,
+            proof: current_tip_proof,
         },
         parent_leaf_peaks: state.pre_bch_peaks.clone(),
         disposed_leaf_hashes,
@@ -315,8 +319,6 @@ async fn prove_bch_overwrite(
     // 3) Execute or prove
     prove_chain_transition(chain_transition, benchmark_type, proof_generator).await
 }
-
-// Optionally, you could also add a simpler “extend from genesis” scenario or others.
 
 #[tokio::main]
 async fn main() {

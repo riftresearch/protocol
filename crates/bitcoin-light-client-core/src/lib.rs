@@ -3,9 +3,11 @@ pub mod leaves;
 pub mod light_client;
 pub mod mmr;
 
+use core::fmt;
+
 use crypto_bigint::U256;
 use serde::{Deserialize, Serialize};
-use sol_types::Types::LightClientPublicInput;
+use sol_bindings::Types::LightClientPublicInput;
 
 use crate::hasher::{Digest, Hasher};
 use crate::leaves::create_new_leaves;
@@ -18,36 +20,26 @@ fn validate_leaf_block_hashes(
     parent_leaf: &BlockLeaf,
     parent_retarget_header: &Header,
     parent_retarget_leaf: &BlockLeaf,
-    current_tip_header: &Header,
-    current_tip_leaf: &BlockLeaf,
 ) {
     assert!(
         parent_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
+            &bitcoin_core_rs::get_block_hash(parent_header.as_bytes())
                 .expect("Failed to get parent header block hash")
         ),
         "Parent leaf block hash {} does not match parent header block hash {}",
         hex::encode(parent_leaf.block_hash),
         hex::encode(
-            bitcoin_core_rs::get_block_hash(&parent_header.as_bytes())
+            bitcoin_core_rs::get_block_hash(parent_header.as_bytes())
                 .expect("Failed to get parent header block hash")
         )
     );
 
     assert!(
         parent_retarget_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(&parent_retarget_header.as_bytes())
+            &bitcoin_core_rs::get_block_hash(parent_retarget_header.as_bytes())
                 .expect("Failed to get parent retarget header block hash")
         ),
         "Parent retarget leaf block hash does not match parent retarget header block hash"
-    );
-
-    assert!(
-        current_tip_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(&current_tip_header.as_bytes())
-                .expect("Failed to get previous tip header block hash")
-        ),
-        "Previous tip leaf block hash does not match previous tip header block hash"
     );
 }
 
@@ -148,27 +140,71 @@ pub fn validate_chainwork(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct BlockPosition {
-    pub header: Header,
+pub struct ProvenLeaf {
     pub leaf: BlockLeaf,
-    pub inclusion_proof: MMRProof,
+    pub proof: MMRProof,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct VerifiedBlock {
+    pub header: Header,
+    pub mmr_data: ProvenLeaf,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ChainTransition {
     // Previous MMR state
     pub current_mmr_root: Digest,
     pub current_mmr_bagged_peak: Digest, // bagged peak of the old MMR, when hashed with the leaf count gives the previous MMR root
 
-    // Block positions
-    pub parent: BlockPosition,          // parent of the new chain
-    pub parent_retarget: BlockPosition, // retarget block of the parent
-    pub current_tip: BlockPosition,     // previous tip of the old MMR
+    // Blocks needed to verify the transition, with proofs that they're in the old MMR
+    pub parent: VerifiedBlock,          // parent of the new chain
+    pub parent_retarget: VerifiedBlock, // retarget block of the parent
+    pub current_tip: ProvenLeaf,        // current tip of the old MMR
 
     // New chain data
     pub parent_leaf_peaks: Vec<Digest>, // peaks of the MMR with parent as the tip
     pub disposed_leaf_hashes: Vec<Digest>, // leaves that are being removed from the old MMR => all of the leaves after parent in the old MMR
     pub new_headers: Vec<Header>,
+}
+
+impl fmt::Debug for ChainTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChainTransition")
+            .field("current_mmr_root", &hex::encode(self.current_mmr_root))
+            .field(
+                "current_mmr_bagged_peak",
+                &hex::encode(self.current_mmr_bagged_peak),
+            )
+            .field("parent", &self.parent)
+            .field("parent_retarget", &self.parent_retarget)
+            .field("current_tip", &self.current_tip)
+            .field(
+                "parent_leaf_peaks",
+                &self
+                    .parent_leaf_peaks
+                    .iter()
+                    .map(hex::encode)
+                    .collect::<Vec<_>>(),
+            )
+            .field(
+                "disposed_leaf_hashes",
+                &self
+                    .disposed_leaf_hashes
+                    .iter()
+                    .map(hex::encode)
+                    .collect::<Vec<_>>(),
+            )
+            .field(
+                "new_headers",
+                &self
+                    .new_headers
+                    .iter()
+                    .map(|h| hex::encode(h.as_bytes()))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -181,9 +217,9 @@ impl ChainTransition {
     pub fn new(
         current_mmr_root: Digest,
         current_mmr_bagged_peak: Digest,
-        parent: BlockPosition,
-        parent_retarget: BlockPosition,
-        current_tip: BlockPosition,
+        parent: VerifiedBlock,
+        parent_retarget: VerifiedBlock,
+        current_tip: ProvenLeaf,
         parent_leaf_peaks: Vec<Digest>,
         disposed_leaf_hashes: Vec<Digest>,
         new_headers: Vec<Header>,
@@ -210,52 +246,57 @@ impl ChainTransition {
         // [0] Validate block hashes
         validate_leaf_block_hashes(
             &self.parent.header,
-            &self.parent.leaf,
+            &self.parent.mmr_data.leaf,
             &self.parent_retarget.header,
-            &self.parent_retarget.leaf,
-            &self.current_tip.header,
-            &self.current_tip.leaf,
+            &self.parent_retarget.mmr_data.leaf,
         );
 
         // [1] Precompute leaf hashes and total amount of leaves
-        let parent_leaf_hash = self.parent.leaf.hash::<H>();
-        let parent_retarget_leaf_hash = self.parent_retarget.leaf.hash::<H>();
+        let parent_leaf_hash = self.parent.mmr_data.leaf.hash::<H>();
+        let parent_retarget_leaf_hash = self.parent_retarget.mmr_data.leaf.hash::<H>();
         let current_tip_leaf_hash = self.current_tip.leaf.hash::<H>();
 
         // block heights are 0-indexed so add 1 to get the number of leaves, keep in mind this is only true if the chain begins with the genesis block
         let current_tip_chain_leaf_count = self.current_tip.leaf.height + 1;
-        let parent_chain_leaf_count = self.parent.leaf.height + 1;
+        let parent_chain_leaf_count = self.parent.mmr_data.leaf.height + 1;
 
         // [2] Validate header chain
         light_client::validate_header_chain(
-            self.parent.leaf.height,
+            self.parent.mmr_data.leaf.height,
             &self.parent.header,
             &self.parent_retarget.header,
             &self.new_headers,
         );
 
         // [3] Validate chainwork and get new chain works
-        let (new_chain_works, _) =
-            validate_chainwork(&self.parent.leaf, &self.current_tip.leaf, &self.new_headers);
+        let (new_chain_works, _) = validate_chainwork(
+            &self.parent.mmr_data.leaf,
+            &self.current_tip.leaf,
+            &self.new_headers,
+        );
 
         // [4] Create new leaves
-        let new_leaves = create_new_leaves(&self.parent.leaf, &self.new_headers, &new_chain_works);
+        let new_leaves = create_new_leaves(
+            &self.parent.mmr_data.leaf,
+            &self.new_headers,
+            &new_chain_works,
+        );
 
         // [5] Validate MMR proofs
         validate_mmr_proofs::<H>(
             &parent_leaf_hash,
             &current_tip_leaf_hash,
             &parent_retarget_leaf_hash,
-            &self.parent.inclusion_proof,
-            &self.current_tip.inclusion_proof,
-            &self.parent_retarget.inclusion_proof,
+            &self.parent.mmr_data.proof,
+            &self.current_tip.proof,
+            &self.parent_retarget.mmr_data.proof,
             &self.current_mmr_root,
             current_tip_chain_leaf_count,
         );
 
         // [6-7] Validate reorg conditions
         validate_reorg_conditions(
-            &self.parent.leaf,
+            &self.parent.mmr_data.leaf,
             &self.current_tip.leaf,
             &parent_leaf_hash,
             &current_tip_leaf_hash,
@@ -281,10 +322,8 @@ impl ChainTransition {
             new_mmr.append(&leaf.hash::<H>());
         }
 
-        // [11] Compress the parent leaf and new leaves
-        let mut all_leaves = vec![self.parent.leaf];
-        all_leaves.extend(new_leaves);
-        let compressed_leaves: Vec<u8> = all_leaves.compress();
+        // [11] Only include new leaves
+        let compressed_leaves: Vec<u8> = new_leaves.compress();
 
         // [12] Compute the new leaves commitment
         let new_leaves_commitment = H::hash(&compressed_leaves);
@@ -294,7 +333,7 @@ impl ChainTransition {
             previousMmrRoot: self.current_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesCommitment: new_leaves_commitment.into(),
-            tipBlockLeaf: (*all_leaves.last().expect("New leaves should not be empty")).into(),
+            tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
         };
 
         if include_auxiliary_data {
@@ -453,30 +492,33 @@ mod tests {
         let public_input = ChainTransition::new(
             mmr.get_root(),
             mmr.bag_peaks().unwrap(),
-            BlockPosition {
+            VerifiedBlock {
                 header: genesis_header,
-                leaf: genesis_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(
-                    &client_mmr
-                        .get_proof(genesis_client_index, None)
-                        .await
-                        .unwrap(),
-                ),
+                mmr_data: ProvenLeaf {
+                    leaf: genesis_leaf,
+                    proof: client_mmr_proof_to_circuit_mmr_proof(
+                        &client_mmr
+                            .get_proof(genesis_client_index, None)
+                            .await
+                            .unwrap(),
+                    ),
+                },
             },
-            BlockPosition {
+            VerifiedBlock {
                 header: genesis_header,
-                leaf: genesis_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(
-                    &client_mmr
-                        .get_proof(genesis_client_index, None)
-                        .await
-                        .unwrap(),
-                ),
+                mmr_data: ProvenLeaf {
+                    leaf: genesis_leaf,
+                    proof: client_mmr_proof_to_circuit_mmr_proof(
+                        &client_mmr
+                            .get_proof(genesis_client_index, None)
+                            .await
+                            .unwrap(),
+                    ),
+                },
             },
-            BlockPosition {
-                header: genesis_header,
+            ProvenLeaf {
                 leaf: genesis_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(
+                proof: client_mmr_proof_to_circuit_mmr_proof(
                     &client_mmr
                         .get_proof(genesis_client_index, None)
                         .await
@@ -604,20 +646,23 @@ mod tests {
         let public_input = ChainTransition::new(
             current_mmr_root,
             current_mmr_bagged_peak,
-            BlockPosition {
+            VerifiedBlock {
                 header: parent_header,
-                leaf: parent_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&parent_leaf_proof),
+                mmr_data: ProvenLeaf {
+                    leaf: parent_leaf,
+                    proof: client_mmr_proof_to_circuit_mmr_proof(&parent_leaf_proof),
+                },
             },
-            BlockPosition {
+            VerifiedBlock {
                 header: parent_retarget_header,
-                leaf: parent_retarget_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof),
+                mmr_data: ProvenLeaf {
+                    leaf: parent_retarget_leaf,
+                    proof: client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof),
+                },
             },
-            BlockPosition {
-                header: current_tip_header,
+            ProvenLeaf {
                 leaf: current_tip_leaf,
-                inclusion_proof: client_mmr_proof_to_circuit_mmr_proof(&current_tip_leaf_proof),
+                proof: client_mmr_proof_to_circuit_mmr_proof(&current_tip_leaf_proof),
             },
             pre_bch_peaks,
             bch_leaves

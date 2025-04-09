@@ -11,12 +11,13 @@ bitcoin-light-client-core = { workspace = true }
 bitcoin = { workspace = true }
 data-engine = { workspace = true }
 rift-core = { workspace = true }
-sol-types = { workspace = true }
-bitcoincore-rpc-async2 = { workspace = true }
+sol-bindings= { workspace = true }
+bitcoincore-rpc-async = { workspace = true }
 checkpoint-downloader = { workspace = true }
 
 
 reqwest = { workspace = true }
+tokio-util = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-rusqlite = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

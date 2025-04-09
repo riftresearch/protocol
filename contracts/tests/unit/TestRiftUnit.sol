@@ -68,6 +68,7 @@ contract RiftExchangeUnitTest is RiftTest {
             Types.DepositVault({
                 vaultIndex: vault.vaultIndex % maxValue,
                 depositTimestamp: vault.depositTimestamp % maxValue,
+                depositUnlockTimestamp: vault.depositUnlockTimestamp % maxValue,
                 depositAmount: vault.depositAmount % maxValue,
                 depositFee: vault.depositFee % maxValue,
                 expectedSats: vault.expectedSats % maxValue,
@@ -151,7 +152,7 @@ contract RiftExchangeUnitTest is RiftTest {
         // [2] warp and withdraw to empty the vault
         vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
         vm.recordLogs();
-        exchange.withdrawLiquidity({vault: fullVault});
+        exchange.withdrawLiquidityPublic({vault: fullVault});
         Types.DepositVault memory emptyVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [3] burn the USDC withdrawn from the vault
@@ -182,7 +183,7 @@ contract RiftExchangeUnitTest is RiftTest {
             overwriteVault: emptyVault
         });
 
-        exchange.depositLiquidityWithOverwrite(args);
+        exchange.depositLiquidityWithOverwritePublic(args);
 
         // [6] grab the logs, find the new vault
         Types.DepositVault memory overwrittenVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
@@ -227,7 +228,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
-        exchange.withdrawLiquidity(vault);
+        exchange.withdrawLiquidityPublic(vault);
         Types.DepositVault memory updatedVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
@@ -449,6 +450,8 @@ contract RiftExchangeUnitTest is RiftTest {
             Types.MMRProof memory tipMmrProof
         ) = _setupVaultsAndSubmitSwap(params);
 
+        bytes32 orderHash = keccak256(abi.encode(createdSwap));
+
         // Record initial balances
         uint256 initialBalance = mockToken.balanceOf(address(this));
         uint256 initialFeeBalance = exchange.accumulatedFeeBalance();
@@ -475,18 +478,17 @@ contract RiftExchangeUnitTest is RiftTest {
         vm.recordLogs();
         Types.ReleaseLiquidityParams memory releaseLiquidityParams = Types.ReleaseLiquidityParams({
             swap: createdSwap,
-            swapBlockChainwork: swapMmrProof.blockLeaf.cumulativeChainwork,
-            swapBlockHeight: swapMmrProof.blockLeaf.height,
             bitcoinSwapBlockSiblings: swapMmrProof.siblings,
             bitcoinSwapBlockPeaks: swapMmrProof.peaks,
             utilizedVault: vault,
-            tipBlockHeight: tipMmrProof.blockLeaf.height
+            tipBlockHeight: tipMmrProof.blockLeaf.height,
+            orderHash: orderHash
         });
 
         Types.ReleaseLiquidityParams[] memory releaseLiquidityParamsArray = new Types.ReleaseLiquidityParams[](1);
         releaseLiquidityParamsArray[0] = releaseLiquidityParams;
 
-        exchange.releaseLiquidityBatch(releaseLiquidityParamsArray);
+        exchange.releaseLiquidityBatchPublic(releaseLiquidityParamsArray);
 
         // Verify swap completion
         Types.ProposedSwap memory updatedSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
@@ -522,7 +524,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         exchange.payoutToFeeRouter();
         assertEq(
-            mockToken.balanceOf(exchange.FEE_ROUTER_ADDRESS()),
+            mockToken.balanceOf(exchange.feeRouterAddress()),
             feeRouterBalancePrePayout,
             "Fee router should have received all fees"
         );

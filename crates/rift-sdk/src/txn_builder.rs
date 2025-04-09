@@ -19,13 +19,13 @@ use crate::errors::{Result, RiftSdkError};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
-use sol_types::Types::DepositVault;
+use sol_bindings::Types::DepositVault;
 use std::io::Read;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct P2WPKHBitcoinWallet {
     pub secret_key: SecretKey,
     pub public_key: String,
@@ -129,21 +129,21 @@ impl P2WPKHBitcoinWallet {
     }
 }
 
-pub fn serialize_no_segwit(tx: &Transaction) -> Vec<u8> {
+pub fn serialize_no_segwit(tx: &Transaction) -> eyre::Result<Vec<u8>> {
     let mut buffer = Vec::new();
     tx.version
         .consensus_encode(&mut buffer)
-        .expect("Encoding version failed");
+        .map_err(|e| eyre::eyre!("Encoding version failed: {}", e))?;
     tx.input
         .consensus_encode(&mut buffer)
-        .expect("Encoding inputs failed");
+        .map_err(|e| eyre::eyre!("Encoding inputs failed: {}", e))?;
     tx.output
         .consensus_encode(&mut buffer)
-        .expect("Encoding outputs failed");
+        .map_err(|e| eyre::eyre!("Encoding outputs failed: {}", e))?;
     tx.lock_time
         .consensus_encode(&mut buffer)
-        .expect("Encoding lock_time failed");
-    buffer
+        .map_err(|e| eyre::eyre!("Encoding lock_time failed: {}", e))?;
+    Ok(buffer)
 }
 
 pub fn build_rift_payment_transaction(

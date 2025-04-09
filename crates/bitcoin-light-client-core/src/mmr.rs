@@ -2,7 +2,7 @@
 // Actual storage of leaves and proof generation is left to the client
 use crate::hasher::{Digest, Hasher};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self, Debug};
 
 /// Trait for different MMR data storage strategies
 pub trait MMRStorageStrategy: Clone {
@@ -177,7 +177,7 @@ pub fn bag_peaks<H: Hasher>(peaks: &[Digest]) -> Option<Digest> {
 
 pub type CompactMerkleMountainRange<H> = MerkleMountainRange<H, CompactMMR>;
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct MMRProof {
     pub leaf_hash: Digest,
     pub leaf_index: u32,
@@ -186,13 +186,21 @@ pub struct MMRProof {
     pub leaf_count: u32,
 }
 
-impl MMRProof {
-    pub fn from_vec(vec: Vec<u8>) -> Self {
-        bincode::deserialize(&vec).unwrap()
-    }
-
-    pub fn to_vec(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
+impl fmt::Debug for MMRProof {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MMRProof")
+            .field("leaf_hash", &hex::encode(self.leaf_hash))
+            .field("leaf_index", &self.leaf_index)
+            .field(
+                "siblings",
+                &self.siblings.iter().map(hex::encode).collect::<Vec<_>>(),
+            )
+            .field(
+                "peaks",
+                &self.peaks.iter().map(hex::encode).collect::<Vec<_>>(),
+            )
+            .field("leaf_count", &self.leaf_count)
+            .finish()
     }
 }
 
@@ -200,8 +208,6 @@ impl MMRProof {
 pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
     // First verify the proof up to a peak
     let mut current_hash = proof.leaf_hash;
-
-    println!("leaf hash: {}", hex::encode(proof.leaf_hash));
 
     let mut leaf_index = proof.leaf_index;
     // Apply each proof element to get to a peak
@@ -215,8 +221,6 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
         };
     }
 
-    println!("computed leaf's peak: {}", hex::encode(current_hash));
-
     // Verify the computed peak exists in peaks array
     if !proof.peaks.contains(&current_hash) {
         return false;
@@ -224,10 +228,8 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
 
     // Verify the peaks produce the expected root
     let bagged_peaks = bag_peaks::<H>(&proof.peaks).unwrap();
-    println!("bagged peaks: {}", hex::encode(bagged_peaks));
 
     let computed_root = get_root::<H>(proof.leaf_count, &bagged_peaks);
-    println!("computed root: {}", hex::encode(computed_root));
     computed_root == *root
 }
 

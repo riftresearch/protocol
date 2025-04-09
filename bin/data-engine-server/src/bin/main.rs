@@ -2,10 +2,11 @@ use bitcoin_light_client_core::leaves::get_genesis_leaf;
 use clap::Parser;
 use eyre::Result;
 
-use data_engine::engine::DataEngine;
+use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 use data_engine_server::ServerConfig;
 use rift_sdk::DatabaseLocation;
+use tokio::task::JoinSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,8 +22,9 @@ async fn main() -> Result<()> {
     let config = ServerConfig::parse();
     let checkpoint_leaves =
         checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
-
-    let data_engine_server = DataEngineServer::start(config, checkpoint_leaves).await?;
-    data_engine_server.server_handle.await?;
+    let mut join_set = JoinSet::new();
+    let data_engine_server =
+        DataEngineServer::start(config, checkpoint_leaves, &mut join_set).await?;
+    join_set.join_all().await;
     Ok(())
 }

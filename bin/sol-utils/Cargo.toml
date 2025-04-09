@@ -14,7 +14,7 @@ rift-core = { workspace = true }
 rift-sdk = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
 checkpoint-downloader = { workspace = true }
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
 
 accumulators.workspace = true
 hex.workspace = true

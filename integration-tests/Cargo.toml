@@ -11,8 +11,33 @@ path = "src/lib.rs"
 
 [dependencies]
 tokio.workspace = true
-data-engine.workspace = true
 devnet.workspace = true
 tempfile.workspace = true
-rift-sdk.workspace = true
 bitcoin-light-client-core.workspace = true
+rift-core = { workspace = true }
+rift-sdk = { workspace = true }
+data-engine = { workspace = true }
+data-engine-server = { workspace = true }
+corepc-node = { workspace = true }
+sol-bindings= { workspace = true }
+bitcoin-data-engine = { workspace = true }
+accumulators = { workspace = true }
+hypernode = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio-util = { workspace = true }
+hex = { workspace = true }
+alloy = { workspace = true }
+clap = { workspace = true }
+bitcoin = { workspace = true }
+eyre = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+bitcoincore-rpc-async = { workspace = true }
+serial_test = { workspace = true }
+once_cell = { workspace = true }
+test-data-utils = { workspace = true }
+crypto-bigint = { workspace = true }

@@ -307,12 +307,6 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let parent = &leaves[0];
         let parent_hash = parent.hash::<H>();
 
-        println!("[in append_or_reorg_based_on_parent] leaves: {:?}", leaves);
-        println!(
-            "[in append_or_reorg_based_on_parent] parent_hash: {:?}",
-            hex::encode(parent_hash)
-        );
-
         let new_leaves = &leaves[1..];
 
         match self.get_leaf_by_leaf_hash(&parent_hash).await? {
@@ -352,6 +346,7 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let update_interval = std::time::Duration::from_secs(2); // Update stats every 2 seconds
         let mut last_update = start_time;
 
+        // TODO: Update the underlying accumulators library to support batch operations
         for (i, leaf) in leaves.iter().enumerate() {
             let leaf_hash = leaf.hash::<H>();
             let leaf_hash_hex = digest_to_hex(&leaf_hash);

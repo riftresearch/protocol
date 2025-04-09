@@ -7,19 +7,19 @@ use std::fmt;
 use crate::hasher::Hasher;
 use crate::light_client::Header;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default)]
+#[derive(PartialEq, Eq, Copy, Clone, Serialize, Deserialize, Default)]
 pub struct BlockLeaf {
     pub height: u32,
     pub block_hash: [u8; 32],           // Stored in reverse byte order
     pub cumulative_chainwork: [u8; 32], // Stored in reverse byte order
 }
 
-impl From<BlockLeaf> for sol_types::Types::BlockLeaf {
+impl From<BlockLeaf> for sol_bindings::Types::BlockLeaf {
     fn from(leaf: BlockLeaf) -> Self {
         // Chainwork is stored in reverse byte order, so we need to reverse it before converting to the Uint type
         let mut cumulative_chainwork = leaf.cumulative_chainwork;
         cumulative_chainwork.reverse();
-        sol_types::Types::BlockLeaf {
+        sol_bindings::Types::BlockLeaf {
             height: leaf.height,
             blockHash: leaf.block_hash.into(),
             cumulativeChainwork: alloy_sol_types::sol_data::Uint::<256>::detokenize(
@@ -46,11 +46,15 @@ impl BlockLeaf {
         U256::from_be_bytes(self.cumulative_chainwork)
     }
 
-    // Compare internal hash (which is always reverse byte order) to a "natural" hash (as returned by hash(header))
-    pub fn compare_by_natural_block_hash(&self, other: &[u8; 32]) -> bool {
+    pub fn natural_block_hash(&self) -> [u8; 32] {
         let mut natural_block_hash = self.block_hash;
         natural_block_hash.reverse();
-        natural_block_hash == *other
+        natural_block_hash
+    }
+
+    // Compare internal hash (which is always reverse byte order) to a "natural" hash (as returned by hash(header))
+    pub fn compare_by_natural_block_hash(&self, other: &[u8; 32]) -> bool {
+        self.natural_block_hash() == *other
     }
 
     pub fn hash<H: Hasher>(&self) -> [u8; 32] {
@@ -89,11 +93,28 @@ impl fmt::Display for BlockLeaf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "BlockLeaf {{ height: {}, block_hash: {}, chainwork: {} }}",
+            "BlockLeaf {{
+                height: {},
+                block_hash: {},
+                chainwork: {}
+            }}",
             self.height,
             hex::encode(self.block_hash),
             hex::encode(self.cumulative_chainwork)
         )
+    }
+}
+
+impl std::fmt::Debug for BlockLeaf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockLeaf")
+            .field("height", &self.height)
+            .field("block_hash", &hex::encode(self.block_hash))
+            .field(
+                "cumulative_chainwork",
+                &hex::encode(self.cumulative_chainwork),
+            )
+            .finish()
     }
 }
 
@@ -125,9 +146,9 @@ pub fn create_new_leaves(
 
 pub fn get_genesis_leaf() -> BlockLeaf {
     BlockLeaf::new(
-        hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f").into(),
+        hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
         0,
-        hex!("0000000000000000000000000000000000000000000000000000000100010001").into(),
+        hex!("0000000000000000000000000000000000000000000000000000000100010001"),
     )
 }
 
@@ -165,9 +186,9 @@ mod tests {
         let leaves = vec![
             get_genesis_leaf(),
             BlockLeaf::new(
-                hex!("4860eb18bf1b1620e37e9490fc8a427514416fd75159ab86688e9a8300000000").into(),
+                hex!("4860eb18bf1b1620e37e9490fc8a427514416fd75159ab86688e9a8300000000"),
                 1,
-                hex!("0200020002000000000000000000000000000000000000000000000000000000").into(),
+                hex!("0200020002000000000000000000000000000000000000000000000000000000"),
             ),
         ];
 

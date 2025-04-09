@@ -5,10 +5,10 @@ edition = "2021"
 
 [[bin]]
 name = "hypernode"
-path = "src/main.rs"
+path = "src/bin/main.rs"
 
 [dependencies]
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
 bitcoin-core-rs = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
 bitcoin-data-engine = { workspace = true }
@@ -17,8 +17,10 @@ rift-sdk = { workspace = true }
 rift-program = { workspace = true }
 data-engine = { workspace = true }
 checkpoint-downloader = { workspace = true }
-bitcoincore-rpc-async2 = { workspace = true }
+bitcoincore-rpc-async = { workspace = true }
+accumulators = { workspace = true }
 
+tokio-util = { workspace = true }
 tokio = { workspace = true }
 alloy = { workspace = true }
 futures-util = { workspace = true }
@@ -34,3 +36,5 @@ bitcoin = { workspace = true }
 crypto-bigint = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

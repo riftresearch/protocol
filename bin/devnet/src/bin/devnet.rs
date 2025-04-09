@@ -37,14 +37,17 @@ async fn main() -> Result<()> {
         None
     };
 
-    let (devnet, _funding_sats) = RiftDevnet::setup(
-        true,             // interactive
-        args.evm_address, // an optional EVM address to fund
-        None,
-        fork_config,
-        /*data_engine_db_location=*/ DatabaseLocation::InMemory,
-    )
-    .await?;
+    let mut devnet_builder = RiftDevnet::builder()
+        .interactive(true)
+        .using_bitcoin(true)
+        .data_engine_db_location(DatabaseLocation::InMemory);
+    if let Some(evm_address) = args.evm_address {
+        devnet_builder = devnet_builder.funded_evm_address(evm_address);
+    }
+    if let Some(fork_config) = fork_config {
+        devnet_builder = devnet_builder.fork_config(fork_config);
+    }
+    let (devnet, _funding_sats) = devnet_builder.build().await?;
 
     // Wait for Ctrl+C
     signal::ctrl_c().await?;

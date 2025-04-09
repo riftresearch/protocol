@@ -1,6 +1,6 @@
 // Effectively a Rust impl of `contracts/src/libraries/CommitmentVerificationLib.sol`
 use alloy_sol_types::SolType;
-use sol_types::Types::DepositVault;
+use sol_bindings::Types::DepositVault;
 use tiny_keccak::{Hasher, Keccak};
 
 pub fn hash_deposit_vault(vault: &DepositVault) -> [u8; 32] {

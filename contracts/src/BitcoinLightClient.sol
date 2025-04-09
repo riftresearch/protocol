@@ -62,31 +62,32 @@ abstract contract BitcoinLightClient {
         Types.BlockLeaf memory tipBlockLeaf,
         bytes calldata compressedBlockLeaves
     ) internal {
+        // no need to do anything if the chain is already like the caller expected
         if (newMmrRoot == mmrRoot) {
-            // TODO: No need to do anything if the chain is already like the caller expected?
             return;
         }
 
+        // ensure the prior checkpoint is established
         Types.BitcoinCheckpoint memory priorCheckpoint = checkpoints[priorMmrRoot];
         if (!priorCheckpoint.established) {
             revert Errors.CheckpointNotEstablished();
         }
 
-        // TODO: Do we want to allow updates to the chain if the chainwork is equal? giving priority to an older chain seems arbitrary
-        if (checkpoints[mmrRoot].tipBlockLeaf.cumulativeChainwork > tipBlockLeaf.cumulativeChainwork) {
+        // ensure new chain has greater chainwork to the current checkpoint
+        if (checkpoints[mmrRoot].tipBlockLeaf.cumulativeChainwork >= tipBlockLeaf.cumulativeChainwork) {
             revert Errors.ChainworkTooLow();
         }
 
+        // add checkpoint and update mmrRoot
         checkpoints[newMmrRoot] = Types.BitcoinCheckpoint({established: true, tipBlockLeaf: tipBlockLeaf});
-
         mmrRoot = newMmrRoot;
         emit Events.BitcoinLightClientUpdated(priorMmrRoot, newMmrRoot, compressedBlockLeaves);
     }
 
     function proveBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata siblings,
-        bytes32[] calldata peaks
+        bytes32[] memory siblings,
+        bytes32[] memory peaks
     ) public view returns (bool) {
         return
             LightClientVerificationLib.proveBlockInclusion(
@@ -109,9 +110,6 @@ abstract contract BitcoinLightClient {
         bytes32[] calldata peaks,
         uint32 expectedConfirmationBlocks
     ) internal view {
-        if (expectedConfirmationBlocks < 2) {
-            revert Errors.InvalidConfirmationBlockDelta();
-        }
         if (!proveBlockInclusion(blockLeaf, siblings, peaks)) {
             revert Errors.InvalidSwapBlockInclusionProof();
         }

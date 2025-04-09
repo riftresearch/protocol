@@ -13,9 +13,10 @@ use bitcoin::hashes::Hash;
 use bitcoin_core_rs::get_block_hash;
 use bitcoin_light_client_core::light_client::Header;
 use serde::{Deserialize, Serialize};
-use sol_types::Types::{
+use sol_bindings::Types::{
     DepositVault, LightClientPublicInput, ProofPublicInput, ProofType, SwapPublicInput,
 };
+
 use vaults::hash_deposit_vault;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -32,7 +33,7 @@ pub struct RiftTransaction {
 
 impl RiftTransaction {
     pub fn verify(&self) -> SwapPublicInput {
-        let block_header = &self.block_header.as_bytes();
+        let block_header = self.block_header.as_bytes();
 
         // [0] Validate Bitcoin merkle proof of the transaction hash
         let block_header_merkle_root = deserialize::<bitcoin::block::Header>(block_header)
@@ -46,8 +47,9 @@ impl RiftTransaction {
 
         // [1] Validate Bitcoin payment given the reserved deposit vault
 
-        let vault_commitment = hash_deposit_vault(&self.reserved_vault);
-        validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment);
+        let vault_commitment: [u8; 32] = hash_deposit_vault(&self.reserved_vault);
+        validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment)
+            .expect("Failed to validate bitcoin payment");
 
         // [2] Construct the public input, bitcoin block hash and txid are reversed to align with network byte order
         let mut block_hash =
@@ -173,13 +175,6 @@ pub mod giga {
         }
     }
 
-    /*
-    pub enum ProofType {
-        SwapOnly,
-        LightClientOnly,
-        Combined,
-    }
-    */
     impl RiftProgramInput {
         pub fn get_auxiliary_light_client_data(
             &self,

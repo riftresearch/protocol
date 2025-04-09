@@ -11,42 +11,57 @@ use bitcoin_light_client_core::{
 };
 use eyre::Result;
 use futures_util::stream::StreamExt;
-use rift_sdk::bindings::{
-    non_artifacted_types::Types::{SwapUpdateContext, VaultUpdateContext},
-    Types::DepositVault,
+use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
+use rift_sdk::DatabaseLocation;
+use sol_bindings::{
+    RiftExchange,
+    Types::{DepositVault, VaultUpdateContext},
 };
-use rift_sdk::mmr::IndexedMMR;
-use rift_sdk::{bindings::RiftExchange, DatabaseLocation};
+use tokio_util::task::{task_tracker, TaskTracker};
 
+use core::panic;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
-use tokio::{sync::RwLock, task::JoinHandle};
-use tracing::{info, warn};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::JoinSet,
+};
+use tracing::{info, info_span, instrument, warn, Instrument};
 
 // Added for idempotency tracking.
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::db::{
-    add_deposit, add_proposed_swap, get_deposits_for_recipient, get_proposed_swap_id,
-    get_virtual_swaps, setup_swaps_database, update_deposit_to_withdrawn,
-    update_proposed_swap_to_released,
+use crate::{
+    db::{
+        add_deposit, add_proposed_swap, get_deposits_for_recipient, get_otc_swap_by_deposit_id,
+        get_proposed_swap_id, get_swaps_ready_to_be_released, get_virtual_swaps,
+        setup_swaps_database, update_deposit_to_withdrawn, update_proposed_swap_to_released,
+        ChainAwareProposedSwapWithDeposit,
+    },
+    models::{ChainAwareDeposit, ChainAwareProposedSwap},
 };
-use crate::models::OTCSwap;
+use crate::{
+    db::{get_deposit_by_id, get_oldest_active_deposit},
+    models::OTCSwap,
+};
 
-pub struct DataEngine {
-    pub indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+pub struct ContractDataEngine {
+    pub checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
     // New field to track if the event listener has been started already.
     server_started: Arc<AtomicBool>,
-    pub event_listener_handle: Option<JoinHandle<()>>,
+    initial_sync_complete_watcher: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<bool>>>>,
+    initial_sync_complete: Arc<AtomicBool>,
 }
 
-impl DataEngine {
+impl ContractDataEngine {
     /// Seeds the DataEngine with the provided checkpoint leaves, but does not start the event listener.
     pub async fn seed(
         database_location: &DatabaseLocation,
         checkpoint_leaves: Vec<BlockLeaf>,
     ) -> Result<Self> {
-        let indexed_mmr = Arc::new(RwLock::new(IndexedMMR::open(database_location).await?));
+        let checkpointed_block_tree = Arc::new(RwLock::new(
+            CheckpointedBlockTree::open(database_location).await?,
+        ));
         let swap_database_connection = Arc::new(match database_location.clone() {
             DatabaseLocation::InMemory => tokio_rusqlite::Connection::open_in_memory().await?,
             DatabaseLocation::Directory(path) => {
@@ -56,16 +71,31 @@ impl DataEngine {
 
         setup_swaps_database(&swap_database_connection).await?;
 
-        Self::conditionally_seed_mmr(&indexed_mmr, checkpoint_leaves).await?;
-
-        println!("DataEngine seeded with checkpoint leaves.");
+        Self::conditionally_seed_mmr(&checkpointed_block_tree, checkpoint_leaves).await?;
 
         Ok(Self {
-            indexed_mmr,
+            checkpointed_block_tree,
             swap_database_connection,
+            initial_sync_complete: Arc::new(AtomicBool::new(false)),
+            initial_sync_complete_watcher: Arc::new(Mutex::new(Vec::new())),
             server_started: Arc::new(AtomicBool::new(false)),
-            event_listener_handle: None,
         })
+    }
+
+    pub async fn wait_for_initial_sync(&self) -> eyre::Result<()> {
+        let mut initial_sync_complete_watcher = self.initial_sync_complete_watcher.lock().await;
+        if self
+            .initial_sync_complete
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        initial_sync_complete_watcher.push(tx);
+        drop(initial_sync_complete_watcher);
+        rx.await
+            .map_err(|_| eyre::eyre!("Initial sync watcher channel closed unexpectedly"))?;
+        Ok(())
     }
 
     /// Seeds the DataEngine and immediately starts the event listener.
@@ -73,15 +103,21 @@ impl DataEngine {
     pub async fn start(
         database_location: &DatabaseLocation,
         provider: Arc<dyn Provider<PubSubFrontend>>,
-        rift_exchange_address: String,
+        rift_exchange_address: Address,
         deploy_block_number: u64,
         checkpoint_leaves: Vec<BlockLeaf>,
+        join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<Self> {
         // Seed the engine with checkpoint leaves.
         let mut engine = Self::seed(database_location, checkpoint_leaves).await?;
         // Start event listener
         engine
-            .start_event_listener(provider, rift_exchange_address, deploy_block_number)
+            .start_event_listener(
+                provider,
+                rift_exchange_address,
+                deploy_block_number,
+                join_set,
+            )
             .await?;
 
         Ok(engine)
@@ -92,44 +128,60 @@ impl DataEngine {
     pub async fn start_event_listener(
         &mut self,
         provider: Arc<dyn Provider<PubSubFrontend>>,
-        rift_exchange_address: String,
+        rift_exchange_address: Address,
         deploy_block_number: u64,
-    ) -> Result<()> {
+        join_set: &mut JoinSet<eyre::Result<()>>,
+    ) -> eyre::Result<()> {
         // If the server is already started, return an error.
+        // TODO: Solve this via better struct design instead of using an actual server_started flag.
         if self.server_started.swap(true, Ordering::SeqCst) {
             return Err(eyre::eyre!("Server already started"));
         }
 
-        let indexed_mmr_clone = self.indexed_mmr.clone();
+        let checkpointed_block_tree_clone = self.checkpointed_block_tree.clone();
         let swap_database_connection_clone = self.swap_database_connection.clone();
+        let initial_sync_complete_clone = self.initial_sync_complete.clone();
+        let initial_sync_complete_watcher_clone = self.initial_sync_complete_watcher.clone();
 
-        let handle = tokio::spawn(async move {
-            listen_for_events(
-                provider,
-                &swap_database_connection_clone,
-                indexed_mmr_clone,
-                &rift_exchange_address,
-                deploy_block_number,
-            )
-            .await
-            .expect("listen_for_events failed");
-        });
-
-        self.event_listener_handle = Some(handle);
+        join_set.spawn(
+            async move {
+                info!("Starting contract data engine event listener");
+                listen_for_events(
+                    provider,
+                    &swap_database_connection_clone,
+                    checkpointed_block_tree_clone,
+                    rift_exchange_address,
+                    deploy_block_number,
+                    initial_sync_complete_clone,
+                    initial_sync_complete_watcher_clone,
+                )
+                .await
+            }
+            .instrument(info_span!("CDE Event Listener")),
+        );
 
         Ok(())
     }
 
     async fn conditionally_seed_mmr(
-        indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+        checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
         checkpoint_leaves: Vec<BlockLeaf>,
     ) -> Result<()> {
-        if indexed_mmr.read().await.get_leaf_count().await? == 0 && !checkpoint_leaves.is_empty() {
-            indexed_mmr
+        if checkpointed_block_tree
+            .read()
+            .await
+            .get_leaf_count()
+            .await?
+            == 0
+            && !checkpoint_leaves.is_empty()
+        {
+            checkpointed_block_tree
                 .write()
                 .await
-                .batch_append(&checkpoint_leaves)
+                .create_seed_checkpoint(&checkpoint_leaves)
                 .await?;
+
+            println!("DataEngine seeded with checkpoint leaves.");
         }
         Ok(())
     }
@@ -157,15 +209,41 @@ impl DataEngine {
         get_virtual_swaps(&self.swap_database_connection, address, page, page_size).await
     }
 
+    pub async fn get_oldest_active_deposit(
+        &self,
+        current_block_timestamp: u64,
+    ) -> Result<Option<ChainAwareDeposit>> {
+        get_oldest_active_deposit(&self.swap_database_connection, current_block_timestamp).await
+    }
+
+    pub async fn get_otc_swap_by_deposit_id(
+        &self,
+        deposit_id: [u8; 32],
+    ) -> Result<Option<OTCSwap>> {
+        get_otc_swap_by_deposit_id(&self.swap_database_connection, deposit_id).await
+    }
+
+    pub async fn get_swaps_ready_to_be_released(
+        &self,
+        current_block_timestamp: u64,
+    ) -> Result<Vec<ChainAwareProposedSwapWithDeposit>> {
+        get_swaps_ready_to_be_released(&self.swap_database_connection, current_block_timestamp)
+            .await
+    }
+
     // get's the tip of the MMR, and returns a proof of the tip
     pub async fn get_tip_proof(&self) -> Result<(BlockLeaf, Vec<Digest>, Vec<Digest>)> {
-        let mmr = self.indexed_mmr.read().await;
-        let leaves_count = mmr.client_mmr().leaves_count.get().await?;
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        let leaves_count = checkpointed_block_tree.get_leaf_count().await?;
         let leaf_index = leaves_count - 1;
-        let leaf = mmr.get_leaf_by_leaf_index(leaf_index).await?;
+        let leaf = checkpointed_block_tree
+            .get_leaf_by_leaf_index(leaf_index)
+            .await?;
         match leaf {
             Some(leaf) => {
-                let proof = mmr.get_circuit_proof(leaf_index, None).await?;
+                let proof = checkpointed_block_tree
+                    .get_circuit_proof(leaf_index, None)
+                    .await?;
                 let siblings = proof.siblings;
                 let peaks = proof.peaks;
                 Ok((leaf, siblings, peaks))
@@ -176,18 +254,34 @@ impl DataEngine {
 
     // Delegate method that provides read access to the mmr
     pub async fn get_leaf_count(&self) -> Result<usize> {
-        let mmr = self.indexed_mmr.read().await;
-        mmr.get_leaf_count().await.map_err(|e| eyre::eyre!(e))
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_leaf_count()
+            .await
+            .map_err(|e| eyre::eyre!(e))
     }
 
     pub async fn get_mmr_root(&self) -> Result<Digest> {
-        let mmr = self.indexed_mmr.read().await;
-        mmr.get_root().await.map_err(|e| eyre::eyre!(e))
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_root()
+            .await
+            .map_err(|e| eyre::eyre!(e))
     }
 
     pub async fn get_mmr_bagged_peak(&self) -> Result<Digest> {
-        let mmr = self.indexed_mmr.read().await;
-        mmr.get_bagged_peak().await.map_err(|e| eyre::eyre!(e))
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_bagged_peak()
+            .await
+            .map_err(|e| eyre::eyre!(e))
+    }
+
+    pub async fn get_deposit_by_id(
+        &self,
+        deposit_id: [u8; 32],
+    ) -> Result<Option<ChainAwareDeposit>> {
+        get_deposit_by_id(&self.swap_database_connection, deposit_id).await
     }
 }
 
@@ -201,12 +295,12 @@ fn get_qualified_swaps_database_path(database_location: String) -> String {
 pub async fn listen_for_events(
     provider: Arc<dyn Provider<PubSubFrontend>>,
     db_conn: &Arc<tokio_rusqlite::Connection>,
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
-    rift_exchange_address: &str,
+    checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
+    rift_exchange_address: Address,
     deploy_block_number: u64,
+    initial_sync_complete: Arc<AtomicBool>,
+    initial_sync_complete_watcher: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<bool>>>>,
 ) -> Result<()> {
-    let rift_exchange_address = Address::from_str(rift_exchange_address)?;
-
     // First, get the current block number
     let current_block = provider.get_block_number().await?;
     info!("Current block number: {}", current_block);
@@ -226,7 +320,7 @@ pub async fn listen_for_events(
 
     // Process historical logs
     for log in historical_logs.iter() {
-        process_log(log, db_conn, &indexed_mmr).await?;
+        process_log(log, db_conn, &checkpointed_block_tree).await?;
     }
 
     info!("Processed {} historical logs", historical_logs.len());
@@ -256,9 +350,10 @@ pub async fn listen_for_events(
 
         // Process gap logs
         for log in gap_logs {
-            process_log(&log, db_conn, &indexed_mmr).await?;
+            process_log(&log, db_conn, &checkpointed_block_tree).await?;
         }
     }
+    // TODO: This can potentially drop blocks, update this to subscribe BEFORE pulling historical logs
 
     // Create subscription filter for new logs starting after the latest processed block
     let subscription_filter = Filter::new()
@@ -273,9 +368,18 @@ pub async fn listen_for_events(
         latest_block + 1
     );
 
+    // Signal that the initial sync is complete
+    initial_sync_complete.store(true, std::sync::atomic::Ordering::SeqCst);
+    {
+        let mut initial_sync_complete_watcher = initial_sync_complete_watcher.lock().await;
+        for tx in initial_sync_complete_watcher.drain(..) {
+            let _ = tx.send(true);
+        }
+    }
+
     // Now process the subscription stream
     while let Some(log) = stream.next().await {
-        process_log(&log, db_conn, &indexed_mmr).await?;
+        process_log(&log, db_conn, &checkpointed_block_tree).await?;
     }
 
     println!("Subscription stream closed");
@@ -283,11 +387,10 @@ pub async fn listen_for_events(
     Ok(())
 }
 
-// Extract the log processing logic to avoid code duplication
 async fn process_log(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
-    indexed_mmr: &Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
 ) -> Result<()> {
     info!("Processing log: {:?}", log);
 
@@ -298,13 +401,21 @@ async fn process_log(
 
     match *topic {
         RiftExchange::VaultsUpdated::SIGNATURE_HASH => {
-            handle_vault_updated_event(log, db_conn).await?;
+            info_span!("handle_vault_updated")
+                .in_scope(|| handle_vault_updated_event(log, db_conn))
+                .await?;
         }
         RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
-            handle_swap_updated_event(log, db_conn).await?;
+            info_span!("handle_swap_updated")
+                .in_scope(|| handle_swap_updated_event(log, db_conn))
+                .await?;
         }
         RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
-            handle_bitcoin_light_client_updated_event(log, indexed_mmr.clone()).await?;
+            info_span!("handle_bitcoin_light_client_updated")
+                .in_scope(|| {
+                    handle_bitcoin_light_client_updated_event(log, checkpointed_block_tree.clone())
+                })
+                .await?;
         }
         _ => {
             warn!("Unknown event topic");
@@ -336,11 +447,8 @@ async fn handle_vault_updated_event(
         .ok_or_else(|| eyre::eyre!("Missing block hash in VaultUpdated event"))?;
 
     for deposit_vault in deposit_vaults {
-        match VaultUpdateContext::try_from(decoded.data.context)
-            .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
-        {
-            VaultUpdateContext::Created => {
-                info!("Creating deposit for index: {:?}", deposit_vault.vaultIndex);
+        match decoded.data.context {
+            0 /* VaultUpdateContext::Created */ => {
                 add_deposit(
                     db_conn,
                     deposit_vault,
@@ -351,11 +459,7 @@ async fn handle_vault_updated_event(
                 .await
                 .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
             }
-            VaultUpdateContext::Withdraw => {
-                info!(
-                    "Withdrawing deposit for nonce: {:?}",
-                    deposit_vault.vaultIndex
-                );
+            1 /* VaultUpdateContext::Withdraw */ => {
                 update_deposit_to_withdrawn(
                     db_conn,
                     deposit_vault.salt.into(),
@@ -393,10 +497,8 @@ async fn handle_swap_updated_event(
         .block_hash
         .ok_or_else(|| eyre::eyre!("Missing block hash in SwapUpdated event"))?;
 
-    match SwapUpdateContext::try_from(decoded.data.context)
-        .map_err(|e| eyre::eyre!("Failed to convert context: {:?}", e))?
-    {
-        SwapUpdateContext::Created => {
+    match decoded.data.context {
+        0 /* SwapUpdateContext::Created */ => {
             for swap in decoded.data.swaps {
                 info!(
                     "Received SwapUpdated event: proposed_swap_id = {:?}",
@@ -413,7 +515,7 @@ async fn handle_swap_updated_event(
                 .map_err(|e| eyre::eyre!("add_proposed_swap failed: {:?}", e))?;
             }
         }
-        SwapUpdateContext::Complete => {
+        1 /* SwapUpdateContext::Complete */ => {
             for swap in decoded.data.swaps {
                 update_proposed_swap_to_released(
                     db_conn,
@@ -433,7 +535,7 @@ async fn handle_swap_updated_event(
 
 async fn handle_bitcoin_light_client_updated_event(
     log: &Log,
-    indexed_mmr: Arc<RwLock<IndexedMMR<Keccak256Hasher>>>,
+    checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
 ) -> Result<()> {
     info!("Received BitcoinLightClientUpdated event");
 
@@ -446,15 +548,15 @@ async fn handle_bitcoin_light_client_updated_event(
     let new_mmr_root = block_tree_data.newMmrRoot.0;
     let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
     let block_leaves = decompress_block_leaves(&compressed_block_leaves);
-    // TODO: Reorg the MMR based on the prior root
 
     {
-        let mut mmr = indexed_mmr.write().await;
-        mmr.append_or_reorg_based_on_parent(&block_leaves)
+        let mut checkpointed_block_tree = checkpointed_block_tree.write().await;
+        checkpointed_block_tree
+            .update_from_checkpoint(&prior_mmr_root, &block_leaves)
             .await
             .map_err(|e| eyre::eyre!("append_or_reorg_based_on_parent failed: {:?}", e))?;
     }
-    let root = indexed_mmr
+    let root = checkpointed_block_tree
         .read()
         .await
         .get_root()

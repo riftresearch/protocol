@@ -4,16 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-alloy-sol-types = { workspace = true }
+alloy-sol-types= { workspace = true }
 bitcoin-core-rs = { workspace = true }
 crypto-bigint = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tiny-keccak = { workspace = true }
-hex-literal = "0.4.1"
 serde = { workspace = true }
-bincode = { workspace = true }
-sol-types = { workspace = true }
+sol-bindings= { workspace = true }
+hex-literal = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

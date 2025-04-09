@@ -8,7 +8,7 @@ exclude.workspace = true
 [dependencies]
 rift-sdk.workspace = true
 bitcoin-light-client-core.workspace = true
-sol-types.workspace = true
+sol-bindings.workspace = true
 rift-core.workspace = true
 
 tokio.workspace = true

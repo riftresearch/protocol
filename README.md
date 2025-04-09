@@ -1,11 +1,11 @@
-# Rift Protocol Monorepo
-All the components that secure Rift
-- [`bitcoin-light-client-program`](./crates/bitcoin-light-client-program/): Circuit validating Bitcoin Proof of Work and longest chain
-- [`rift-settlement-program`](./crates/rift-settlement-program/): Circuit validating Bitcoin<>Ethereum order settlement
-- [`contracts`](./contracts): Solidity smart contracts for the Rift Settlement Layer 
-- [`hypernode`](./bin/hypernode): Bitcoin and Ethereum indexer with hooks to trigger proof generation
-- [`e2e-tests`](./bin/hypernode): End-to-end testing suite for the entire system 
-- [`data-aggregation-contracts`](./data-aggregation-contracts): Contracts for aggregating and processing on-chain data in client code
+# Rift Protocol Monorepo  
+Trustless cross-chain swap protocol for Bitcoin and Ethereum
+
+#### Highlights:
+- [`bitcoin-light-client-core`](./crates/bitcoin-light-client-core/): Circuit validating Bitcoin consensus within an MMR-based light client.
+- [`rift-core`](./crates/rift-core/): Circuit handling Bitcoin<>Ethereum order settlement and light client state updates.
+- [`contracts`](./contracts): Solidity smart contracts for settling orders, and maintaining the light client state.
+- [`hypernode`](./bin/hypernode): Bitcoin and Ethereum indexer that generates swap proofs, settles challenged proofs, and detects and removes orphan blocks submitted to the light client.
 
 ## Dependencies
 
