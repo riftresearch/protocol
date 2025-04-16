@@ -111,7 +111,11 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256
     ) public {
         // [0] bound deposit amount & expected sats
-        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_SATS, type(uint64).max);
+        depositAmount = bound(
+            depositAmount,
+            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            type(uint64).max
+        );
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
         _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
@@ -127,12 +131,16 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256
     ) public {
         // [0] bound deposit amounts & expected sats
-        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_SATS, type(uint64).max);
+        depositAmount = bound(
+            depositAmount,
+            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            type(uint64).max
+        );
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
         toBeOverwrittendepositAmount = bound(
             toBeOverwrittendepositAmount,
-            Constants.MIN_DEPOSIT_SATS,
+            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
         toBeOverwrittenExpectedSats = uint64(
@@ -210,7 +218,11 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256
     ) public {
         // [0] bound inputs
-        depositAmount = bound(depositAmount, Constants.MIN_DEPOSIT_SATS, type(uint64).max);
+        depositAmount = bound(
+            depositAmount,
+            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            type(uint64).max
+        );
         expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
 
@@ -252,7 +264,11 @@ contract RiftExchangeUnitTest is RiftTest {
 
     function testFuzz_submitSwapProof(SubmitSwapProofParams memory params, uint256) public {
         // [0] bound inputs
-        params.depositAmount = bound(params.depositAmount, Constants.MIN_DEPOSIT_SATS, type(uint64).max);
+        params.depositAmount = bound(
+            params.depositAmount,
+            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            type(uint64).max
+        );
         params.expectedSats = uint64(bound(params.expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         params.confirmationBlocks = uint8(
             bound(params.confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
@@ -328,7 +344,7 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 swapIndex = exchange.getSwapHashesLength() - 1;
         bytes32 hash = exchange.getSwapHash(swapIndex);
 
-        uint256 takerFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount);
+        uint256 takerFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount, exchange.takerFeeBips());
 
         // [6] verify swap details
         assertEq(createdSwap.swapIndex, swapIndex, "Swap index should match");
@@ -428,7 +444,11 @@ contract RiftExchangeUnitTest is RiftTest {
 
     function testFuzz_releaseLiquidity(ReleaseLiquidityParams memory params, uint256) public {
         // Bound inputs
-        params.depositAmount = bound(params.depositAmount, Constants.MIN_DEPOSIT_SATS, type(uint64).max);
+        params.depositAmount = bound(
+            params.depositAmount,
+            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            type(uint64).max
+        );
         params.expectedSats = uint64(bound(params.expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
         params.confirmationBlocks = uint8(
             bound(params.confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
