@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
 
-import {console} from "forge-std/src/console.sol";
 import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
 import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
-import {MerkleProofLib} from "solady/src/utils/MerkleProofLib.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
 /**

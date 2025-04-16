@@ -3,10 +3,9 @@
 pragma solidity =0.8.28;
 
 import {ISP1Verifier} from "sp1-contracts/contracts/src/ISP1Verifier.sol";
-import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin-contracts/interfaces/IERC20Metadata.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
-import {Ownable} from "@openzeppelin-contracts/access/Ownable.sol";
+import {Ownable} from "solady/src/auth/Ownable.sol";
+import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 
 import {Constants} from "./libraries/Constants.sol";
 import {Errors} from "./libraries/Errors.sol";
@@ -25,11 +24,11 @@ import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
 contract RiftExchange is BitcoinLightClient, Ownable {
+    using SafeTransferLib for address;
     // -----------------------------------------------------------------------
     //                                IMMUTABLES
     // -----------------------------------------------------------------------
-    IERC20 public immutable ERC20_BTC;
-    uint8 public immutable TOKEN_DECIMALS;
+    address public immutable ERC20_BTC;
     bytes32 public immutable CIRCUIT_VERIFICATION_KEY;
     ISP1Verifier public immutable VERIFIER;
 
@@ -51,9 +50,9 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         address _verifier,
         address _feeRouter,
         Types.BlockLeaf memory _tipBlockLeaf
-    ) BitcoinLightClient(_mmrRoot, _tipBlockLeaf) Ownable(msg.sender) {
-        ERC20_BTC = IERC20(_depositToken);
-        TOKEN_DECIMALS = IERC20Metadata(_depositToken).decimals();
+    ) BitcoinLightClient(_mmrRoot, _tipBlockLeaf) {
+        _initializeOwner(msg.sender);
+        ERC20_BTC = _depositToken;
         CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
         VERIFIER = ISP1Verifier(_verifier);
         feeRouterAddress = _feeRouter;
@@ -69,7 +68,8 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         uint256 feeBalance = accumulatedFeeBalance;
         if (feeBalance == 0) revert Errors.NoFeeToPay();
         accumulatedFeeBalance = 0;
-        if (!ERC20_BTC.transfer(feeRouterAddress, feeBalance)) revert Errors.TransferFailed();
+
+        ERC20_BTC.safeTransfer(feeRouterAddress, feeBalance);
     }
 
     function setFeeRouterAddress(address _feeRouter) external onlyOwner {
@@ -131,7 +131,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
         vaultHashes[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
 
-        if (!ERC20_BTC.transfer(vault.ownerAddress, vault.depositAmount)) revert Errors.TransferFailed();
+        ERC20_BTC.safeTransfer(vault.ownerAddress, vault.depositAmount);
 
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
         updatedVaults[0] = updatedVault;
@@ -242,9 +242,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
 
             accumulatedFeeBalance += paramsArray[i].swap.totalSwapFee;
 
-            if (!ERC20_BTC.transfer(paramsArray[i].swap.specifiedPayoutAddress, paramsArray[i].swap.totalSwapOutput)) {
-                revert Errors.TransferFailed();
-            }
+            ERC20_BTC.safeTransfer(paramsArray[i].swap.specifiedPayoutAddress, paramsArray[i].swap.totalSwapOutput);
 
             updatedSwaps[i] = updatedSwap;
         }
@@ -326,9 +324,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
         updatedVaults[0] = vault;
         emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Created);
-        if (!ERC20_BTC.transferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee)) {
-            revert Errors.TransferFailed();
-        }
+        ERC20_BTC.safeTransferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee);
     }
 
     /// @notice Internal function to prepare and validate a batch of swap proofs
