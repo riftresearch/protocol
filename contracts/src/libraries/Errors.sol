@@ -9,7 +9,6 @@ library Errors {
     error CheckpointNotEstablished();
 
     // --------- RIFT EXCHANGE --------- //
-    error TransferFailed();
     error DepositAmountTooLow();
     error SatOutputTooLow();
     error DepositVaultNotOverwritable();

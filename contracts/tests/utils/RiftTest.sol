@@ -2,8 +2,6 @@
 pragma solidity ^0.8.4;
 
 import {Test} from "forge-std/src/Test.sol";
-import {IERC20} from "@openzeppelin-contracts/interfaces/IERC20.sol";
-import {ERC1967Proxy} from "@openzeppelin-contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
 import {Vm} from "forge-std/src/Vm.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
@@ -461,7 +459,7 @@ contract RiftTest is Test, PRNG {
     SP1MockVerifier public verifier;
 
     function setUp() public virtual {
-        mockToken = new MockToken("Mock Token", "MTK", 6);
+        mockToken = new MockToken("Synthetic Bitcoin", "sBTC", 8);
         verifier = new SP1MockVerifier();
 
         Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
