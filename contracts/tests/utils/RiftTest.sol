@@ -470,6 +470,7 @@ contract RiftTest is Test, PRNG {
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),
+            _takerFeeBips: 5,
             _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 

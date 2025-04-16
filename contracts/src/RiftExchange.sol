@@ -42,6 +42,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     bytes32[] public swapHashes;
     uint256 public accumulatedFeeBalance;
     address public feeRouterAddress;
+    uint16 public takerFeeBips;
 
     // -----------------------------------------------------------------------
     //                              CONSTRUCTOR
@@ -52,6 +53,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         bytes32 _circuitVerificationKey,
         address _verifier,
         address _feeRouter,
+        uint16 _takerFeeBips,
         Types.BlockLeaf memory _tipBlockLeaf
     ) BitcoinLightClient(_mmrRoot, _tipBlockLeaf) {
         _initializeOwner(msg.sender);
@@ -61,6 +63,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
         VERIFIER = ISP1Verifier(_verifier);
         feeRouterAddress = _feeRouter;
+        takerFeeBips = _takerFeeBips;
     }
 
     /// @dev Returns the domain name and version of the contract, used for EIP712 domain separator
@@ -83,8 +86,12 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         ERC20_BTC.safeTransfer(feeRouterAddress, feeBalance);
     }
 
-    function setFeeRouterAddress(address _feeRouter) external onlyOwner {
+    function adminSetFeeRouterAddress(address _feeRouter) external onlyOwner {
         feeRouterAddress = _feeRouter;
+    }
+
+    function adminSetTakerFeeBips(uint16 _takerFeeBips) external onlyOwner {
+        takerFeeBips = _takerFeeBips;
     }
 
     /// @notice Deposits new liquidity into a new vault
@@ -296,7 +303,9 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         Types.DepositLiquidityParams calldata params,
         uint256 depositVaultIndex
     ) internal view returns (Types.DepositVault memory, bytes32) {
-        if (params.depositAmount < Constants.MIN_DEPOSIT_SATS) revert Errors.DepositAmountTooLow();
+        uint16 _takerFeeBips = takerFeeBips; // cache
+        if (params.depositAmount < RiftUtils.calculateMinDepositAmount(_takerFeeBips))
+            revert Errors.DepositAmountTooLow();
         if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
         if (params.confirmationBlocks < Constants.MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
         if (!LightClientVerificationLib.validateScriptPubKey(params.btcPayoutScriptPubKey))
@@ -304,7 +313,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
 
         _verifyBlockInclusion(params.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
 
-        uint256 depositFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount);
+        uint256 depositFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount, _takerFeeBips);
 
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,

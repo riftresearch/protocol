@@ -69,16 +69,9 @@ contract DeployRiftExchange is Script {
 
     function run() external {
         vm.startBroadcast();
+        uint16 takerFeeBips = 20;
 
         console.log("Deploying RiftExchange on chain with ID:", block.chainid);
-        /*
-                bytes32 _mmrRoot,
-        address _depositToken,
-        bytes32 _circuitVerificationKey,
-        address _verifier,
-        address _feeRouter,
-        Types.BlockLeaf memory _tipBlockLeaf
-        */
 
         console.log("Deploying RiftExchange on chain with ID:", block.chainid);
         ChainSpecificAddresses memory chainSpecificAddresses = selectAddressesByChainId();
@@ -93,6 +86,7 @@ contract DeployRiftExchange is Script {
             _circuitVerificationKey: deploymentParams.circuitVerificationKey,
             _verifier: chainSpecificAddresses.verifierContractAddress,
             _feeRouter: chainSpecificAddresses.feeRouterAddress,
+            _takerFeeBips: takerFeeBips,
             _tipBlockLeaf: deploymentParams.tipBlockLeaf
         });
 
