@@ -20,10 +20,10 @@ contract RiftExchangeUnitTest is RiftTest {
     event LogVaults(Types.DepositVault[] vaults);
     uint256 constant MAX_VAULTS = 2;
 
-    // functional clone of validateDepositVaultCommitments, but doesn't attempt to validate the vaults existence in storage
+    // functional clone of validateDepositvaultHashes, but doesn't attempt to validate the vaults existence in storage
     // used to generate test data for circuits
     // TODO: directly call the rust api from here as part of fuzzer
-    function generateDepositVaultCommitment(Types.DepositVault[] memory vaults) internal pure returns (bytes32) {
+    function generatedepositVaultHash(Types.DepositVault[] memory vaults) internal pure returns (bytes32) {
         bytes32[] memory vaultHashes = new bytes32[](vaults.length);
         for (uint256 i = 0; i < vaults.length; i++) {
             vaultHashes[i] = VaultLib.hashDepositVault(vaults[i]);
@@ -33,7 +33,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
     // use to generate test data for circuits
     // TODO: directly call the rust api from here as part of fuzzer
-    function test_vaultCommitments(Types.DepositVault memory vault, uint256) public {
+    function test_vaultHashes(Types.DepositVault memory vault, uint256) public {
         // uint64 max here so it can be set easily in rust
         bound(vault.vaultIndex, 0, uint256(type(uint64).max));
         bytes32 vault_commitment = VaultLib.hashDepositVault(vault);
@@ -82,7 +82,7 @@ contract RiftExchangeUnitTest is RiftTest {
     }
 
     // use to generate test data for circuits
-    function test_aggregateVaultCommitments(
+    function test_aggregatevaultHashes(
         Types.DepositVault[1] memory singleVaultSet,
         Types.DepositVault[2] memory twoVaultSet,
         uint256
@@ -91,19 +91,19 @@ contract RiftExchangeUnitTest is RiftTest {
 
         Types.DepositVault[] memory singleVaultSetArray = new Types.DepositVault[](1);
         singleVaultSetArray[0] = constrainVault(singleVaultSet[0], maxValue);
-        bytes32 singleVaultCommitment = generateDepositVaultCommitment(singleVaultSetArray);
+        bytes32 singleVaultCommitment = generatedepositVaultHash(singleVaultSetArray);
         emit LogVaults(singleVaultSetArray);
         emit VaultCommitmentLog(singleVaultCommitment);
 
         Types.DepositVault[] memory twoVaultSetArray = new Types.DepositVault[](2);
         twoVaultSetArray[0] = constrainVault(twoVaultSet[0], maxValue);
         twoVaultSetArray[1] = constrainVault(twoVaultSet[1], maxValue);
-        bytes32 twoVaultCommitment = generateDepositVaultCommitment(twoVaultSetArray);
+        bytes32 twoVaultCommitment = generatedepositVaultHash(twoVaultSetArray);
         emit LogVaults(twoVaultSetArray);
         emit VaultCommitmentLog(twoVaultCommitment);
     }
 
-    // Test that depositLiquidity appends a new commitment to the vaultCommitments array
+    // Test that depositLiquidity appends a new commitment to the vaultHashes array
     function testFuzz_depositLiquidity(
         uint256 depositAmount,
         uint64 expectedSats,
@@ -187,7 +187,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [6] grab the logs, find the new vault
         Types.DepositVault memory overwrittenVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
-        bytes32 commitment = exchange.getVaultCommitment(emptyVault.vaultIndex);
+        bytes32 commitment = exchange.getVaultHash(emptyVault.vaultIndex);
 
         // [7] verify "offchain" calculated commitment matches stored vault commitment
         bytes32 offchainCommitment = VaultLib.hashDepositVault(overwrittenVault);
@@ -232,7 +232,7 @@ contract RiftExchangeUnitTest is RiftTest {
         Types.DepositVault memory updatedVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
-        bytes32 storedCommitment = exchange.getVaultCommitment(vault.vaultIndex);
+        bytes32 storedCommitment = exchange.getVaultHash(vault.vaultIndex);
         bytes32 calculatedCommitment = VaultLib.hashDepositVault(updatedVault);
         assertEq(calculatedCommitment, storedCommitment, "Vault commitment mismatch");
 
@@ -333,8 +333,8 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [5] extract swap from logs
         Types.ProposedSwap memory createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
-        uint256 swapIndex = exchange.getSwapCommitmentsLength() - 1;
-        bytes32 commitment = exchange.getSwapCommitment(swapIndex);
+        uint256 swapIndex = exchange.getSwapHashesLength() - 1;
+        bytes32 hash = exchange.getSwapHash(swapIndex);
 
         // [6] verify swap details
         assertEq(createdSwap.swapIndex, swapIndex, "Swap index should match");
@@ -343,9 +343,9 @@ contract RiftExchangeUnitTest is RiftTest {
         assertEq(createdSwap.totalSwapFee, totalSwapFee, "Swap fee should match");
         assertEq(uint8(createdSwap.state), uint8(Types.SwapState.Proved), "Swap should be in Proved state");
 
-        // [7] verify commitment
-        bytes32 offchainCommitment = VaultLib.hashSwap(createdSwap);
-        assertEq(offchainCommitment, commitment, "Offchain swap commitment should match");
+        // [7] verify hash
+        bytes32 offchainHash = VaultLib.hashSwap(createdSwap);
+        assertEq(offchainHash, hash, "Offchain swap hash should match");
     }
 
     // Helper function to set up vaults and submit swap proof
@@ -418,7 +418,7 @@ contract RiftExchangeUnitTest is RiftTest {
         );
 
         // Verify vaults were emptied
-        bytes32 vaultCommitment = exchange.getVaultCommitment(vault.vaultIndex);
+        bytes32 vaultCommitment = exchange.getVaultHash(vault.vaultIndex);
         vault.depositAmount = 0;
         vault.depositFee = 0;
         bytes32 expectedCommitment = VaultLib.hashDepositVault(vault);

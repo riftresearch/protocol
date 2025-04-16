@@ -62,7 +62,7 @@ pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
 
 pub fn get_proposed_swap_id(swap: &ProposedSwap) -> [u8; 32] {
     // This should be unique for each proposed swap
-    let mut id_material = swap.depositVaultCommitment.to_vec();
+    let mut id_material = swap.depositVaultHash.to_vec();
     id_material.extend(swap.swapIndex.to_be_bytes::<32>().to_vec());
     keccak256(id_material).into()
 }
@@ -145,7 +145,7 @@ pub async fn add_proposed_swap(
     swap_txid: [u8; 32],
 ) -> Result<()> {
     let proposed_swap_id = get_proposed_swap_id(swap);
-    let deposit_id = swap.depositVaultCommitment.to_vec();
+    let deposit_id = swap.depositVaultHash.to_vec();
     let swap_proof_str = serde_json::to_string(&swap)
         .map_err(|e| eyre::eyre!("Failed to serialize ProposedSwap: {:?}", e))?;
     let challenge_period_end_timestamp = swap.liquidityUnlockTimestamp;
@@ -179,7 +179,7 @@ pub async fn add_proposed_swap(
     info!(
         message = "Proposed swap added",
         proposed_swap_id = hex::encode(proposed_swap_id),
-        deposit_id = hex::encode(swap.depositVaultCommitment),
+        deposit_id = hex::encode(swap.depositVaultHash),
         operation = "add_proposed_swap"
     );
     Ok(())

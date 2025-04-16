@@ -332,7 +332,7 @@ impl ChainTransition {
         let public_input = LightClientPublicInput {
             previousMmrRoot: self.current_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
-            compressedLeavesCommitment: new_leaves_commitment.into(),
+            compressedLeavesHash: new_leaves_commitment.into(),
             tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
         };
 

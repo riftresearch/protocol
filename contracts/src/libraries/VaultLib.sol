@@ -16,23 +16,23 @@ library VaultLib {
         return EfficientHashLib.hash(abi.encode(swap));
     }
 
-    function validateDepositVaultCommitment(
+    function validateDepositVaultHash(
         Types.DepositVault calldata vault,
-        bytes32[] storage vaultCommitments
+        bytes32[] storage vaultHashes
     ) internal view returns (bytes32) {
         bytes32 vaultHash = hashDepositVault(vault);
-        if (vaultHash != vaultCommitments[vault.vaultIndex]) {
+        if (vaultHash != vaultHashes[vault.vaultIndex]) {
             revert Errors.DepositVaultDoesNotExist();
         }
         return vaultHash;
     }
 
-    function validateSwapCommitment(
+    function validateSwapHash(
         Types.ProposedSwap calldata swap,
-        bytes32[] storage swapCommitments
+        bytes32[] storage swapHashes
     ) internal view returns (bytes32) {
         bytes32 swapHash = hashSwap(swap);
-        if (swapHash != swapCommitments[swap.swapIndex]) {
+        if (swapHash != swapHashes[swap.swapIndex]) {
             revert Errors.SwapDoesNotExist();
         }
         return swapHash;
