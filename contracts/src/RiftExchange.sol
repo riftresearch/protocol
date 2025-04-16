@@ -4,8 +4,10 @@ pragma solidity =0.8.28;
 
 import {ISP1Verifier} from "sp1-contracts/contracts/src/ISP1Verifier.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
-import {Ownable} from "solady/src/auth/Ownable.sol";
 import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
+
+import {EIP712} from "solady/src/utils/EIP712.sol";
+import {Ownable} from "solady/src/auth/Ownable.sol";
 
 import {Constants} from "./libraries/Constants.sol";
 import {Errors} from "./libraries/Errors.sol";
@@ -23,7 +25,7 @@ import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib
  * @notice A decentralized exchange for cross-chain Bitcoin<>Tokenized Bitcoin swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
-contract RiftExchange is BitcoinLightClient, Ownable {
+contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     using SafeTransferLib for address;
     // -----------------------------------------------------------------------
     //                                IMMUTABLES
@@ -56,6 +58,12 @@ contract RiftExchange is BitcoinLightClient, Ownable {
         CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
         VERIFIER = ISP1Verifier(_verifier);
         feeRouterAddress = _feeRouter;
+    }
+
+    /// @dev Returns the domain name and version of the contract, used for EIP712 domain separator
+    function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
+        name = "RiftExchange";
+        version = "0.0.1";
     }
 
     // -----------------------------------------------------------------------
@@ -307,11 +315,7 @@ contract RiftExchange is BitcoinLightClient, Ownable {
             btcPayoutScriptPubKey: params.btcPayoutScriptPubKey,
             specifiedPayoutAddress: params.specifiedPayoutAddress,
             ownerAddress: params.depositOwnerAddress,
-            salt: EfficientHashLib.hash(
-                params.depositSalt,
-                bytes32(depositVaultIndex),
-                bytes32(uint256(block.chainid))
-            ),
+            salt: EfficientHashLib.hash(_domainSeparator(), params.depositSalt, bytes32(depositVaultIndex)),
             confirmationBlocks: params.confirmationBlocks,
             attestedBitcoinBlockHeight: params.safeBlockLeaf.height
         });
