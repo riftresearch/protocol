@@ -103,18 +103,26 @@ abstract contract BitcoinLightClient {
         return checkpoints[mmrRoot].tipBlockLeaf.height;
     }
 
-    // validates that block hash exists in the MMR and that it's confirmation delta is sufficient relative to the current light client height
-    function _ensureBitcoinInclusion(
+    function _verifyBlockInclusion(
+        Types.BlockLeaf memory blockLeaf,
+        bytes32[] calldata siblings,
+        bytes32[] calldata peaks
+    ) internal view {
+        if (!proveBlockInclusion(blockLeaf, siblings, peaks)) {
+            revert Errors.BlockNotInChain();
+        }
+    }
+
+    // verifies that block hash exists in the MMR and that it's confirmation delta is sufficient relative to the current light client height
+    function _verifyBlockInclusionAndConfirmations(
         Types.BlockLeaf memory blockLeaf,
         bytes32[] calldata siblings,
         bytes32[] calldata peaks,
         uint32 expectedConfirmationBlocks
     ) internal view {
-        if (!proveBlockInclusion(blockLeaf, siblings, peaks)) {
-            revert Errors.InvalidSwapBlockInclusionProof();
-        }
+        _verifyBlockInclusion(blockLeaf, siblings, peaks);
         if (getLightClientHeight() < blockLeaf.height + (expectedConfirmationBlocks - 1)) {
-            revert Errors.NotEnoughConfirmations();
+            revert Errors.BlockNotConfirmed();
         }
     }
 }

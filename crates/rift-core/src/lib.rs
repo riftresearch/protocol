@@ -23,7 +23,7 @@ use vaults::hash_deposit_vault;
 pub struct RiftTransaction {
     // no segwit data serialized bitcoin transaction
     pub txn: Vec<u8>,
-    // the vaults reserved for this transaction
+    // the vault reserved for this transaction
     pub reserved_vault: DepositVault,
     // block header where the txn is included
     pub block_header: Header,
@@ -61,7 +61,7 @@ impl RiftTransaction {
         txid.reverse();
 
         SwapPublicInput {
-            depositVaultCommitment: vault_commitment.into(),
+            depositVaultHash: vault_commitment.into(),
             swapBitcoinBlockHash: block_hash.into(),
             swapBitcoinTxid: txid.into(),
         }

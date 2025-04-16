@@ -475,7 +475,7 @@ contract RiftTest is Test, PRNG {
             _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
-        mockToken = MockToken(address(exchange.DEPOSIT_TOKEN()));
+        mockToken = MockToken(address(exchange.ERC20_BTC()));
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
@@ -602,12 +602,12 @@ contract RiftTest is Test, PRNG {
 
         // [4] grab the logs, find the vault
         Types.DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
-        uint256 vaultIndex = exchange.getVaultCommitmentsLength() - 1;
-        bytes32 commitment = exchange.getVaultCommitment(vaultIndex);
+        uint256 vaultIndex = exchange.getVaultHashesLength() - 1;
+        bytes32 _hash = exchange.getVaultHash(vaultIndex);
 
-        // [5] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = VaultLib.hashDepositVault(createdVault);
-        assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
+        // [5] verify "offchain" calculated hash matches stored vault hash
+        bytes32 offchainHash = VaultLib.hashDepositVault(createdVault);
+        assertEq(offchainHash, _hash, "Offchain vault hash should match");
 
         // [6] verify vault index
         assertEq(createdVault.vaultIndex, vaultIndex, "Vault index should match");

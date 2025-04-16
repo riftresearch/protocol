@@ -2,12 +2,14 @@
 pragma solidity =0.8.28;
 
 library Errors {
-    // --------- LIGHT CLIENT ERRORS --------- //
-    error InvalidLeavesCommitment();
+    // --------- LIGHT CLIENT --------- //
+    error BlockNotInChain();
+    error BlockNotConfirmed();
+    error ChainworkTooLow();
+    error CheckpointNotEstablished();
 
-    // --------- EXCHANGE SETTLEMENT ERRORS --------- //
+    // --------- RIFT EXCHANGE --------- //
     error TransferFailed();
-    error NewDepositsPaused();
     error DepositAmountTooLow();
     error SatOutputTooLow();
     error DepositVaultNotOverwritable();
@@ -16,22 +18,11 @@ library Errors {
     error SwapDoesNotExist();
     error EmptyDepositVault();
     error DepositStillLocked();
-    error InvalidSwapBlockInclusionProof();
-    error InvalidConfirmationBlockInclusionProof();
     error CannotOverwriteOngoingSwap();
     error NoFeeToPay();
-    error InvalidVaultCommitment(bytes32 vaultCommitment);
+    error InvalidVaultHash(bytes32 actual, bytes32 expected);
     error StillInChallengePeriod();
     error SwapNotProved();
-    error InvalidConfirmationBlockDelta();
     error NotEnoughConfirmationBlocks();
-    error NoVaults();
-    error PayoutAddressMismatch();
-    error InvalidSwapTotals();
-    error InvalidBlockInclusionProof();
-    error RootWasNotUpdated();
-    error CheckpointNotEstablished();
-    error ChainworkTooLow();
     error NoSwapsToSubmit();
-    error NotEnoughConfirmations();
 }

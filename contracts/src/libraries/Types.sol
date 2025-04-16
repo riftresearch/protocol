@@ -39,7 +39,7 @@ library Types {
 
     struct ProposedSwap {
         uint256 swapIndex;
-        bytes32 depositVaultCommitment;
+        bytes32 depositVaultHash;
         BlockLeaf swapBitcoinBlockLeaf;
         // number of Bitcoin block confirmations required after the swap transaction
         // (e.g., 1 = only the block containing the swap, 2 = swap block + 1 confirmation, etc.)
@@ -62,13 +62,13 @@ library Types {
     struct SwapPublicInput {
         bytes32 swapBitcoinTxid; // not strictly necessary to be public, but useful for tracking the swap
         bytes32 swapBitcoinBlockHash;
-        bytes32 depositVaultCommitment;
+        bytes32 depositVaultHash;
     }
 
     struct LightClientPublicInput {
         bytes32 previousMmrRoot;
         bytes32 newMmrRoot;
-        bytes32 compressedLeavesCommitment;
+        bytes32 compressedLeavesHash;
         BlockLeaf tipBlockLeaf;
     }
 
