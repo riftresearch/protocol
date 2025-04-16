@@ -1,30 +1,20 @@
-
 [[dependencies]]
 name = "forge-std"
 version = "1.9.3"
-source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_3_30-09-2024_08:27:09_forge-std-1.9.zip"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_3_30-09-2024_08:27:09_forge-std-1.9.zip"
 checksum = "351b6f9cde3d9476cc07e48c1bca6b7fd93fa16dd9b450e5ad5d169d1dbd5938"
+integrity = "d53734fbd7201cd9e44de730ae045ed8958dd2c7b9493c30b322f6e6c21ca8b2"
 
 [[dependencies]]
-name = "@openzeppelin-contracts"
-version = "5.0.2"
-source = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/5_0_2_14-03-2024_06:11:59_contracts.zip"
-checksum = "8bc4f0acc7c187771b878d46f7de4bfad1acad2eb5d096d9d05d34035853f5c3"
+name = "solady"
+version = "0.1.4"
+url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_1_4_05-02-2025_15:02:18_solady.zip"
+checksum = "ecce158b80c996aeb1b1fdec9d357cbe3977e21f037ce6f939d560cec41feb55"
+integrity = "7a3aee946523ebfb9aee4588bf7ab507e23090fd42e7b536a56fb50a825e1221"
 
 [[dependencies]]
 name = "sp1-contracts"
 version = "4.0.0"
-source = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip"
+url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip"
 checksum = "f44ad2210b56cc2049168f5b3b13471702c4de261bcc557a3a95efc3d4e41055"
-
-[[dependencies]]
-name = "solmate"
-version = "6.7.0"
-source = "https://soldeer-revisions.s3.amazonaws.com/solmate/6_7_0_22-01-2024_13:21:00_solmate.zip"
-checksum = "dd0f08cdaaaad1de0ac45993d4959351ba89c2d9325a0b5df5570357064f2c33"
-
-[[dependencies]]
-name = "solady"
-version = "0.0.259"
-source = "https://soldeer-revisions.s3.amazonaws.com/solady/0_0_259_19-10-2024_10:30:34_solady.zip"
-checksum = "3fab02016eeb3e2d5710455faefc99fb6101d00bb95f5e96110cd301a39e2be7"
+integrity = "8844dfbe5848f01e6a9fdb525f0e3c6bb777b463a8b970caa94eb54ea5f59148"
