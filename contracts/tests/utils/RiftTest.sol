@@ -453,6 +453,8 @@ contract PRNG {
 }
 
 contract RiftTest is Test, PRNG {
+    using VaultLib for Types.DepositVault;
+    using VaultLib for Types.ProposedSwap;
     address exchangeOwner = address(0xbeef);
     RiftExchange public exchange;
     MockToken public mockToken;
@@ -605,7 +607,7 @@ contract RiftTest is Test, PRNG {
         bytes32 _hash = exchange.getVaultHash(vaultIndex);
 
         // [5] verify "offchain" calculated hash matches stored vault hash
-        bytes32 offchainHash = VaultLib.hashDepositVault(createdVault);
+        bytes32 offchainHash = createdVault.hash();
         assertEq(offchainHash, _hash, "Offchain vault hash should match");
 
         // [6] verify vault index

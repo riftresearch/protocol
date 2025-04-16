@@ -14,6 +14,9 @@ import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import "forge-std/src/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
+    using VaultLib for Types.DepositVault;
+    using VaultLib for Types.ProposedSwap;
+
     // hacky way to get nice formatting for the vault in logs
     event VaultLog(Types.DepositVault vault);
     event VaultCommitmentLog(bytes32 vaultCommitment);
@@ -26,7 +29,7 @@ contract RiftExchangeUnitTest is RiftTest {
     function generatedepositVaultHash(Types.DepositVault[] memory vaults) internal pure returns (bytes32) {
         bytes32[] memory vaultHashes = new bytes32[](vaults.length);
         for (uint256 i = 0; i < vaults.length; i++) {
-            vaultHashes[i] = VaultLib.hashDepositVault(vaults[i]);
+            vaultHashes[i] = vaults[i].hash();
         }
         return EfficientHashLib.hash(vaultHashes);
     }
@@ -36,7 +39,7 @@ contract RiftExchangeUnitTest is RiftTest {
     function test_vaultHashes(Types.DepositVault memory vault, uint256) public {
         // uint64 max here so it can be set easily in rust
         bound(vault.vaultIndex, 0, uint256(type(uint64).max));
-        bytes32 vault_commitment = VaultLib.hashDepositVault(vault);
+        bytes32 vault_commitment = vault.hash();
         emit VaultLog(vault);
         emit VaultCommitmentLog(vault_commitment);
     }
@@ -198,7 +201,7 @@ contract RiftExchangeUnitTest is RiftTest {
         bytes32 commitment = exchange.getVaultHash(emptyVault.vaultIndex);
 
         // [7] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = VaultLib.hashDepositVault(overwrittenVault);
+        bytes32 offchainCommitment = overwrittenVault.hash();
         assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
 
         // [8] verify vault index remains the same
@@ -244,7 +247,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [4] verify updated vault commitment matches stored commitment
         bytes32 storedCommitment = exchange.getVaultHash(vault.vaultIndex);
-        bytes32 calculatedCommitment = VaultLib.hashDepositVault(updatedVault);
+        bytes32 calculatedCommitment = updatedVault.hash();
         assertEq(calculatedCommitment, storedCommitment, "Vault commitment mismatch");
 
         // [5] verify vault is now empty
@@ -354,7 +357,7 @@ contract RiftExchangeUnitTest is RiftTest {
         assertEq(uint8(createdSwap.state), uint8(Types.SwapState.Proved), "Swap should be in Proved state");
 
         // [7] verify hash
-        bytes32 offchainHash = VaultLib.hashSwap(createdSwap);
+        bytes32 offchainHash = createdSwap.hash();
         assertEq(offchainHash, hash, "Offchain swap hash should match");
     }
 
@@ -431,7 +434,7 @@ contract RiftExchangeUnitTest is RiftTest {
         bytes32 vaultCommitment = exchange.getVaultHash(vault.vaultIndex);
         vault.vaultAmount = 0;
         vault.takerFee = 0;
-        bytes32 expectedCommitment = VaultLib.hashDepositVault(vault);
+        bytes32 expectedCommitment = vault.hash();
         assertEq(vaultCommitment, expectedCommitment, "Vault should be empty");
     }
 
