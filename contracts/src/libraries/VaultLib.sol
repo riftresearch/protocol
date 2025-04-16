@@ -37,13 +37,4 @@ library VaultLib {
         }
         return swapHash;
     }
-
-    function calculateSwapTotals(
-        Types.DepositVault memory vault
-    ) internal pure returns (uint256 totalSwapOutput, uint256 totalSwapFee) {
-        uint256 makerDepositAmount = vault.depositAmount;
-        // depositFee is the same for both maker and taker
-        totalSwapFee = vault.depositFee * 2;
-        totalSwapOutput = makerDepositAmount - vault.depositFee; // makerDepositAmount already has the maker fee removed
-    }
 }

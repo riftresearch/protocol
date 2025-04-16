@@ -4,10 +4,10 @@ import {Constants} from "./Constants.sol";
 
 library RiftUtils {
     /// @notice Calculates protocol fee for a given deposit amount
-    /// @param amount The amount being deposited/swapped
-    /// @return protocolFee The calculated protocol fee in bips
-    function calculateFeeFromInitialDeposit(uint256 amount) internal pure returns (uint256 protocolFee) {
-        protocolFee = (amount * uint256(Constants.PROTOCOL_FEE_BP)) / 10e3; // bpScale value
+    /// @param amount The amount being withdrawn from the user
+    /// @return protocolFee The calculated protocol fee
+    function calculateFeeFromDeposit(uint256 amount) internal pure returns (uint256 protocolFee) {
+        protocolFee = (amount * uint256(Constants.TAKER_FEE_BP)) / 1e4; // bips scalar
     }
 
     /// @notice Calculates challenge period for a given amount of elapsed bitcoin blocks

@@ -24,7 +24,18 @@ forge script --chain arbitrum scripts/DeployRiftExchange.s.sol:DeployRiftExchang
 --verify --etherscan-api-key $ARBITRUM_ETHERSCAN_API_KEY --ffi -vvvv --via-ir
 ```
 
-## Testing
+### Development Workflow  
+*Execute all commands from the project root.*
+
+- **When contract code changes (unneccessary if only tests are updated):**  
+  ```bash
+  make sync
+  ```
+
+- **To build the FFI helper and then run the full contract test suite:**  
+  ```bash
+  make test-contracts
+  ```
 
 ### Unit Tests
 ```bash

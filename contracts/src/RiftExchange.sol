@@ -7,6 +7,7 @@ import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 
 import {EIP712} from "solady/src/utils/EIP712.sol";
+import {ERC20} from "solady/src/tokens/ERC20.sol";
 import {Ownable} from "solady/src/auth/Ownable.sol";
 
 import {Constants} from "./libraries/Constants.sol";
@@ -54,6 +55,8 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         Types.BlockLeaf memory _tipBlockLeaf
     ) BitcoinLightClient(_mmrRoot, _tipBlockLeaf) {
         _initializeOwner(msg.sender);
+        /// @dev Deposit token checks within the contract assume that the token has 8 decimals
+        if (ERC20(_depositToken).decimals() != 8) revert Errors.InvalidDepositTokenDecimals();
         ERC20_BTC = _depositToken;
         CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
         VERIFIER = ISP1Verifier(_verifier);
@@ -109,7 +112,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     ) external returns (bytes32) {
         // Ensure passed vault is real and overwritable
         VaultLib.validateDepositVaultHash(params.overwriteVault, vaultHashes);
-        if (params.overwriteVault.depositAmount != 0) revert Errors.DepositVaultNotOverwritable();
+        if (params.overwriteVault.vaultAmount != 0) revert Errors.DepositVaultNotOverwritable();
 
         // Create deposit liquidity request
         uint256 vaultIndex = params.overwriteVault.vaultIndex;
@@ -128,18 +131,18 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
     function withdrawLiquidity(Types.DepositVault calldata vault) external {
         VaultLib.validateDepositVaultHash(vault, vaultHashes);
-        if (vault.depositAmount == 0) revert Errors.EmptyDepositVault();
+        if (vault.vaultAmount == 0) revert Errors.EmptyDepositVault();
         if (block.timestamp < vault.depositUnlockTimestamp) {
             revert Errors.DepositStillLocked();
         }
 
         Types.DepositVault memory updatedVault = vault;
-        updatedVault.depositAmount = 0;
-        updatedVault.depositFee = 0;
+        updatedVault.vaultAmount = 0;
+        updatedVault.takerFee = 0;
 
         vaultHashes[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
 
-        ERC20_BTC.safeTransfer(vault.ownerAddress, vault.depositAmount);
+        ERC20_BTC.safeTransfer(vault.ownerAddress, vault.vaultAmount + vault.takerFee);
 
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
         updatedVaults[0] = updatedVault;
@@ -237,8 +240,8 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
             );
 
             Types.DepositVault memory updatedVault = paramsArray[i].utilizedVault;
-            updatedVault.depositAmount = 0;
-            updatedVault.depositFee = 0;
+            updatedVault.vaultAmount = 0;
+            updatedVault.takerFee = 0;
 
             vaultHashes[updatedVault.vaultIndex] = VaultLib.hashDepositVault(updatedVault);
 
@@ -248,7 +251,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
             updatedSwap.state = Types.SwapState.Finalized;
             swapHashes[paramsArray[i].swap.swapIndex] = VaultLib.hashSwap(updatedSwap);
 
-            accumulatedFeeBalance += paramsArray[i].swap.totalSwapFee;
+            accumulatedFeeBalance += paramsArray[i].swap.takerFee;
 
             ERC20_BTC.safeTransfer(paramsArray[i].swap.specifiedPayoutAddress, paramsArray[i].swap.totalSwapOutput);
 
@@ -293,7 +296,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         Types.DepositLiquidityParams calldata params,
         uint256 depositVaultIndex
     ) internal view returns (Types.DepositVault memory, bytes32) {
-        if (params.depositAmount < Constants.MIN_DEPOSIT_AMOUNT) revert Errors.DepositAmountTooLow();
+        if (params.depositAmount < Constants.MIN_DEPOSIT_SATS) revert Errors.DepositAmountTooLow();
         if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
         if (params.confirmationBlocks < Constants.MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
         if (!LightClientVerificationLib.validateScriptPubKey(params.btcPayoutScriptPubKey))
@@ -301,7 +304,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
 
         _verifyBlockInclusion(params.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
 
-        uint256 depositFee = RiftUtils.calculateFeeFromInitialDeposit(params.depositAmount);
+        uint256 depositFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount);
 
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
@@ -309,8 +312,8 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
             depositUnlockTimestamp: uint64(
                 block.timestamp + RiftUtils.calculateDepositLockupPeriod(params.confirmationBlocks)
             ),
-            depositAmount: params.depositAmount - depositFee,
-            depositFee: depositFee,
+            vaultAmount: params.depositAmount - depositFee,
+            takerFee: depositFee,
             expectedSats: params.expectedSats,
             btcPayoutScriptPubKey: params.btcPayoutScriptPubKey,
             specifiedPayoutAddress: params.specifiedPayoutAddress,
@@ -328,7 +331,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
         updatedVaults[0] = vault;
         emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Created);
-        ERC20_BTC.safeTransferFrom(msg.sender, address(this), vault.depositAmount + vault.depositFee);
+        ERC20_BTC.safeTransferFrom(msg.sender, address(this), vault.vaultAmount + vault.takerFee);
     }
 
     /// @notice Internal function to prepare and validate a batch of swap proofs
@@ -355,7 +358,6 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
                 swapIndex = overwriteSwaps[params.localOverwriteIndex].swapIndex;
             }
 
-            (uint256 totalSwapOutput, uint256 totalSwapFee) = VaultLib.calculateSwapTotals(params.vault);
             bytes32 depositVaultHash = VaultLib.validateDepositVaultHash(params.vault, vaultHashes);
 
             swapPublicInputs[i] = Types.SwapPublicInput({
@@ -384,8 +386,8 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
                         )
                 ),
                 specifiedPayoutAddress: params.vault.specifiedPayoutAddress,
-                totalSwapFee: totalSwapFee,
-                totalSwapOutput: totalSwapOutput,
+                totalSwapOutput: params.vault.vaultAmount,
+                takerFee: params.vault.takerFee,
                 state: Types.SwapState.Proved,
                 depositVaultHash: depositVaultHash
             });
