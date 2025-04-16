@@ -20,10 +20,10 @@ library Types {
         uint256 vaultIndex;
         uint64 depositTimestamp;
         uint64 depositUnlockTimestamp;
-        // this is the amount of capital actually available to be swapped
-        uint256 depositAmount;
-        // this is the fee the maker and taker will pay
-        uint256 depositFee;
+        // The amount of tokens the maker will receive after successful settlement
+        uint256 vaultAmount;
+        // the fee the taker pays the protocol
+        uint256 takerFee;
         // this is the amount of BTC the maker will need to receive
         // for their liquidity to be unlocked.
         // expectedSats / depositAmount = BTC/USD exchange rate set by the maker
@@ -46,10 +46,10 @@ library Types {
         uint8 confirmationBlocks;
         uint64 liquidityUnlockTimestamp;
         address specifiedPayoutAddress;
-        //  this is the total fee for the swap including the deposit fee of each maker
-        uint256 totalSwapFee;
         // this is the total amount of output ERC20 tokens the taker will receive
         uint256 totalSwapOutput;
+        // this is the fee the taker pays the protocol
+        uint256 takerFee;
         SwapState state;
     }
 
