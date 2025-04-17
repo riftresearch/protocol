@@ -5,9 +5,9 @@ library PeriodLib {
     // TODO: What is the security parameter for 2 hours per confirmation?
     uint32 public constant DEPOSIT_LOCKUP_PERIOD_SCALAR = 2 hours; // 2 hours per confirmation block
     uint32 public constant CHALLENGE_PERIOD_BUFFER = 5 minutes; //TODO: change when we have a better estimate of e2e block trigger -> proof gen -> publish proof latency
-    uint32 public constant SCALED_PROOF_GEN_SLOPE = 133;
-    uint32 public constant SCALED_PROOF_GEN_INTERCEPT = 58291;
-    uint32 public constant PROOF_GEN_SCALING_FACTOR = 1000;
+    uint32 public constant SCALED_PROOF_GEN_SLOPE = 0.133e3;
+    uint32 public constant SCALED_PROOF_GEN_INTERCEPT = 58.291e3;
+    uint32 public constant PROOF_GEN_SCALING_FACTOR = 1e3;
 
     /// @notice Calculates challenge period for a given amount of elapsed bitcoin blocks
     /// @param blocksElapsed The amount of elapsed bitcoin blocks
