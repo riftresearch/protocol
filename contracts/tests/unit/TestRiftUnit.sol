@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {Constants} from "../../src/libraries/Constants.sol";
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
-import {VaultLib} from "../../src/libraries/VaultLib.sol";
+import {HashLib} from "../../src/libraries/HashLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
@@ -14,8 +14,8 @@ import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import "forge-std/src/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
-    using VaultLib for Types.DepositVault;
-    using VaultLib for Types.ProposedSwap;
+    using HashLib for Types.DepositVault;
+    using HashLib for Types.ProposedSwap;
 
     // hacky way to get nice formatting for the vault in logs
     event VaultLog(Types.DepositVault vault);

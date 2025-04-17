@@ -4,20 +4,11 @@ pragma solidity =0.8.28;
 import {Types} from "./Types.sol";
 import {Constants} from "./Constants.sol";
 import {Errors} from "./Errors.sol";
+import {HashLib} from "./HashLib.sol";
 
-import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
-
-library VaultLib {
-    using VaultLib for Types.DepositVault;
-    using VaultLib for Types.ProposedSwap;
-
-    function hash(Types.DepositVault memory vault) internal pure returns (bytes32) {
-        return EfficientHashLib.hash(abi.encode(vault));
-    }
-
-    function hash(Types.ProposedSwap memory swap) internal pure returns (bytes32) {
-        return EfficientHashLib.hash(abi.encode(swap));
-    }
+library DataIntegrityLib {
+    using HashLib for Types.DepositVault;
+    using HashLib for Types.ProposedSwap;
 
     function checkIntegrity(
         Types.DepositVault calldata vault,

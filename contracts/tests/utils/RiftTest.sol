@@ -9,7 +9,7 @@ import "forge-std/src/console.sol";
 
 import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
 import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
-import {VaultLib} from "../../src/libraries/VaultLib.sol";
+import {HashLib} from "../../src/libraries/HashLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {Events} from "../../src/libraries/Events.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
@@ -453,8 +453,8 @@ contract PRNG {
 }
 
 contract RiftTest is Test, PRNG {
-    using VaultLib for Types.DepositVault;
-    using VaultLib for Types.ProposedSwap;
+    using HashLib for Types.DepositVault;
+    using HashLib for Types.ProposedSwap;
     address exchangeOwner = address(0xbeef);
     RiftExchange public exchange;
     MockToken public mockToken;

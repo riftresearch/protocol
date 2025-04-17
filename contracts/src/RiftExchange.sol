@@ -14,10 +14,11 @@ import {Constants} from "./libraries/Constants.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
-import {VaultLib} from "./libraries/VaultLib.sol";
+import {HashLib} from "./libraries/HashLib.sol";
 import {RiftUtils} from "./libraries/RiftUtils.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
+import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 
 /**
  * @title RiftExchange
@@ -28,8 +29,10 @@ import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib
  */
 contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     using SafeTransferLib for address;
-    using VaultLib for Types.DepositVault;
-    using VaultLib for Types.ProposedSwap;
+    using HashLib for Types.DepositVault;
+    using HashLib for Types.ProposedSwap;
+    using DataIntegrityLib for Types.DepositVault;
+    using DataIntegrityLib for Types.ProposedSwap;
     // -----------------------------------------------------------------------
     //                                IMMUTABLES
     // -----------------------------------------------------------------------
