@@ -218,4 +218,10 @@ library Types {
         bool established;
         Types.BlockLeaf tipBlockLeaf;
     }
+
+    /// @dev 1 slot for both fields
+    struct ActiveBond {
+        address marketMaker;
+        uint96 bondAmount;
+    }
 }
