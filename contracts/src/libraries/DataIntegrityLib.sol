@@ -2,7 +2,6 @@
 pragma solidity =0.8.28;
 
 import {Types} from "./Types.sol";
-import {Constants} from "./Constants.sol";
 import {Errors} from "./Errors.sol";
 import {HashLib} from "./HashLib.sol";
 

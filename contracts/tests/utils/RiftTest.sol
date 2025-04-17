@@ -7,8 +7,6 @@ import {Vm} from "forge-std/src/Vm.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import "forge-std/src/console.sol";
 
-import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
-import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
 import {Events} from "../../src/libraries/Events.sol";

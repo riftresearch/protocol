@@ -10,15 +10,16 @@ import {EIP712} from "solady/src/utils/EIP712.sol";
 import {ERC20} from "solady/src/tokens/ERC20.sol";
 import {Ownable} from "solady/src/auth/Ownable.sol";
 
-import {Constants} from "./libraries/Constants.sol";
 import {Errors} from "./libraries/Errors.sol";
 import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
 import {HashLib} from "./libraries/HashLib.sol";
-import {RiftUtils} from "./libraries/RiftUtils.sol";
+import {PeriodLib} from "./libraries/PeriodLib.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
-import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
 import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
+import {FeeLib} from "./libraries/FeeLib.sol";
+import {MMRProofLib} from "./libraries/MMRProof.sol";
+import {BitcoinScriptLib} from "./libraries/BitcoinScriptLib.sol";
 
 /**
  * @title RiftExchange
@@ -33,6 +34,14 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     using HashLib for Types.ProposedSwap;
     using DataIntegrityLib for Types.DepositVault;
     using DataIntegrityLib for Types.ProposedSwap;
+
+    // -----------------------------------------------------------------------
+    //                                CONSTANTS
+    // -----------------------------------------------------------------------
+
+    uint16 public constant MIN_OUTPUT_SATS = 1000; // to prevent dust errors on btc side
+    uint8 public constant MIN_CONFIRMATION_BLOCKS = 2;
+
     // -----------------------------------------------------------------------
     //                                IMMUTABLES
     // -----------------------------------------------------------------------
@@ -309,22 +318,20 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         uint256 depositVaultIndex
     ) internal view returns (Types.DepositVault memory, bytes32) {
         uint16 _takerFeeBips = takerFeeBips; // cache
-        if (params.depositAmount < RiftUtils.calculateMinDepositAmount(_takerFeeBips))
-            revert Errors.DepositAmountTooLow();
-        if (params.expectedSats < Constants.MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
-        if (params.confirmationBlocks < Constants.MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
-        if (!LightClientVerificationLib.validateScriptPubKey(params.btcPayoutScriptPubKey))
-            revert Errors.InvalidScriptPubKey();
+        if (params.depositAmount < FeeLib.calculateMinDepositAmount(_takerFeeBips)) revert Errors.DepositAmountTooLow();
+        if (params.expectedSats < MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
+        if (params.confirmationBlocks < MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
+        if (!BitcoinScriptLib.validateScriptPubKey(params.btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
 
         _verifyBlockInclusion(params.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
 
-        uint256 depositFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount, _takerFeeBips);
+        uint256 depositFee = FeeLib.calculateFeeFromDeposit(params.depositAmount, _takerFeeBips);
 
         Types.DepositVault memory vault = Types.DepositVault({
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
             depositUnlockTimestamp: uint64(
-                block.timestamp + RiftUtils.calculateDepositLockupPeriod(params.confirmationBlocks)
+                block.timestamp + PeriodLib.calculateDepositLockupPeriod(params.confirmationBlocks)
             ),
             vaultAmount: params.depositAmount - depositFee,
             takerFee: depositFee,
@@ -393,7 +400,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
                 confirmationBlocks: params.vault.confirmationBlocks,
                 liquidityUnlockTimestamp: uint64(
                     block.timestamp +
-                        RiftUtils.calculateChallengePeriod(
+                        PeriodLib.calculateChallengePeriod(
                             // The challenge period is based on the worst case reorg which would be to the
                             // depositors originally attested bitcoin block height
                             proposedLightClientHeight - params.vault.attestedBitcoinBlockHeight

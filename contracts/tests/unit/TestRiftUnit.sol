@@ -2,20 +2,21 @@
 pragma solidity ^0.8.27;
 
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
-import {Constants} from "../../src/libraries/Constants.sol";
-import {LightClientVerificationLib} from "../../src/libraries/LightClientVerificationLib.sol";
+import {BitcoinScriptLib} from "../../src/libraries/BitcoinScriptLib.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {Types} from "../../src/libraries/Types.sol";
-import {RiftUtils} from "../../src/libraries/RiftUtils.sol";
+import {PeriodLib} from "../../src/libraries/PeriodLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
+import {FeeLib} from "../../src/libraries/FeeLib.sol";
 
 import "forge-std/src/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
     using HashLib for Types.DepositVault;
     using HashLib for Types.ProposedSwap;
+    using HashLib for Types.BlockLeaf;
 
     // hacky way to get nice formatting for the vault in logs
     event VaultLog(Types.DepositVault vault);
@@ -58,7 +59,7 @@ contract RiftExchangeUnitTest is RiftTest {
         console.logBytes32(bytes32(uint256(blockLeaf.height)));
         console.logBytes32(bytes32(blockLeaf.cumulativeChainwork));
 
-        bytes32 blockLeafHash = LightClientVerificationLib.buildLeafCommitment(blockLeaf);
+        bytes32 blockLeafHash = blockLeaf.hash();
         console.log("blockLeafHash");
         console.logBytes32(blockLeafHash);
     }
@@ -116,11 +117,11 @@ contract RiftExchangeUnitTest is RiftTest {
         // [0] bound deposit amount & expected sats
         depositAmount = bound(
             depositAmount,
-            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
+        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        confirmationBlocks = uint8(bound(confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max));
         _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
     }
 
@@ -136,18 +137,18 @@ contract RiftExchangeUnitTest is RiftTest {
         // [0] bound deposit amounts & expected sats
         depositAmount = bound(
             depositAmount,
-            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
+        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        confirmationBlocks = uint8(bound(confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max));
         toBeOverwrittendepositAmount = bound(
             toBeOverwrittendepositAmount,
-            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
         toBeOverwrittenExpectedSats = uint64(
-            bound(toBeOverwrittenExpectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max)
+            bound(toBeOverwrittenExpectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max)
         );
 
         // [1] create initial deposit
@@ -158,10 +159,10 @@ contract RiftExchangeUnitTest is RiftTest {
         );
 
         console.log("calculating lock up period with confirmation blocks", confirmationBlocks);
-        console.log("depositLockupPeriod", RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
+        console.log("depositLockupPeriod", PeriodLib.calculateDepositLockupPeriod(confirmationBlocks));
 
         // [2] warp and withdraw to empty the vault
-        vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks));
+        vm.warp(block.timestamp + PeriodLib.calculateDepositLockupPeriod(confirmationBlocks));
         vm.recordLogs();
         exchange.withdrawLiquidity({vault: fullVault});
         Types.DepositVault memory emptyVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
@@ -223,11 +224,11 @@ contract RiftExchangeUnitTest is RiftTest {
         // [0] bound inputs
         depositAmount = bound(
             depositAmount,
-            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        expectedSats = uint64(bound(expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
-        confirmationBlocks = uint8(bound(confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max));
+        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        confirmationBlocks = uint8(bound(confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max));
 
         // [1] create initial deposit and get vault
         Types.DepositVault memory vault = _depositLiquidityWithAssertions(
@@ -238,7 +239,7 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 initialBalance = mockToken.balanceOf(address(this));
 
         // [2] warp to future time after lockup period
-        vm.warp(block.timestamp + RiftUtils.calculateDepositLockupPeriod(confirmationBlocks) + 1);
+        vm.warp(block.timestamp + PeriodLib.calculateDepositLockupPeriod(confirmationBlocks) + 1);
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
@@ -269,12 +270,12 @@ contract RiftExchangeUnitTest is RiftTest {
         // [0] bound inputs
         params.depositAmount = bound(
             params.depositAmount,
-            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        params.expectedSats = uint64(bound(params.expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
+        params.expectedSats = uint64(bound(params.expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
         params.confirmationBlocks = uint8(
-            bound(params.confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
+            bound(params.confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max)
         );
 
         // [1] create deposit vault
@@ -347,7 +348,7 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 swapIndex = exchange.getSwapHashesLength() - 1;
         bytes32 hash = exchange.getSwapHash(swapIndex);
 
-        uint256 takerFee = RiftUtils.calculateFeeFromDeposit(params.depositAmount, exchange.takerFeeBips());
+        uint256 takerFee = FeeLib.calculateFeeFromDeposit(params.depositAmount, exchange.takerFeeBips());
 
         // [6] verify swap details
         assertEq(createdSwap.swapIndex, swapIndex, "Swap index should match");
@@ -449,12 +450,12 @@ contract RiftExchangeUnitTest is RiftTest {
         // Bound inputs
         params.depositAmount = bound(
             params.depositAmount,
-            RiftUtils.calculateMinDepositAmount(exchange.takerFeeBips()),
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        params.expectedSats = uint64(bound(params.expectedSats, Constants.MIN_OUTPUT_SATS, type(uint64).max));
+        params.expectedSats = uint64(bound(params.expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
         params.confirmationBlocks = uint8(
-            bound(params.confirmationBlocks, Constants.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
+            bound(params.confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max)
         );
 
         console.log("[0] setup vaults and submit swap");
@@ -486,7 +487,7 @@ contract RiftExchangeUnitTest is RiftTest {
         );
 
         // Warp past challenge period
-        vm.warp(block.timestamp + RiftUtils.calculateChallengePeriod(params.confirmationBlocks) + 2);
+        vm.warp(block.timestamp + PeriodLib.calculateChallengePeriod(params.confirmationBlocks) + 2);
 
         // Release liquidity
         console.log("[1] release liquidity");

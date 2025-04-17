@@ -5,8 +5,8 @@ import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
 
-import {LightClientVerificationLib} from "./libraries/LightClientVerificationLib.sol";
-import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
+import {MMRProofLib} from "./libraries/MMRProof.sol";
+import {HashLib} from "./libraries/HashLib.sol";
 
 /**
  * @title BitcoinLightClient
@@ -20,6 +20,7 @@ import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
  * Updates to the MMR root rely on a ZK proof that the new leaves satisfy the Bitcoin Consensus rules.
  */
 abstract contract BitcoinLightClient {
+    using HashLib for Types.BlockLeaf;
     bytes32 public mmrRoot; // The MMR root the light client is currently attesting as the best chain
 
     // Whenever the light client is updated, we store the new tip block leaf and the MMR root immutably here. The reason for this is
@@ -87,14 +88,9 @@ abstract contract BitcoinLightClient {
         bytes32[] calldata siblings,
         bytes32[] calldata peaks
     ) public view returns (bool) {
-        return
-            LightClientVerificationLib.proveBlockInclusion(
-                blockLeaf,
-                siblings,
-                peaks,
-                getLightClientHeight() + 1,
-                mmrRoot
-            );
+        bytes32 leafHash = blockLeaf.hash();
+        uint32 leafIndex = blockLeaf.height;
+        return MMRProofLib.verifyProof(leafHash, leafIndex, siblings, peaks, getLightClientHeight() + 1, mmrRoot);
     }
 
     function getLightClientHeight() public view returns (uint32) {
