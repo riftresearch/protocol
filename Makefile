@@ -1,5 +1,5 @@
 sync:
-	cd contracts && forge build && ./sync-artifacts.sh
+	cd contracts && ./sync-artifacts.sh
 
 build: 
 	cargo build --release
