@@ -18,7 +18,6 @@ library Errors {
     error SwapDoesNotExist();
     error EmptyDepositVault();
     error DepositStillLocked();
-    error CannotOverwriteOngoingSwap();
     error NoFeeToPay();
     error InvalidVaultHash(bytes32 actual, bytes32 expected);
     error StillInChallengePeriod();

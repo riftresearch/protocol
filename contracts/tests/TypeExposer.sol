@@ -25,7 +25,6 @@ interface TypeExposer {
             Types.ReleaseMMRProof memory releaseMMRProof,
             // --- PARAMETER STRUCTS ---
             Types.DepositLiquidityParams memory depositLiquidityParams,
-            Types.DepositLiquidityWithOverwriteParams memory depositLiquidityWithOverwriteParams,
             Types.BlockProofParams memory blockProofParams,
             Types.SubmitSwapProofParams memory submitSwapProofParams,
             Types.ReleaseLiquidityParams memory releaseLiquidityParams,
@@ -34,7 +33,6 @@ interface TypeExposer {
             Types.SwapState, // Represents Types.SwapState
             Types.ProofType, // Represents Types.ProofType
             Types.VaultUpdateContext, // Represents Types.VaultUpdateContext
-            Types.SwapUpdateContext, // Represents Types.SwapUpdateContext
-            Types.StorageStrategy // Represents Types.StorageStrategy
+            Types.SwapUpdateContext // Represents Types.SwapUpdateContext
         );
 }

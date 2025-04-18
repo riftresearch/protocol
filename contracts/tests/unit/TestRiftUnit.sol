@@ -125,98 +125,6 @@ contract RiftExchangeUnitTest is RiftTest {
         _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
     }
 
-    function testFuzz_depositLiquidityWithOverwrite(
-        uint256 depositAmount,
-        uint64 expectedSats,
-        uint256 toBeOverwrittendepositAmount,
-        uint64 toBeOverwrittenExpectedSats,
-        bytes32 depositSalt,
-        uint8 confirmationBlocks,
-        uint256
-    ) public {
-        // [0] bound deposit amounts & expected sats
-        depositAmount = bound(
-            depositAmount,
-            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
-            type(uint64).max
-        );
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
-        confirmationBlocks = uint8(bound(confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max));
-        toBeOverwrittendepositAmount = bound(
-            toBeOverwrittendepositAmount,
-            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
-            type(uint64).max
-        );
-        toBeOverwrittenExpectedSats = uint64(
-            bound(toBeOverwrittenExpectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max)
-        );
-
-        // [1] create initial deposit
-        Types.DepositVault memory fullVault = _depositLiquidityWithAssertions(
-            toBeOverwrittendepositAmount,
-            toBeOverwrittenExpectedSats,
-            confirmationBlocks
-        );
-
-        console.log("calculating lock up period with confirmation blocks", confirmationBlocks);
-        console.log("depositLockupPeriod", PeriodLib.calculateDepositLockupPeriod(confirmationBlocks));
-
-        // [2] warp and withdraw to empty the vault
-        vm.warp(block.timestamp + PeriodLib.calculateDepositLockupPeriod(confirmationBlocks));
-        vm.recordLogs();
-        exchange.withdrawLiquidity({vault: fullVault});
-        Types.DepositVault memory emptyVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
-
-        // [3] burn the USDC withdrawn from the vault
-        mockToken.transfer(address(0), mockToken.balanceOf(address(this)));
-
-        // [4] prepare for overwrite deposit
-        mockToken.mint(address(this), depositAmount);
-        mockToken.approve(address(exchange), depositAmount);
-
-        // [5] generate fake tip block mmr proof
-        Types.MMRProof memory mmr_proof = _generateFakeBlockMMRProofFFI(0);
-
-        // [6] perform overwrite deposit
-        vm.recordLogs();
-        Types.DepositLiquidityWithOverwriteParams memory args = Types.DepositLiquidityWithOverwriteParams({
-            depositParams: Types.DepositLiquidityParams({
-                base: Types.BaseDepositLiquidityParams({
-                    depositOwnerAddress: address(this),
-                    btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
-                    depositSalt: depositSalt,
-                    confirmationBlocks: confirmationBlocks,
-                    safeBlockLeaf: mmr_proof.blockLeaf
-                }),
-                specifiedPayoutAddress: address(this),
-                depositAmount: depositAmount,
-                expectedSats: expectedSats,
-                safeBlockSiblings: mmr_proof.siblings,
-                safeBlockPeaks: mmr_proof.peaks
-            }),
-            overwriteVault: emptyVault
-        });
-
-        exchange.depositLiquidityWithOverwrite(args);
-
-        // [6] grab the logs, find the new vault
-        Types.DepositVault memory overwrittenVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
-        bytes32 commitment = exchange.getVaultHash(emptyVault.vaultIndex);
-
-        // [7] verify "offchain" calculated commitment matches stored vault commitment
-        bytes32 offchainCommitment = overwrittenVault.hash();
-        assertEq(offchainCommitment, commitment, "Offchain vault commitment should match");
-
-        // [8] verify vault index remains the same
-        assertEq(overwrittenVault.vaultIndex, emptyVault.vaultIndex, "Vault index should match original");
-
-        // [9] verify caller has no balance left
-        assertEq(mockToken.balanceOf(address(this)), 0, "Caller should have no balance left");
-
-        // [10] verify owner address
-        assertEq(overwrittenVault.ownerAddress, address(this), "Owner address should match");
-    }
-
     function testFuzz_withdrawLiquidity(
         uint256 depositAmount,
         uint64 expectedSats,
@@ -300,25 +208,16 @@ contract RiftExchangeUnitTest is RiftTest {
         /*
             SubmitSwapProofParams[] calldata swapParams,
             BlockProofParams calldata blockProofParams,
-            Types.ProposedSwap[] calldata overwriteSwaps,
             bytes calldata proof
         */
 
         // [4] submit swap proof and capture logs
         vm.recordLogs();
         Types.SubmitSwapProofParams[] memory swapParams = new Types.SubmitSwapProofParams[](1);
-        /*
-        bytes32 swapBitcoinTxid;
-        bytes32 swapBitcoinBlockHash;
-        Types.DepositVault vault;
-        StorageStrategy storageStrategy;
-        uint16 localOverwriteIndex;
-        */
+
         swapParams[0] = Types.SubmitSwapProofParams({
             swapBitcoinTxid: params.swapBitcoinTxid,
             vault: vault,
-            storageStrategy: Types.StorageStrategy.Append,
-            localOverwriteIndex: 0,
             swapBitcoinBlockLeaf: mmrProof.blockLeaf,
             swapBitcoinBlockSiblings: mmrProof.siblings,
             swapBitcoinBlockPeaks: mmrProof.peaks
@@ -341,9 +240,8 @@ contract RiftExchangeUnitTest is RiftTest {
             tipBlockLeaf: tipMmrProof.blockLeaf
         });
         console.log("blockProofParams.tipBlockLeaf.height", blockProofParams.tipBlockLeaf.height);
-        Types.ProposedSwap[] memory overwriteSwaps = new Types.ProposedSwap[](0);
 
-        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, overwriteSwaps, proof);
+        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, proof);
 
         // [5] extract swap from logs
         Types.ProposedSwap memory createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
@@ -392,8 +290,6 @@ contract RiftExchangeUnitTest is RiftTest {
         swapParams[0] = Types.SubmitSwapProofParams({
             swapBitcoinTxid: params.swapBitcoinTxid,
             vault: vault,
-            storageStrategy: Types.StorageStrategy.Append,
-            localOverwriteIndex: 0,
             swapBitcoinBlockLeaf: swapMmrProof.blockLeaf,
             swapBitcoinBlockSiblings: swapMmrProof.siblings,
             swapBitcoinBlockPeaks: swapMmrProof.peaks
@@ -404,9 +300,8 @@ contract RiftExchangeUnitTest is RiftTest {
             compressedBlockLeaves: compressedBlockLeaves,
             tipBlockLeaf: tipMmrProof.blockLeaf
         });
-        Types.ProposedSwap[] memory overwriteSwaps = new Types.ProposedSwap[](0);
 
-        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, overwriteSwaps, proof);
+        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, proof);
 
         createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
         return (vault, createdSwap, swapMmrProof, tipMmrProof);
