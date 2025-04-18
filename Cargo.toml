@@ -60,7 +60,7 @@ bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin
 # This needs to be pinned to the same version of rust-bitcoin
 bitcoincore-rpc-async = { git = "https://github.com/riftresearch/rust-bitcoincore-rpc-async", tag = "bitcoin-0.32.5-patch-v1" }
 
-accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "3b2c846edee5db7917fc4a0f548d28658f559355", features = ["all"] }
+accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "fe0c7ed0a803a219b9b4e20d314ea074b859d688", features = ["all"] }
 clap = { version = "4.0", features = ["derive", "env"] }
 hex = "0.4.3"
 hex-literal = "0.4.1"
