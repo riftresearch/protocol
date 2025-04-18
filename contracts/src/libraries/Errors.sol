@@ -12,7 +12,6 @@ library Errors {
     error InvalidDepositTokenDecimals();
     error DepositAmountTooLow();
     error SatOutputTooLow();
-    error DepositVaultNotOverwritable();
     error InvalidScriptPubKey();
     error DepositVaultDoesNotExist();
     error SwapDoesNotExist();

@@ -23,8 +23,6 @@ import {BitcoinScriptLib} from "./libraries/BitcoinScriptLib.sol";
 
 /**
  * @title RiftExchange
- * @author alpinevm <https://github.com/alpinevm>
- * @author spacegod <https://github.com/bruidbarrett>
  * @notice A decentralized exchange for cross-chain Bitcoin<>Tokenized Bitcoin swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
@@ -339,10 +337,9 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         swapPublicInputs = new Types.SwapPublicInput[](swapParams.length);
         swaps = new Types.ProposedSwap[](swapParams.length);
 
-        uint256 swapIndexPointer = swapHashes.length;
+        uint256 initialSwapIndexPointer = swapHashes.length;
         for (uint256 i = 0; i < swapParams.length; i++) {
-            uint256 swapIndex = swapIndexPointer; // default is append
-            swapIndexPointer++;
+            uint256 swapIndex = initialSwapIndexPointer + i;
             Types.SubmitSwapProofParams calldata params = swapParams[i];
 
             bytes32 depositVaultHash = params.vault.checkIntegrity(vaultHashes);
