@@ -85,8 +85,8 @@ abstract contract BitcoinLightClient {
 
     function proveBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata siblings,
-        bytes32[] calldata peaks
+        bytes32[] memory siblings,
+        bytes32[] memory peaks
     ) public view returns (bool) {
         bytes32 leafHash = blockLeaf.hash();
         uint32 leafIndex = blockLeaf.height;
@@ -99,8 +99,8 @@ abstract contract BitcoinLightClient {
 
     function _verifyBlockInclusion(
         Types.BlockLeaf memory blockLeaf,
-        bytes32[] calldata siblings,
-        bytes32[] calldata peaks
+        bytes32[] memory siblings,
+        bytes32[] memory peaks
     ) internal view {
         if (!proveBlockInclusion(blockLeaf, siblings, peaks)) {
             revert Errors.BlockNotInChain();

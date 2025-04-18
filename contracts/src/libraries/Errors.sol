@@ -29,5 +29,8 @@ library Errors {
     // --- BTC DUTCH AUCTION HOUSE --- //
     error DutchAuctionDoesNotExist();
     error InvalidTickSize();
-    error AuctionNotLive();
+    error AuctionExpired();
+    error AuctionAlreadyFilled();
+    error AuctionAlreadyWithdrawn();
+    error AuctionNotExpired();
 }

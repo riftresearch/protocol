@@ -96,7 +96,6 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         uint256 feeBalance = accumulatedFeeBalance;
         if (feeBalance == 0) revert Errors.NoFeeToPay();
         accumulatedFeeBalance = 0;
-
         ERC20_BTC.safeTransfer(feeRouterAddress, feeBalance);
     }
 
@@ -110,7 +109,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
 
     /// @notice Deposits new liquidity into a new vault
     /// @return The hash of the new deposit
-    function depositLiquidity(Types.DepositLiquidityParams calldata params) external returns (bytes32) {
+    function depositLiquidity(Types.DepositLiquidityParams memory params) public returns (bytes32) {
         // Determine vault index
         uint256 vaultIndex = vaultHashes.length;
 
@@ -314,7 +313,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
 
     /// @notice Internal function to prepare and validate a new deposit
     function _prepareDeposit(
-        Types.DepositLiquidityParams calldata params,
+        Types.DepositLiquidityParams memory params,
         uint256 depositVaultIndex
     ) internal view returns (Types.DepositVault memory, bytes32) {
         uint16 _takerFeeBips = takerFeeBips; // cache

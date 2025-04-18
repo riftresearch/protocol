@@ -7,5 +7,5 @@ library Events {
     event VaultsUpdated(Types.DepositVault[] vaults, Types.VaultUpdateContext context);
     event SwapsUpdated(Types.ProposedSwap[] swaps, Types.SwapUpdateContext context);
 
-    event DutchAuctionsUpdated(Types.DutchAuction[] auctions, Types.DutchAuctionUpdateContext context);
+    event DutchAuctionsUpdated(Types.DutchAuction[] auctions, Types.DutchAuctionState state);
 }
