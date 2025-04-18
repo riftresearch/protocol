@@ -227,24 +227,26 @@ library Types {
     }
 
     /// AUCTION STATE
-    enum DutchAuctionUpdateContext {
+    enum DutchAuctionState {
         Created,
-        Filled
+        Filled,
+        Withdrawn
     }
 
     struct DutchAuction {
         uint256 auctionIndex;
         Types.BaseDepositLiquidityParams baseDepositParams;
-        Types.DutchAuctionParams auctionParams;
+        Types.DutchAuctionParams dutchAuctionParams;
         uint256 depositAmount;
         uint256 startBlock;
         uint32 startTimestamp;
+        DutchAuctionState state;
     }
 
     struct DutchAuctionParams {
-        uint256 startBtcOut; // the starting price of the auction
-        uint256 tickSize; // the amount the price will decrease each tick
-        uint256 ticks; // the number of ticks (blocks) in the auction
-        uint256 deadline; // the deadline of the auction (as a timestamp)
+        uint64 startBtcOut; // the starting price of the auction
+        uint64 tickSize; // the amount the price will decrease each tick
+        uint64 ticks; // the number of ticks (blocks) in the auction
+        uint64 deadline; // the deadline of the auction (as a timestamp)
     }
 }

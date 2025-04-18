@@ -24,3 +24,4 @@ checkpoint_leaves.zst
 **/*.zst
 **/*.vscode
 **/*.wake
+../.vscode

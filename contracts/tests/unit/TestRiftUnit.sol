@@ -181,14 +181,16 @@ contract RiftExchangeUnitTest is RiftTest {
         vm.recordLogs();
         Types.DepositLiquidityWithOverwriteParams memory args = Types.DepositLiquidityWithOverwriteParams({
             depositParams: Types.DepositLiquidityParams({
-                depositOwnerAddress: address(this),
+                base: Types.BaseDepositLiquidityParams({
+                    depositOwnerAddress: address(this),
+                    btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
+                    depositSalt: depositSalt,
+                    confirmationBlocks: confirmationBlocks,
+                    safeBlockLeaf: mmr_proof.blockLeaf
+                }),
                 specifiedPayoutAddress: address(this),
                 depositAmount: depositAmount,
                 expectedSats: expectedSats,
-                btcPayoutScriptPubKey: _generateBtcPayoutScriptPubKey(),
-                depositSalt: depositSalt,
-                confirmationBlocks: confirmationBlocks,
-                safeBlockLeaf: mmr_proof.blockLeaf,
                 safeBlockSiblings: mmr_proof.siblings,
                 safeBlockPeaks: mmr_proof.peaks
             }),

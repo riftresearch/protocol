@@ -33,7 +33,7 @@ library DataIntegrityLib {
     }
 
     function checkIntegrity(
-        Types.DutchAuction calldata auction,
+        Types.DutchAuction memory auction,
         bytes32[] storage auctionHashes
     ) internal view returns (bytes32) {
         bytes32 auctionHash = auction.hash();

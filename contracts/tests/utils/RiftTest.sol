@@ -585,14 +585,16 @@ contract RiftTest is Test, PRNG {
         // [3] test deposit
         vm.recordLogs();
         Types.DepositLiquidityParams memory args = Types.DepositLiquidityParams({
-            depositOwnerAddress: address(this),
+            base: Types.BaseDepositLiquidityParams({
+                btcPayoutScriptPubKey: btcPayoutScriptPubKey,
+                depositSalt: depositSalt,
+                confirmationBlocks: confirmationBlocks,
+                safeBlockLeaf: mmr_proof.blockLeaf,
+                depositOwnerAddress: address(this)
+            }),
             specifiedPayoutAddress: address(this),
             depositAmount: depositAmount,
             expectedSats: expectedSats,
-            btcPayoutScriptPubKey: btcPayoutScriptPubKey,
-            depositSalt: depositSalt,
-            confirmationBlocks: confirmationBlocks,
-            safeBlockLeaf: mmr_proof.blockLeaf,
             safeBlockSiblings: mmr_proof.siblings,
             safeBlockPeaks: mmr_proof.peaks
         });

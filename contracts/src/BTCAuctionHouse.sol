@@ -50,52 +50,99 @@ contract BTCDutchAuctionHouse is RiftExchange {
         Types.DutchAuction memory auction = Types.DutchAuction({
             auctionIndex: auctionHashes.length,
             baseDepositParams: baseDepositParams,
-            auctionParams: auctionParams,
+            dutchAuctionParams: auctionParams,
             depositAmount: depositAmount,
             startBlock: block.number,
-            startTimestamp: uint32(block.timestamp)
+            startTimestamp: uint32(block.timestamp),
+            state: Types.DutchAuctionState.Created
         });
         auctionHashes.push(auction.hash());
         Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
         auctions[0] = auction;
 
-        _updateAuctions(auctions, Types.DutchAuctionUpdateContext.Created);
+        _updateAuctions(auctions, Types.DutchAuctionState.Created);
 
         ERC20_BTC.safeTransferFrom(msg.sender, address(this), depositAmount);
     }
 
-    function _updateAuctions(Types.DutchAuction[] memory auctions, Types.DutchAuctionUpdateContext context) private {
+    function _updateAuctions(Types.DutchAuction[] memory auctions, Types.DutchAuctionState state) private {
         for (uint256 i = 0; i < auctions.length; i++) {
             auctionHashes.push(auctions[i].hash());
         }
-        emit Events.DutchAuctionsUpdated(auctions, context);
+        emit Events.DutchAuctionsUpdated(auctions, state);
     }
 
     // 1. validate the auction is live (not already filled/expired)
     // 2. call depositLiquidity()
     function fillAuction(
-        Types.DutchAuction calldata auction,
+        Types.DutchAuction memory auction,
         bytes32[] calldata safeBlockSiblings,
         bytes32[] calldata safeBlockPeaks
     ) external {
         auction.checkIntegrity(auctionHashes);
-        if (auction.auctionParams.deadline < block.timestamp) {
-            revert Errors.AuctionNotLive();
+        if (auction.state == Types.DutchAuctionState.Filled) {
+            revert Errors.AuctionAlreadyFilled();
         }
+        if (auction.dutchAuctionParams.deadline < block.timestamp) {
+            revert Errors.AuctionExpired();
+        }
+
+        uint64 currentBtcOut = _computeCurrentSats(auction.startBlock, auction.dutchAuctionParams);
+
+        Types.DepositLiquidityParams memory depositLiquidityParams = Types.DepositLiquidityParams({
+            base: auction.baseDepositParams,
+            specifiedPayoutAddress: msg.sender,
+            depositAmount: auction.depositAmount,
+            expectedSats: currentBtcOut,
+            safeBlockSiblings: safeBlockSiblings,
+            safeBlockPeaks: safeBlockPeaks
+        });
+
+        auction.state = Types.DutchAuctionState.Filled;
+        Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
+        auctions[0] = auction;
+        _updateAuctions(auctions, Types.DutchAuctionState.Filled);
+
+        depositLiquidity(depositLiquidityParams);
     }
 
-    /// @notice Computes the current price of the auction
-    /// @param auction The auction to compute the current price of
-    /// @return currentPrice The current price of the auction
-    function _computeCurrentPrice(Types.DutchAuction calldata auction) internal view returns (uint256) {
-        uint256 currentPrice = auction.auctionParams.startBtcOut;
-        uint256 ticksElapsed = block.number - auction.startBlock;
-        uint256 priceDecrease = ticksElapsed * auction.auctionParams.tickSize;
+    /// @notice Computes the current output amount of sats for the auction
+    /// @param startBlock The block number the auction started
+    /// @param auctionParams The auction parameters
+    /// @return currentPrice The current output amount of sats 
+    function _computeCurrentSats(
+        uint256 startBlock,
+        Types.DutchAuctionParams memory auctionParams
+    ) internal view returns (uint64) {
+        uint64 elapsedTicks = uint64(block.number - startBlock);
+        if (elapsedTicks > auctionParams.ticks) {
+            elapsedTicks = auctionParams.ticks;
+        }
+        uint64 currentPrice = auctionParams.startBtcOut;
+        uint64 priceDecrease = elapsedTicks * auctionParams.tickSize;
         currentPrice = currentPrice - priceDecrease;
         return currentPrice;
     }
 
     // 1. validate the auction is expired
     // 2. Withdraw deposit token to depositOwnerAddress
-    function withdrawFromExpiredAuction(uint256 auctionId) external {}
+    function withdrawFromExpiredAuction(Types.DutchAuction memory auction) external {
+        auction.checkIntegrity(auctionHashes);
+        if (auction.state == Types.DutchAuctionState.Filled) {
+            revert Errors.AuctionAlreadyFilled();
+        }
+        if (auction.state == Types.DutchAuctionState.Withdrawn) {
+            revert Errors.AuctionAlreadyWithdrawn();
+        }
+        if (auction.dutchAuctionParams.deadline > block.timestamp) {
+            revert Errors.AuctionNotExpired();
+        }
+
+        auction.state = Types.DutchAuctionState.Withdrawn;
+        Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
+        auctions[0] = auction;
+        _updateAuctions(auctions, Types.DutchAuctionState.Withdrawn);
+
+        ERC20_BTC.safeTransfer(auction.baseDepositParams.depositOwnerAddress, auction.depositAmount);
+    }
 }
