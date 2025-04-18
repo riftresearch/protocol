@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // TODO: low priority, make IndexedMMR clonable so that we can clone a built BchOverwriteMMRState instead of having to re-build it
 // for each swap (or maybe just rewind it???)
 use std::convert::TryInto;
@@ -195,6 +196,30 @@ impl ReverseIndex {
         Ok(())
     }
 
+    async fn batch_insert(&self, data: Vec<(&LeafDigest, usize, &BlockLeaf)>) -> Result<()> {
+        let mut entries = HashMap::new();
+
+        for (leaf_hash, element_index, leaf_data) in data {
+            let leaf_hash_hex = digest_to_hex(leaf_hash);
+            let key = self.make_key(&leaf_hash_hex);
+
+            let val_obj = ReverseIndexValue {
+                element_index,
+                leaf_data: *leaf_data,
+            };
+            let serialized = serde_json::to_string(&val_obj)
+                .map_err(|e| RiftSdkError::StoreError(format!("Serialize error: {e}")))?;
+
+            entries.insert(key, serialized);
+        }
+
+        self.store
+            .set_many(entries)
+            .await
+            .map_err(|e| RiftSdkError::StoreError(format!("Store set_many error: {e}")))?;
+        Ok(())
+    }
+
     async fn get_by_hash(&self, leaf_digest: &LeafDigest) -> Result<Option<ReverseIndexValue>> {
         let leaf_hash_hex = digest_to_hex(leaf_digest);
         let key = self.make_key(&leaf_hash_hex);
@@ -215,6 +240,10 @@ impl ReverseIndex {
     }
 
     async fn delete_many(&self, leaf_hashes_hex: Vec<String>) -> Result<()> {
+        if leaf_hashes_hex.is_empty() {
+            return Ok(());
+        }
+
         let keys: Vec<String> = leaf_hashes_hex
             .into_iter()
             .map(|hash_hex| self.make_key(&hash_hex))
@@ -337,67 +366,40 @@ impl<H: LeafHasher> IndexedMMR<H> {
 
     /// Batch append leaves, storing them in the accumulators MMR and the reverse index.
     pub async fn batch_append(&mut self, leaves: &[BlockLeaf]) -> Result<Vec<AppendResult>> {
-        let mut append_results = Vec::new();
+        if leaves.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let total_leaves = leaves.len();
+        let start_time = std::time::Instant::now();
 
         info!("Starting to append {} leaves", total_leaves);
 
-        let start_time = std::time::Instant::now();
-        let update_interval = std::time::Duration::from_secs(2); // Update stats every 2 seconds
-        let mut last_update = start_time;
+        let mut leaf_hashes = Vec::with_capacity(total_leaves);
+        let mut leaf_hash_hex_values = Vec::with_capacity(total_leaves);
 
         // TODO: Update the underlying accumulators library to support batch operations
-        for (i, leaf) in leaves.iter().enumerate() {
+        for leaf in leaves {
             let leaf_hash = leaf.hash::<H>();
             let leaf_hash_hex = digest_to_hex(&leaf_hash);
 
-            let append_res = self
-                .client_mmr
-                .append(leaf_hash_hex)
-                .await
-                .map_err(|e| RiftSdkError::AppendLeafError(e.to_string()))?;
-
-            self.reverse_index
-                .insert(&leaf_hash, append_res.element_index, leaf)
-                .await?;
-            append_results.push(append_res);
-
-            // Display progress stats at regular intervals
-            let now = std::time::Instant::now();
-            if i == 0 || i == total_leaves - 1 || now.duration_since(last_update) >= update_interval
-            {
-                let processed = i + 1;
-                let elapsed = now.duration_since(start_time);
-                let leaves_per_second = processed as f64 / elapsed.as_secs_f64();
-
-                // Calculate estimated time remaining
-                let remaining_leaves = total_leaves - processed;
-                let estimated_remaining_secs = if leaves_per_second > 0.0 {
-                    remaining_leaves as f64 / leaves_per_second
-                } else {
-                    f64::INFINITY
-                };
-
-                // Format time remaining in a human-readable way
-                let time_remaining = if estimated_remaining_secs.is_finite() {
-                    Self::format_duration(estimated_remaining_secs)
-                } else {
-                    "unknown".to_string()
-                };
-
-                info!(
-                    "Progress: {}/{} leaves ({:.1}%) | Rate: {:.1} leaves/sec | Elapsed: {} | Remaining: {}",
-                    processed,
-                    total_leaves,
-                    (processed as f64 / total_leaves as f64) * 100.0,
-                    leaves_per_second,
-                    Self::format_duration(elapsed.as_secs_f64()),
-                    time_remaining
-                );
-
-                last_update = now;
-            }
+            leaf_hashes.push(leaf_hash);
+            leaf_hash_hex_values.push(leaf_hash_hex);
         }
+
+        let append_results = self
+            .client_mmr
+            .batch_append(leaf_hash_hex_values)
+            .await
+            .map_err(|e| RiftSdkError::AppendLeafError(e.to_string()))?;
+
+        let mut reverse_index_data = Vec::with_capacity(total_leaves);
+
+        for (i, (leaf, leaf_hash)) in leaves.iter().zip(&leaf_hashes).enumerate() {
+            reverse_index_data.push((leaf_hash, append_results[i].element_index, leaf));
+        }
+
+        self.reverse_index.batch_insert(reverse_index_data).await?;
 
         let total_duration = start_time.elapsed();
         info!(
