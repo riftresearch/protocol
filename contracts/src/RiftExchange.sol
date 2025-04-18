@@ -125,27 +125,6 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         return depositHash;
     }
 
-    /// @notice Deposits new liquidity by overwriting an existing empty vault
-    /// @return The hash of the new deposit
-    function depositLiquidityWithOverwrite(
-        Types.DepositLiquidityWithOverwriteParams calldata params
-    ) external returns (bytes32) {
-        // Ensure passed vault is real and overwritable
-        params.overwriteVault.checkIntegrity(vaultHashes);
-        if (params.overwriteVault.vaultAmount != 0) revert Errors.DepositVaultNotOverwritable();
-
-        // Create deposit liquidity request
-        uint256 vaultIndex = params.overwriteVault.vaultIndex;
-        (Types.DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params.depositParams, vaultIndex);
-
-        // Overwrite deposit vault
-        vaultHashes[vaultIndex] = depositHash;
-
-        // Finalize deposit
-        _finalizeDeposit(vault);
-
-        return depositHash;
-    }
 
     /// @notice Withdraws liquidity from a deposit vault after the lockup period
     /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
@@ -169,11 +148,10 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Withdraw);
     }
 
-    /// @notice Submits a a batch of swap proofs and adds them to swapHashes or overwrites an existing completed swap hash
+    /// @notice Submits a a batch of swap proofs and adds them to swapHashes
     function submitBatchSwapProofWithLightClientUpdate(
         Types.SubmitSwapProofParams[] calldata swapParams,
         Types.BlockProofParams calldata blockProofParams,
-        Types.ProposedSwap[] calldata overwriteSwaps,
         bytes calldata proof
     ) external {
         // optimistically update root, needed b/c we validate current inclusion in the chain for each swap
@@ -188,8 +166,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
 
         (Types.ProposedSwap[] memory swaps, Types.SwapPublicInput[] memory swapPublicInputs) = _validateSwaps(
             proposedLightClientHeight,
-            swapParams,
-            overwriteSwaps
+            swapParams
         );
 
         bytes32 compressedLeavesHash = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
@@ -213,14 +190,12 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     /// @notice Submits a batch of swap proofs and adds them to swapHashes, does not update the light client
     function submitBatchSwapProof(
         Types.SubmitSwapProofParams[] calldata swapParams,
-        Types.ProposedSwap[] calldata overwriteSwaps,
         bytes calldata proof
     ) external {
         uint32 currentLightClientHeight = getLightClientHeight();
         (Types.ProposedSwap[] memory swaps, Types.SwapPublicInput[] memory swapPublicInputs) = _validateSwaps(
             currentLightClientHeight,
-            swapParams,
-            overwriteSwaps
+            swapParams
         );
 
         verifyZkProof(
@@ -358,8 +333,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     /// @notice Internal function to prepare and validate a batch of swap proofs
     function _validateSwaps(
         uint32 proposedLightClientHeight,
-        Types.SubmitSwapProofParams[] calldata swapParams,
-        Types.ProposedSwap[] calldata overwriteSwaps
+        Types.SubmitSwapProofParams[] calldata swapParams
     ) internal returns (Types.ProposedSwap[] memory swaps, Types.SwapPublicInput[] memory swapPublicInputs) {
         if (swapParams.length == 0) revert Errors.NoSwapsToSubmit();
         swapPublicInputs = new Types.SwapPublicInput[](swapParams.length);
@@ -368,16 +342,8 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         uint256 swapIndexPointer = swapHashes.length;
         for (uint256 i = 0; i < swapParams.length; i++) {
             uint256 swapIndex = swapIndexPointer; // default is append
+            swapIndexPointer++;
             Types.SubmitSwapProofParams calldata params = swapParams[i];
-            if (params.storageStrategy == Types.StorageStrategy.Append) {
-                swapIndexPointer++;
-            } else if (params.storageStrategy == Types.StorageStrategy.Overwrite) {
-                overwriteSwaps[params.localOverwriteIndex].checkIntegrity(swapHashes);
-                if (overwriteSwaps[params.localOverwriteIndex].state != Types.SwapState.Finalized) {
-                    revert Errors.CannotOverwriteOngoingSwap();
-                }
-                swapIndex = overwriteSwaps[params.localOverwriteIndex].swapIndex;
-            }
 
             bytes32 depositVaultHash = params.vault.checkIntegrity(vaultHashes);
 
@@ -414,11 +380,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
             });
 
             bytes32 swapHash = swaps[i].hash();
-            if (params.storageStrategy == Types.StorageStrategy.Append) {
-                swapHashes.push(swapHash);
-            } else if (params.storageStrategy == Types.StorageStrategy.Overwrite) {
-                swapHashes[overwriteSwaps[params.localOverwriteIndex].swapIndex] = swapHash;
-            }
+            swapHashes.push(swapHash);
         }
     }
 

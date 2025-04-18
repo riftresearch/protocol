@@ -145,16 +145,7 @@ library Types {
         bytes32[] safeBlockPeaks;
     }
 
-    /**
-     * @param depositParams Deposit parameters defined above
-     * @param overwriteVault Existing empty vault to overwrite
-     */
-    struct DepositLiquidityWithOverwriteParams {
-        DepositLiquidityParams depositParams;
-        Types.DepositVault overwriteVault;
-    }
-
-    /**
+     /**
      * @param priorMmrRoot Previous MMR root used to generate this swap proof
      * @param newMmrRoot Updated MMR root at least incluing up to the confirmation block
      * @param compressedBlockLeaves Compressed block data for MMR Data Availability
@@ -169,25 +160,18 @@ library Types {
         Types.BlockLeaf tipBlockLeaf;
     }
 
-    enum StorageStrategy {
-        Append,
-        Overwrite
-    }
-
     /**
      * @notice Struct for submitSwapProof parameters
      *
      * @param swapBitcoinTxid Txid of the Bitcoin transaction containing the swap
-     * @param swapBitcoinBlockHash Hash of the Bitcoin block containing the swap
      * @param vault Deposit vault being used in the swap
-     * @param storageStrategy Strategy for storing the swap commitment
-     * @param localOverwriteIndex Index of the swap commitment in a presumably local array of swaps to overwrite (if storageStrategy is Overwrite)
+     * @param swapBitcoinBlockLeaf The leaf node for the swap block in the MMR
+     * @param swapBitcoinBlockSiblings Merkle proof siblings for the swap block
+     * @param swapBitcoinBlockPeaks MMR peaks for the swap block
      */
     struct SubmitSwapProofParams {
         bytes32 swapBitcoinTxid;
         Types.DepositVault vault;
-        StorageStrategy storageStrategy;
-        uint16 localOverwriteIndex;
         Types.BlockLeaf swapBitcoinBlockLeaf;
         bytes32[] swapBitcoinBlockSiblings;
         bytes32[] swapBitcoinBlockPeaks;
