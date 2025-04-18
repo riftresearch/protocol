@@ -14,6 +14,7 @@ library HashLib {
         return EfficientHashLib.hash(abi.encode(swap));
     }
 
+    // TODO: determine if this is cheaper than just abi.encode'ing the struct
     function hash(Types.BlockLeaf memory blockLeaf) internal pure returns (bytes32) {
         return
             EfficientHashLib.hash(
@@ -21,5 +22,9 @@ library HashLib {
                 bytes32(uint256(blockLeaf.height)),
                 bytes32(blockLeaf.cumulativeChainwork)
             );
+    }
+
+    function hash(Types.DutchAuction memory dutchAuction) internal pure returns (bytes32) {
+        return EfficientHashLib.hash(abi.encode(dutchAuction));
     }
 }

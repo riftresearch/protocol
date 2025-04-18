@@ -8,6 +8,7 @@ import {HashLib} from "./HashLib.sol";
 library DataIntegrityLib {
     using HashLib for Types.DepositVault;
     using HashLib for Types.ProposedSwap;
+    using HashLib for Types.DutchAuction;
 
     function checkIntegrity(
         Types.DepositVault calldata vault,
@@ -29,5 +30,16 @@ library DataIntegrityLib {
             revert Errors.SwapDoesNotExist();
         }
         return swapHash;
+    }
+
+    function checkIntegrity(
+        Types.DutchAuction calldata auction,
+        bytes32[] storage auctionHashes
+    ) internal view returns (bytes32) {
+        bytes32 auctionHash = auction.hash();
+        if (auctionHash != auctionHashes[auction.auctionIndex]) {
+            revert Errors.DutchAuctionDoesNotExist();
+        }
+        return auctionHash;
     }
 }

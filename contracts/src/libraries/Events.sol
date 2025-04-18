@@ -6,4 +6,6 @@ library Events {
     event BitcoinLightClientUpdated(bytes32 priorMmrRoot, bytes32 newMmrRoot, bytes compressedBlockLeaves);
     event VaultsUpdated(Types.DepositVault[] vaults, Types.VaultUpdateContext context);
     event SwapsUpdated(Types.ProposedSwap[] swaps, Types.SwapUpdateContext context);
+
+    event DutchAuctionsUpdated(Types.DutchAuction[] auctions, Types.DutchAuctionUpdateContext context);
 }

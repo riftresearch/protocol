@@ -320,10 +320,11 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         uint16 _takerFeeBips = takerFeeBips; // cache
         if (params.depositAmount < FeeLib.calculateMinDepositAmount(_takerFeeBips)) revert Errors.DepositAmountTooLow();
         if (params.expectedSats < MIN_OUTPUT_SATS) revert Errors.SatOutputTooLow();
-        if (params.confirmationBlocks < MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
-        if (!BitcoinScriptLib.validateScriptPubKey(params.btcPayoutScriptPubKey)) revert Errors.InvalidScriptPubKey();
+        if (params.base.confirmationBlocks < MIN_CONFIRMATION_BLOCKS) revert Errors.NotEnoughConfirmationBlocks();
+        if (!BitcoinScriptLib.validateScriptPubKey(params.base.btcPayoutScriptPubKey))
+            revert Errors.InvalidScriptPubKey();
 
-        _verifyBlockInclusion(params.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
+        _verifyBlockInclusion(params.base.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
 
         uint256 depositFee = FeeLib.calculateFeeFromDeposit(params.depositAmount, _takerFeeBips);
 
@@ -331,17 +332,17 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
             vaultIndex: depositVaultIndex,
             depositTimestamp: uint64(block.timestamp),
             depositUnlockTimestamp: uint64(
-                block.timestamp + PeriodLib.calculateDepositLockupPeriod(params.confirmationBlocks)
+                block.timestamp + PeriodLib.calculateDepositLockupPeriod(params.base.confirmationBlocks)
             ),
             vaultAmount: params.depositAmount - depositFee,
             takerFee: depositFee,
             expectedSats: params.expectedSats,
-            btcPayoutScriptPubKey: params.btcPayoutScriptPubKey,
+            btcPayoutScriptPubKey: params.base.btcPayoutScriptPubKey,
             specifiedPayoutAddress: params.specifiedPayoutAddress,
-            ownerAddress: params.depositOwnerAddress,
-            salt: EfficientHashLib.hash(_domainSeparator(), params.depositSalt, bytes32(depositVaultIndex)),
-            confirmationBlocks: params.confirmationBlocks,
-            attestedBitcoinBlockHeight: params.safeBlockLeaf.height
+            ownerAddress: params.base.depositOwnerAddress,
+            salt: EfficientHashLib.hash(_domainSeparator(), params.base.depositSalt, bytes32(depositVaultIndex)),
+            confirmationBlocks: params.base.confirmationBlocks,
+            attestedBitcoinBlockHeight: params.base.safeBlockLeaf.height
         });
 
         return (vault, vault.hash());
