@@ -113,36 +113,39 @@ library Types {
     // -----------------------------------------------------------------------
     //                             PARAMETER STRUCTS
     // -----------------------------------------------------------------------
-
     /**
-     * @notice Struct for depositLiquidity parameters
-     *
-     * @param specifiedPayoutAddress Address to receive swap proceeds
-     * @param depositAmount Amount of ERC20 tokens to deposit including fee
-     * @param expectedSats Expected BTC output in satoshis
+     * @param depositOwnerAddress Address to receive swap proceeds
      * @param btcPayoutScriptPubKey Bitcoin script for receiving BTC
      * @param depositSalt User generated salt for vault nonce
      * @param confirmationBlocks Number of Bitcoin blocks required for confirmation
      * @param safeBlockLeaf The leaf representing a block the depositor believes is highly unlikely to be reorged out of the chain
-     * @param safeBlockSiblings Merkle proof siblings for safe block inclusion
-     * @param safeBlockPeaks MMR peaks for safe block inclusion
      */
-    struct DepositLiquidityParams {
+    struct BaseDepositLiquidityParams {
         address depositOwnerAddress;
-        address specifiedPayoutAddress;
-        uint256 depositAmount;
-        uint64 expectedSats;
         bytes25 btcPayoutScriptPubKey;
         bytes32 depositSalt;
         uint8 confirmationBlocks;
         Types.BlockLeaf safeBlockLeaf;
+    }
+
+    /**
+     * @param base Base depositLiquidity parameters
+     * @param specifiedPayoutAddress Address to receive swap proceeds
+     * @param depositAmount Amount of ERC20 tokens to deposit including fee
+     * @param expectedSats Expected BTC output in satoshis
+     * @param safeBlockSiblings Merkle proof siblings for safe block inclusion
+     * @param safeBlockPeaks MMR peaks for safe block inclusion
+     */
+    struct DepositLiquidityParams {
+        BaseDepositLiquidityParams base;
+        address specifiedPayoutAddress;
+        uint256 depositAmount;
+        uint64 expectedSats;
         bytes32[] safeBlockSiblings;
         bytes32[] safeBlockPeaks;
     }
 
     /**
-     * @notice Struct for depositLiquidityWithOverwrite parameters
-     *
      * @param depositParams Deposit parameters defined above
      * @param overwriteVault Existing empty vault to overwrite
      */
@@ -152,8 +155,6 @@ library Types {
     }
 
     /**
-     * @notice Struct for block proof parameters
-     *
      * @param priorMmrRoot Previous MMR root used to generate this swap proof
      * @param newMmrRoot Updated MMR root at least incluing up to the confirmation block
      * @param compressedBlockLeaves Compressed block data for MMR Data Availability
@@ -223,5 +224,27 @@ library Types {
     struct ActiveBond {
         address marketMaker;
         uint96 bondAmount;
+    }
+
+    /// AUCTION STATE
+    enum DutchAuctionUpdateContext {
+        Created,
+        Filled
+    }
+
+    struct DutchAuction {
+        uint256 auctionIndex;
+        Types.BaseDepositLiquidityParams baseDepositParams;
+        Types.DutchAuctionParams auctionParams;
+        uint256 depositAmount;
+        uint256 startBlock;
+        uint32 startTimestamp;
+    }
+
+    struct DutchAuctionParams {
+        uint256 startBtcOut; // the starting price of the auction
+        uint256 tickSize; // the amount the price will decrease each tick
+        uint256 ticks; // the number of ticks (blocks) in the auction
+        uint256 deadline; // the deadline of the auction (as a timestamp)
     }
 }

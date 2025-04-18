@@ -25,4 +25,9 @@ library Errors {
     error SwapNotProved();
     error NotEnoughConfirmationBlocks();
     error NoSwapsToSubmit();
+
+    // --- BTC DUTCH AUCTION HOUSE --- //
+    error DutchAuctionDoesNotExist();
+    error InvalidTickSize();
+    error AuctionNotLive();
 }

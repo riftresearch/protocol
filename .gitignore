@@ -22,3 +22,5 @@ pgo-data.profdata
 checkpoint_leaves.txt
 checkpoint_leaves.zst
 **/*.zst
+**/*.vscode
+**/*.wake
