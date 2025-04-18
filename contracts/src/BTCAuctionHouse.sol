@@ -11,6 +11,8 @@ import {HashLib} from "./libraries/HashLib.sol";
 import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {RiftExchange} from "./RiftExchange.sol";
 
+/// @title BTCDutchAuctionHouse
+/// @notice A Dutch auction for ERC20 BTC<>BTC swaps
 contract BTCDutchAuctionHouse is RiftExchange {
     using HashLib for Types.DutchAuction;
     using DataIntegrityLib for Types.DutchAuction;
@@ -53,10 +55,9 @@ contract BTCDutchAuctionHouse is RiftExchange {
             dutchAuctionParams: auctionParams,
             depositAmount: depositAmount,
             startBlock: block.number,
-            startTimestamp: uint32(block.timestamp),
+            startTimestamp: uint64(block.timestamp),
             state: Types.DutchAuctionState.Created
         });
-        auctionHashes.push(auction.hash());
         Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
         auctions[0] = auction;
 
@@ -69,7 +70,7 @@ contract BTCDutchAuctionHouse is RiftExchange {
         for (uint256 i = 0; i < auctions.length; i++) {
             auctionHashes.push(auctions[i].hash());
         }
-        emit Events.DutchAuctionsUpdated(auctions, state);
+        emit Events.AuctionsUpdated(auctions, state);
     }
 
     // 1. validate the auction is live (not already filled/expired)

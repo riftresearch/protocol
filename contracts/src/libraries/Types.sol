@@ -223,7 +223,7 @@ library Types {
         Types.DutchAuctionParams dutchAuctionParams;
         uint256 depositAmount;
         uint256 startBlock;
-        uint32 startTimestamp;
+        uint64 startTimestamp;
         DutchAuctionState state;
     }
 
