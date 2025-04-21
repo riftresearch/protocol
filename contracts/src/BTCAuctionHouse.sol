@@ -10,6 +10,7 @@ import {Errors} from "./libraries/Errors.sol";
 import {HashLib} from "./libraries/HashLib.sol";
 import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {RiftExchange} from "./RiftExchange.sol";
+import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
 /// @title BTCDutchAuctionHouse
 /// @notice A Dutch auction for ERC20 BTC<>BTC swaps

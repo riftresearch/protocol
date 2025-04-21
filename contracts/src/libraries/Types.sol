@@ -204,11 +204,7 @@ library Types {
         Types.BlockLeaf tipBlockLeaf;
     }
 
-    /// @dev 1 slot for both fields
-    struct ActiveBond {
-        address marketMaker;
-        uint96 bondAmount;
-    }
+
 
     /// AUCTION STATE
     enum DutchAuctionState {
@@ -233,4 +229,6 @@ library Types {
         uint64 ticks; // the number of ticks (blocks) in the auction
         uint64 deadline; // the deadline of the auction (as a timestamp)
     }
+
+
 }
