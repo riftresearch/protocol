@@ -1,3 +1,4 @@
+bundler3/=dependencies/bundler3-0.1.0/
 forge-std/=dependencies/forge-std-1.9.3/
 solady/=dependencies/solady-0.1.4/
 sp1-contracts/=dependencies/sp1-contracts-4.0.0/

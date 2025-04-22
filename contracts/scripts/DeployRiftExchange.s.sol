@@ -80,6 +80,7 @@ contract DeployRiftExchange is Script {
         Types.DeploymentParams memory deploymentParams = getDeploymentParams("../bitcoin_checkpoint_885041.zst");
         console.log("Deployment params built...");
 
+        /*
         RiftExchange riftExchange = new RiftExchange({
             _mmrRoot: deploymentParams.mmrRoot,
             _depositToken: chainSpecificAddresses.depositTokenAddress,
@@ -89,8 +90,10 @@ contract DeployRiftExchange is Script {
             _takerFeeBips: takerFeeBips,
             _tipBlockLeaf: deploymentParams.tipBlockLeaf
         });
+        
 
         console.log("RiftExchange deployed at address:", address(riftExchange));
+        */
 
         vm.stopBroadcast();
     }

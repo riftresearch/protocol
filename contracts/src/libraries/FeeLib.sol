@@ -3,7 +3,11 @@ pragma solidity =0.8.28;
 
 library FeeLib {
     function calculateMinDepositAmount(uint16 takerFeeBips) internal pure returns (uint256 minDepositAmount) {
-        minDepositAmount = (1e4 + takerFeeBips - 1) / takerFeeBips;
+        if (takerFeeBips == 0) {
+            minDepositAmount = 1;
+        } else {
+            minDepositAmount = (1e4 + takerFeeBips - 1) / takerFeeBips;
+        }
     }
 
     /// @notice Calculates protocol fee for a given deposit amount

@@ -219,16 +219,16 @@ library Types {
         Types.DutchAuctionParams dutchAuctionParams;
         uint256 depositAmount;
         uint256 startBlock;
-        uint64 startTimestamp;
+        uint256 startTimestamp;
         DutchAuctionState state;
     }
 
     struct DutchAuctionParams {
-        uint64 startBtcOut; // the starting price of the auction
-        uint64 tickSize; // the amount the price will decrease each tick
-        uint64 ticks; // the number of ticks (blocks) in the auction
-        uint64 deadline; // the deadline of the auction (as a timestamp)
+        uint256 startBtcOut; // the starting amount of BTC the auction will sell
+        uint256 endBtcOut; // the ending amount of BTC the auction will sell
+        uint256 decayBlocks; // the number of blocks price will decay over
+        uint256 deadline; // the deadline of the auction (as a timestamp)
+        address fillerWhitelistContract; // the whitelist contract to use for validating the filler
     }
-
 
 }

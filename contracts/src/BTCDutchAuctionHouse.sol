@@ -6,6 +6,7 @@ import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 import {Types} from "./libraries/Types.sol";
 import {Events} from "./libraries/Events.sol";
 import {Errors} from "./libraries/Errors.sol";
+import {DutchDecayLib} from "./libraries/DutchDecayLib.sol";
 
 import {HashLib} from "./libraries/HashLib.sol";
 import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
@@ -43,11 +44,19 @@ contract BTCDutchAuctionHouse is RiftExchange {
 
     function startAuction(
         uint256 depositAmount,
-        Types.DutchAuctionParams calldata auctionParams,
+        Types.DutchAuctionParams memory auctionParams,
         Types.BaseDepositLiquidityParams calldata baseDepositParams
     ) external {
-        if (auctionParams.tickSize == 0) {
+        if (auctionParams.decayBlocks == 0) {
             revert Errors.InvalidTickSize();
+        }
+
+        if (auctionParams.startBtcOut <= auctionParams.endBtcOut) {
+            revert Errors.InvalidStartBtcOut();
+        }
+
+        if(auctionParams.deadline < block.timestamp) {
+            revert Errors.InvalidDeadline();
         }
 
         Types.DutchAuction memory auction = Types.DutchAuction({
@@ -56,28 +65,21 @@ contract BTCDutchAuctionHouse is RiftExchange {
             dutchAuctionParams: auctionParams,
             depositAmount: depositAmount,
             startBlock: block.number,
-            startTimestamp: uint64(block.timestamp),
+            startTimestamp: block.timestamp,
             state: Types.DutchAuctionState.Created
         });
-        Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
-        auctions[0] = auction;
-
-        _updateAuctions(auctions, Types.DutchAuctionState.Created);
+   
+        auctionHashes.push(auction.hash());
+        emit Events.AuctionUpdated(auction);
 
         ERC20_BTC.safeTransferFrom(msg.sender, address(this), depositAmount);
-    }
-
-    function _updateAuctions(Types.DutchAuction[] memory auctions, Types.DutchAuctionState state) private {
-        for (uint256 i = 0; i < auctions.length; i++) {
-            auctionHashes.push(auctions[i].hash());
-        }
-        emit Events.AuctionsUpdated(auctions, state);
     }
 
     // 1. validate the auction is live (not already filled/expired)
     // 2. call depositLiquidity()
     function fillAuction(
         Types.DutchAuction memory auction,
+        bytes memory fillerAuthData,
         bytes32[] calldata safeBlockSiblings,
         bytes32[] calldata safeBlockPeaks
     ) external {
@@ -88,43 +90,38 @@ contract BTCDutchAuctionHouse is RiftExchange {
         if (auction.dutchAuctionParams.deadline < block.timestamp) {
             revert Errors.AuctionExpired();
         }
+        if (auction.dutchAuctionParams.fillerWhitelistContract != address(0)) {
+            if (!IRiftWhitelist(auction.dutchAuctionParams.fillerWhitelistContract).isWhitelisted(msg.sender, fillerAuthData)) {
+                revert Errors.FillerNotWhitelisted();
+            }
+        }
 
-        uint64 currentBtcOut = _computeCurrentSats(auction.startBlock, auction.dutchAuctionParams);
+        uint256 currentBtcOut = DutchDecayLib.linearDecay({
+            startPoint: auction.startBlock,
+            endPoint: auction.startBlock + auction.dutchAuctionParams.decayBlocks,
+            currentPoint: block.number,
+            startAmount: auction.dutchAuctionParams.startBtcOut,
+            endAmount: auction.dutchAuctionParams.endBtcOut
+        });
 
         Types.DepositLiquidityParams memory depositLiquidityParams = Types.DepositLiquidityParams({
             base: auction.baseDepositParams,
             specifiedPayoutAddress: msg.sender,
             depositAmount: auction.depositAmount,
-            expectedSats: currentBtcOut,
+            expectedSats: uint64(currentBtcOut),
             safeBlockSiblings: safeBlockSiblings,
             safeBlockPeaks: safeBlockPeaks
         });
 
+        // Note:  _depositLiquidity takes care of accounting for tokens deposited via fillAuction.
+        // so no additional ERC20 deposit is necessary.
+        _depositLiquidity(depositLiquidityParams);
+
         auction.state = Types.DutchAuctionState.Filled;
-        Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
-        auctions[0] = auction;
-        _updateAuctions(auctions, Types.DutchAuctionState.Filled);
-
-        depositLiquidity(depositLiquidityParams);
+        auctionHashes[auction.auctionIndex] = auction.hash();
+        emit Events.AuctionUpdated(auction);
     }
 
-    /// @notice Computes the current output amount of sats for the auction
-    /// @param startBlock The block number the auction started
-    /// @param auctionParams The auction parameters
-    /// @return currentPrice The current output amount of sats 
-    function _computeCurrentSats(
-        uint256 startBlock,
-        Types.DutchAuctionParams memory auctionParams
-    ) internal view returns (uint64) {
-        uint64 elapsedTicks = uint64(block.number - startBlock);
-        if (elapsedTicks > auctionParams.ticks) {
-            elapsedTicks = auctionParams.ticks;
-        }
-        uint64 currentPrice = auctionParams.startBtcOut;
-        uint64 priceDecrease = elapsedTicks * auctionParams.tickSize;
-        currentPrice = currentPrice - priceDecrease;
-        return currentPrice;
-    }
 
     // 1. validate the auction is expired
     // 2. Withdraw deposit token to depositOwnerAddress
@@ -141,9 +138,8 @@ contract BTCDutchAuctionHouse is RiftExchange {
         }
 
         auction.state = Types.DutchAuctionState.Withdrawn;
-        Types.DutchAuction[] memory auctions = new Types.DutchAuction[](1);
-        auctions[0] = auction;
-        _updateAuctions(auctions, Types.DutchAuctionState.Withdrawn);
+        auctionHashes[auction.auctionIndex] = auction.hash();
+        emit Events.AuctionUpdated(auction);
 
         ERC20_BTC.safeTransfer(auction.baseDepositParams.depositOwnerAddress, auction.depositAmount);
     }

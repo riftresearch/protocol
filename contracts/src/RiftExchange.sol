@@ -26,7 +26,7 @@ import {BitcoinScriptLib} from "./libraries/BitcoinScriptLib.sol";
  * @notice A decentralized exchange for cross-chain Bitcoin<>Tokenized Bitcoin swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
-contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
+abstract contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
     using SafeTransferLib for address;
     using HashLib for Types.DepositVault;
     using HashLib for Types.ProposedSwap;
@@ -107,7 +107,8 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
 
     /// @notice Deposits new liquidity into a new vault
     /// @return The hash of the new deposit
-    function depositLiquidity(Types.DepositLiquidityParams memory params) public returns (bytes32) {
+    /// @dev This function requires that the child contract handles token accounting
+    function _depositLiquidity(Types.DepositLiquidityParams memory params) internal returns (bytes32) {
         // Determine vault index
         uint256 vaultIndex = vaultHashes.length;
 
@@ -118,7 +119,9 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         vaultHashes.push(depositHash);
 
         // Finalize deposit
-        _finalizeDeposit(vault);
+        Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
+        updatedVaults[0] = vault;
+        emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Created);
 
         return depositHash;
     }
@@ -320,13 +323,7 @@ contract RiftExchange is BitcoinLightClient, Ownable, EIP712 {
         return (vault, vault.hash());
     }
 
-    /// @notice Internal function to finalize a deposit
-    function _finalizeDeposit(Types.DepositVault memory vault) internal {
-        Types.DepositVault[] memory updatedVaults = new Types.DepositVault[](1);
-        updatedVaults[0] = vault;
-        emit Events.VaultsUpdated(updatedVaults, Types.VaultUpdateContext.Created);
-        ERC20_BTC.safeTransferFrom(msg.sender, address(this), vault.vaultAmount + vault.takerFee);
-    }
+
 
     /// @notice Internal function to prepare and validate a batch of swap proofs
     function _validateSwaps(

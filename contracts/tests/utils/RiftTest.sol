@@ -5,6 +5,7 @@ import {Test} from "forge-std/src/Test.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
 import {Vm} from "forge-std/src/Vm.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
+import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 import "forge-std/src/console.sol";
 
 import {HashLib} from "../../src/libraries/HashLib.sol";
@@ -450,11 +451,30 @@ contract PRNG {
     }
 }
 
+contract RiftExchangeHarness is RiftExchange {
+    using SafeTransferLib for address;
+    constructor(
+        bytes32 _mmrRoot,
+        address _depositToken,
+        bytes32 _circuitVerificationKey,
+        address _verifier,
+        address _feeRouter,
+        uint16 _takerFeeBips,
+        Types.BlockLeaf memory _tipBlockLeaf
+    ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _takerFeeBips, _tipBlockLeaf) {}
+
+    function depositLiquidity(Types.DepositLiquidityParams memory params) external returns (bytes32) {
+        bytes32 hash = super._depositLiquidity(params);
+        ERC20_BTC.safeTransferFrom(msg.sender, address(this), params.depositAmount);
+        return hash;
+    }
+}
+
 contract RiftTest is Test, PRNG {
     using HashLib for Types.DepositVault;
     using HashLib for Types.ProposedSwap;
     address exchangeOwner = address(0xbeef);
-    RiftExchange public exchange;
+    RiftExchangeHarness public exchange;
     MockToken public mockToken;
     SP1MockVerifier public verifier;
 
@@ -464,7 +484,7 @@ contract RiftTest is Test, PRNG {
 
         Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
-        exchange = new RiftExchange({
+        exchange = new RiftExchangeHarness({
             _mmrRoot: initial_mmr_proof.mmrRoot,
             _depositToken: address(mockToken),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
