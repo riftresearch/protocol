@@ -21,9 +21,6 @@ contract RiftAuctionAdaptor is CoreAdapter {
 	/// @notice The BTC Dutch Auction House contract.
 	address public immutable btcAuctionHouse;
 
-	// --- Errors ---
-	error ZeroBalance();
-
 	// --- Constructor ---
 	constructor(address _bundler3, address _btcAuctionHouse) CoreAdapter(_bundler3) {
 		btcAuctionHouse = _btcAuctionHouse;
