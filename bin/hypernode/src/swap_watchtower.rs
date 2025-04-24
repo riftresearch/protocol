@@ -31,8 +31,7 @@ use rift_sdk::{
     WebsocketWalletProvider,
 };
 use sol_bindings::{
-    RiftExchange::{self, RiftExchangeInstance},
-    Types::{BlockProofParams, DepositVault, SubmitSwapProofParams},
+    BlockProofParams, DepositVault, RiftExchangeHarnessInstance, SubmitSwapProofParams,
 };
 use std::sync::Arc;
 use tokio::{
@@ -241,7 +240,7 @@ impl SwapWatchtower {
         evm_rpc: Arc<WebsocketWalletProvider>,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
     ) -> eyre::Result<()> {
-        let rift_exchange = RiftExchange::new(evm_address, evm_rpc);
+        let rift_exchange = RiftExchangeHarnessInstance::new(evm_address, evm_rpc);
         loop {
             let mut confirmed_swaps = confirmed_swaps_rx.recv().await.ok_or_else(|| {
                 eyre::eyre!("Confirmed swaps channel receiver unexpectedly closed")
@@ -302,7 +301,6 @@ impl SwapWatchtower {
             // Build swap params, also building MMR proofs for each confirmed swap
             // TODO: We could start building these params while the proof is generating
             let mut swap_params = Vec::new();
-            let overwrite_swaps = vec![];
             for swap in &confirmed_swaps {
                 let proof = bitcoin_mmr
                     .get_circuit_proof(swap.payment_block_leaf.height as usize, None)
@@ -310,9 +308,6 @@ impl SwapWatchtower {
                 swap_params.push(SubmitSwapProofParams {
                     swapBitcoinTxid: swap.payment_txid.as_raw_hash().to_byte_array().into(),
                     vault: swap.chain_aware_deposit.deposit.clone(),
-                    // TODO: Implement overwrite strategy
-                    storageStrategy: 0,     // Append
-                    localOverwriteIndex: 0, // Ignored b/c we're appending
                     swapBitcoinBlockLeaf: swap.payment_block_leaf.into(),
                     swapBitcoinBlockSiblings: proof.siblings.iter().map(From::from).collect(),
                     swapBitcoinBlockPeaks: proof.peaks.iter().map(From::from).collect(),
@@ -368,18 +363,13 @@ impl SwapWatchtower {
                     let call = rift_exchange.submitBatchSwapProofWithLightClientUpdate(
                         swap_params,
                         block_proof_params,
-                        overwrite_swaps,
                         proof_bytes.into(),
                     );
                     let calldata = call.calldata().to_owned();
                     let transaction_request = call.into_transaction_request();
                     (transaction_request, calldata)
                 } else {
-                    let call = rift_exchange.submitBatchSwapProof(
-                        swap_params,
-                        overwrite_swaps,
-                        proof_bytes.into(),
-                    );
+                    let call = rift_exchange.submitBatchSwapProof(swap_params, proof_bytes.into());
                     let calldata = call.calldata().to_owned();
                     let transaction_request = call.into_transaction_request();
                     (transaction_request, calldata)

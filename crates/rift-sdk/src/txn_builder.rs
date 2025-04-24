@@ -19,7 +19,7 @@ use crate::errors::{Result, RiftSdkError};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
-use sol_bindings::Types::DepositVault;
+use sol_bindings::DepositVault;
 use std::io::Read;
 use std::ops::Deref;
 use std::str::FromStr;

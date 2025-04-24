@@ -7,7 +7,7 @@ use core::fmt;
 
 use crypto_bigint::U256;
 use serde::{Deserialize, Serialize};
-use sol_bindings::Types::LightClientPublicInput;
+use sol_bindings::LightClientPublicInput;
 
 use crate::hasher::{Digest, Hasher};
 use crate::leaves::create_new_leaves;

@@ -1,6 +1,6 @@
 use alloy::hex;
 use serde::{Deserialize, Serialize};
-use sol_bindings::Types::{DepositVault, ProposedSwap};
+use sol_bindings::{DepositVault, ProposedSwap};
 use std::fmt;
 
 // Custom Debug for the SwapStatus enum is optional, but let's keep it derived for simplicity.

@@ -27,15 +27,15 @@ use alloy::{
 use crate::{
     // bring in the deployment logic/ABIs from lib
     deploy_contracts,
-    MockTokenWebsocket,
-    RiftExchangeWebsocket,
+    RiftExchangeHarnessWebsocket,
+    SyntheticBTCWebsocket,
 };
 
 /// Holds all Ethereum-related devnet state.
 pub struct EthDevnet {
     pub anvil: AnvilInstance,
-    pub token_contract: Arc<MockTokenWebsocket>,
-    pub rift_exchange_contract: Arc<RiftExchangeWebsocket>,
+    pub token_contract: Arc<SyntheticBTCWebsocket>,
+    pub rift_exchange_contract: Arc<RiftExchangeHarnessWebsocket>,
     pub funded_provider: Arc<WebsocketWalletProvider>,
     pub on_fork: bool,
 }

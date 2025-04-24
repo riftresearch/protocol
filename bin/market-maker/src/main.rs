@@ -20,7 +20,7 @@ use rift_sdk::{
     txn_builder::{build_rift_payment_transaction, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
-use sol_bindings::Types::DepositVault;
+use sol_bindings::DepositVault;
 use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio::time::sleep;

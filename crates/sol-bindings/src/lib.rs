@@ -8,8 +8,16 @@ mod internal_solidity_types {
         #[allow(missing_docs)]
         #[sol(rpc)]
         #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
-        RiftExchange,
-        "../../contracts/artifacts/RiftExchange.json"
+        BTCDutchAuctionHouse,
+        "../../contracts/artifacts/BTCDutchAuctionHouse.json"
+    );
+
+    sol!(
+        #[allow(missing_docs)]
+        #[sol(rpc)]
+        #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+        RiftExchangeHarness,
+        "../../contracts/artifacts/RiftExchangeHarness.json"
     );
 
     /// the following types are not used as public arguments in the RiftExchange contract,
@@ -22,19 +30,20 @@ mod internal_solidity_types {
             #[derive(
                 Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default,
             )]
-            TypeExposer,
-            "../../contracts/artifacts/TypeExposer.json"
+            HelperTypes,
+            "../../contracts/artifacts/HelperTypes.json"
         );
     }
 }
 
 // Re-export the nonpublic types under a specific module
 pub mod nonpublic {
-    use super::*;
-    pub use internal_solidity_types::nonpublic_types::Types;
+    use super::internal_solidity_types;
+    pub use internal_solidity_types::nonpublic_types::HelperTypes::{
+        BlockLeaf, DeploymentParams, MMRProof, ReleaseMMRProof,
+    };
 }
 
-// Re-export the public types at root
-pub use internal_solidity_types::Types;
-
-pub use internal_solidity_types::RiftExchange;
+/// Provides the core `RiftExchangeHarness` ABI (types, functions, events).
+/// This harness contains the interface used by the circuits + hypernode, independent of deployment details.
+pub use internal_solidity_types::RiftExchangeHarness::*;

@@ -21,7 +21,7 @@ use rift_sdk::{
     txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
-use sol_bindings::{RiftExchange, Types::DepositLiquidityParams};
+use sol_bindings::{BaseDepositLiquidityParams, DepositLiquidityParams, VaultsUpdated};
 use tokio::signal::{self, unix::signal};
 
 use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
@@ -113,7 +113,7 @@ async fn test_hypernode_simple_swap() {
 
     let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
+    let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 
     println!("Safe leaf tip (data engine): {:?}", safe_leaf);
     println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
@@ -143,15 +143,17 @@ async fn test_hypernode_simple_swap() {
     let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
 
     let deposit_params = DepositLiquidityParams {
-        depositOwnerAddress: maker.ethereum_address,
+        base: BaseDepositLiquidityParams {
+            depositOwnerAddress: maker.ethereum_address,
+            btcPayoutScriptPubKey: padded_script.into(),
+            depositSalt: [0x44; 32].into(), // this can be anything
+            confirmationBlocks: 2, // require 2 confirmations (1 block to mine + 1 additional)
+            // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
+            safeBlockLeaf: safe_leaf,
+        },
         specifiedPayoutAddress: taker.ethereum_address,
         depositAmount: deposit_amount,
         expectedSats: expected_sats,
-        btcPayoutScriptPubKey: padded_script.into(),
-        depositSalt: [0x44; 32].into(), // this can be anything
-        confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
-        // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: safe_leaf,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };
@@ -202,10 +204,10 @@ async fn test_hypernode_simple_swap() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+    let vaults_updated_log = VaultsUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == VaultsUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
         false,

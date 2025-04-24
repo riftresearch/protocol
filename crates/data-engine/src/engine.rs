@@ -13,10 +13,7 @@ use eyre::Result;
 use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
-use sol_bindings::{
-    RiftExchange,
-    Types::{DepositVault, VaultUpdateContext},
-};
+use sol_bindings::{BitcoinLightClientUpdated, DepositVault, SwapsUpdated, VaultsUpdated};
 use tokio_util::task::{task_tracker, TaskTracker};
 
 use core::panic;
@@ -400,17 +397,17 @@ async fn process_log(
         .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
 
     match *topic {
-        RiftExchange::VaultsUpdated::SIGNATURE_HASH => {
+        VaultsUpdated::SIGNATURE_HASH => {
             info_span!("handle_vault_updated")
                 .in_scope(|| handle_vault_updated_event(log, db_conn))
                 .await?;
         }
-        RiftExchange::SwapsUpdated::SIGNATURE_HASH => {
+        SwapsUpdated::SIGNATURE_HASH => {
             info_span!("handle_swap_updated")
                 .in_scope(|| handle_swap_updated_event(log, db_conn))
                 .await?;
         }
-        RiftExchange::BitcoinLightClientUpdated::SIGNATURE_HASH => {
+        BitcoinLightClientUpdated::SIGNATURE_HASH => {
             info_span!("handle_bitcoin_light_client_updated")
                 .in_scope(|| {
                     handle_bitcoin_light_client_updated_event(log, checkpointed_block_tree.clone())
@@ -432,7 +429,7 @@ async fn handle_vault_updated_event(
     info!("Received VaultUpdated event...");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::VaultsUpdated::decode_log(&log.inner, false)
+    let decoded = VaultsUpdated::decode_log(&log.inner, false)
         .map_err(|e| eyre::eyre!("Failed to decode VaultUpdated event: {:?}", e))?;
 
     let deposit_vaults = decoded.data.vaults;
@@ -484,7 +481,7 @@ async fn handle_swap_updated_event(
     info!("Received SwapUpdated event");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::SwapsUpdated::decode_log(&log.inner, false)
+    let decoded = SwapsUpdated::decode_log(&log.inner, false)
         .map_err(|e| eyre::eyre!("Failed to decode SwapUpdated event: {:?}", e))?;
 
     let log_txid = log
@@ -540,7 +537,7 @@ async fn handle_bitcoin_light_client_updated_event(
     info!("Received BitcoinLightClientUpdated event");
 
     // Propagate any decoding error.
-    let decoded = RiftExchange::BitcoinLightClientUpdated::decode_log(&log.inner, false)
+    let decoded = BitcoinLightClientUpdated::decode_log(&log.inner, false)
         .map_err(|e| eyre::eyre!("Failed to decode BitcoinLightClientUpdated event: {:?}", e))?;
 
     let block_tree_data = &decoded.data;

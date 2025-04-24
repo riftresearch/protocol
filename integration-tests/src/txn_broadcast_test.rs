@@ -10,7 +10,7 @@ use alloy::{
     providers::Provider,
 };
 use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
-use devnet::{RiftDevnet, RiftExchangeWebsocket};
+use devnet::RiftDevnet;
 use eyre::OptionExt;
 use hypernode::{
     txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult},
@@ -21,8 +21,8 @@ use rift_sdk::{
     txn_builder, DatabaseLocation,
 };
 use sol_bindings::{
-    RiftExchange,
-    Types::{BlockLeaf as ContractBlockLeaf, DepositLiquidityParams, DepositVault},
+    BaseDepositLiquidityParams, BlockLeaf as ContractBlockLeaf, DepositVault,
+    RiftExchangeHarnessErrors,
 };
 
 #[tokio::test]
@@ -81,7 +81,7 @@ async fn test_txn_broadcast_handles_revert_in_sim() {
         create_deposit(false).await;
 
     // Modify deposit params to have insufficient confirmation blocks
-    deposit_params.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
+    deposit_params.base.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
 
     let deposit_call = rift_exchange.depositLiquidity(deposit_params);
     let deposit_calldata = deposit_call.calldata();
@@ -104,12 +104,12 @@ async fn test_txn_broadcast_handles_revert_in_sim() {
         TransactionExecutionResult::Revert(error) => {
             let decoded_error = error
                 .error_payload
-                .as_decoded_error::<RiftExchange::RiftExchangeErrors>(false)
+                .as_decoded_error::<RiftExchangeHarnessErrors>(false)
                 .unwrap();
             println!("Decoded error: {:?}", decoded_error);
             assert!(matches!(
                 decoded_error,
-                RiftExchange::RiftExchangeErrors::NotEnoughConfirmationBlocks(_)
+                RiftExchangeHarnessErrors::NotEnoughConfirmationBlocks(_)
             ));
         }
         _ => panic!("Expected transaction to revert with NotEnoughConfirmationBlocks error"),
@@ -122,7 +122,7 @@ async fn test_txn_broadcast_handles_revert_in_send() {
         create_deposit(false).await;
 
     // Modify deposit params to have insufficient confirmation blocks
-    deposit_params.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
+    deposit_params.base.confirmationBlocks = 1; // Too low - should cause ChainworkTooLow error
 
     let deposit_call = rift_exchange.depositLiquidity(deposit_params);
     let deposit_calldata = deposit_call.calldata();
@@ -145,12 +145,12 @@ async fn test_txn_broadcast_handles_revert_in_send() {
         TransactionExecutionResult::Revert(error) => {
             let decoded_error = error
                 .error_payload
-                .as_decoded_error::<RiftExchange::RiftExchangeErrors>(false)
+                .as_decoded_error::<RiftExchangeHarnessErrors>(false)
                 .unwrap();
             println!("Decoded error: {:?}", decoded_error);
             assert!(matches!(
                 decoded_error,
-                RiftExchange::RiftExchangeErrors::NotEnoughConfirmationBlocks(_)
+                RiftExchangeHarnessErrors::NotEnoughConfirmationBlocks(_)
             ));
         }
         _ => panic!("Expected transaction to revert with NotEnoughConfirmationBlocks error"),

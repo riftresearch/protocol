@@ -1,7 +1,7 @@
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::{Transaction, TxOut};
 
-use sol_bindings::Types::DepositVault;
+use sol_bindings::DepositVault;
 
 // Constants
 pub const OP_RETURN_CODE: u8 = 0x6a;

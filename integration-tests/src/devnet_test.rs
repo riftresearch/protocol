@@ -35,9 +35,9 @@ use rift_sdk::{
     create_websocket_provider, get_retarget_height_from_block_height, right_pad_to_25_bytes,
     DatabaseLocation,
 };
-use sol_bindings::Types::{DepositLiquidityParams, ReleaseLiquidityParams, SubmitSwapProofParams};
 use sol_bindings::{
-    RiftExchange, Types::BlockLeaf, Types::BlockProofParams, Types::ProofPublicInput,
+    BaseDepositLiquidityParams, BlockLeaf, BlockProofParams, DepositLiquidityParams,
+    ProofPublicInput, ReleaseLiquidityParams, SubmitSwapProofParams, SwapsUpdated, VaultsUpdated,
 };
 use tokio::signal;
 
@@ -156,7 +156,7 @@ async fn test_simulated_swap_end_to_end() {
 
     let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
+    let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 
     println!("Safe leaf tip (data engine): {:?}", safe_leaf);
     println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
@@ -186,15 +186,16 @@ async fn test_simulated_swap_end_to_end() {
     let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
 
     let deposit_params = DepositLiquidityParams {
-        depositOwnerAddress: maker_evm_address,
-        specifiedPayoutAddress: taker_evm_address,
-        depositAmount: deposit_amount,
+        base: BaseDepositLiquidityParams {
+            depositOwnerAddress: maker_evm_address,
+            btcPayoutScriptPubKey: padded_script.into(),
+            depositSalt: [0x44; 32].into(), // this can be anything
+            confirmationBlocks: 2,
+            safeBlockLeaf: safe_leaf,
+        },
         expectedSats: expected_sats,
-        btcPayoutScriptPubKey: padded_script.into(),
-        depositSalt: [0x44; 32].into(), // this can be anything
-        confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
-        // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: safe_leaf,
+        depositAmount: deposit_amount,
+        specifiedPayoutAddress: taker_evm_address,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };
@@ -245,10 +246,10 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+    let vaults_updated_log = VaultsUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == VaultsUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
         false,
@@ -380,10 +381,10 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+    let vaults_updated_log = VaultsUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == VaultsUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
         false,
@@ -662,14 +663,12 @@ async fn test_simulated_swap_end_to_end() {
         .await
         .unwrap();
 
-    let swap_leaf: sol_bindings::Types::BlockLeaf = swap_leaf.into();
+    let swap_leaf: sol_bindings::BlockLeaf = swap_leaf.into();
 
     // We'll do a single-swap array:
     let swap_params = vec![SubmitSwapProofParams {
         swapBitcoinTxid: bitcoin_txid.into(),
         vault: new_vault.clone(),
-        storageStrategy: 0, // Append
-        localOverwriteIndex: 0,
         swapBitcoinBlockLeaf: swap_leaf.clone(),
         swapBitcoinBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
         swapBitcoinBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
@@ -686,21 +685,11 @@ async fn test_simulated_swap_end_to_end() {
         compressedBlockLeaves: auxiliary_data.compressed_leaves.into(),
     };
 
-    // We also pass an empty "overwriteSwaps"
-    let overwrite_swaps = vec![];
-
-    // The contract function is:
-    // Types.SubmitSwapProofParams[] calldata swapParams,
-    // Types.BlockProofParams calldata blockProofParams,
-    // Types.ProposedSwap[] calldata overwriteSwaps,
-    // bytes calldata proof
-    // )
     let mock_proof = vec![];
 
     let swap_proof_call = rift_exchange.submitBatchSwapProofWithLightClientUpdate(
         swap_params,
         block_proof_params,
-        overwrite_swaps,
         mock_proof.into(),
     );
     let swap_proof_calldata = swap_proof_call.calldata().clone();
@@ -744,10 +733,10 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = swap_proof_receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let binding = RiftExchange::SwapsUpdated::decode_log(
+    let binding = SwapsUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::SwapsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == SwapsUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
         false,

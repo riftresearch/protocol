@@ -13,7 +13,7 @@ use bitcoin::hashes::Hash;
 use bitcoin_core_rs::get_block_hash;
 use bitcoin_light_client_core::light_client::Header;
 use serde::{Deserialize, Serialize};
-use sol_bindings::Types::{
+use sol_bindings::{
     DepositVault, LightClientPublicInput, ProofPublicInput, ProofType, SwapPublicInput,
 };
 

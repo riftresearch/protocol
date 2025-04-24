@@ -19,7 +19,7 @@ use alloy::{providers::Provider, pubsub::PubSubFrontend};
 use backoff::exponential::ExponentialBackoff;
 use bitcoin::hashes::hex::FromHex;
 use rift_core::giga::RiftProgramInput;
-use sol_bindings::RiftExchange::RiftExchangeInstance;
+use sol_bindings::RiftExchangeHarnessInstance;
 use sp1_sdk::{include_elf, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use sp1_sdk::{EnvProver, HashableKey};
 use sp1_sdk::{Prover, SP1ProvingKey};
@@ -41,7 +41,7 @@ pub type WebsocketWalletProvider = FillProvider<
     Ethereum,
 >;
 
-pub type RiftExchangeClient = RiftExchangeInstance<
+pub type RiftExchangeHarnessClient = RiftExchangeHarnessInstance<
     PubSubFrontend,
     Arc<
         FillProvider<

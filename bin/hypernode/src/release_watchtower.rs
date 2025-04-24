@@ -17,12 +17,9 @@ use futures::{
 };
 use rift_sdk::{
     bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt},
-    RiftExchangeClient, WebsocketWalletProvider,
+    RiftExchangeHarnessClient, WebsocketWalletProvider,
 };
-use sol_bindings::{
-    RiftExchange::{self, RiftExchangeInstance},
-    Types::ReleaseLiquidityParams,
-};
+use sol_bindings::{ReleaseLiquidityParams, RiftExchangeHarnessInstance};
 use tokio::{sync::watch, task::JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{info, info_span, Instrument};
@@ -101,7 +98,7 @@ async fn search_on_new_evm_blocks(
     contract_data_engine: Arc<ContractDataEngine>,
     mut rx: watch::Receiver<Option<Header>>,
 ) -> eyre::Result<()> {
-    let rift_exchange = RiftExchange::new(rift_exchange_address, evm_rpc);
+    let rift_exchange = RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
     // Consume blocks from the watch
     while rx.changed().await.is_ok() {
         // Borrow the newest header, clone it, and drop the borrow immediately.
@@ -121,7 +118,7 @@ async fn search_on_new_evm_blocks(
     Ok(())
 }
 async fn search_for_releases(
-    rift_exchange: &RiftExchangeClient,
+    rift_exchange: &RiftExchangeHarnessClient,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
     contract_data_engine: Arc<ContractDataEngine>,
     block_timestamp: u64,

@@ -24,7 +24,7 @@ use bitcoincore_rpc_async::RpcApi;
 
 use alloy::{eips::BlockNumberOrTag, primitives::U256, providers::Provider};
 use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
-use devnet::{RiftDevnet, RiftExchangeWebsocket};
+use devnet::{RiftDevnet, RiftExchangeHarnessWebsocket};
 use eyre::OptionExt;
 use hypernode::{
     txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult},
@@ -35,8 +35,8 @@ use rift_sdk::{
     txn_builder, DatabaseLocation,
 };
 use sol_bindings::{
-    RiftExchange,
-    Types::{BlockLeaf as ContractBlockLeaf, DepositLiquidityParams, DepositVault},
+    BaseDepositLiquidityParams, BlockLeaf as ContractBlockLeaf, DepositLiquidityParams,
+    DepositVault,
 };
 
 /// Holds the components of a multichain account including secret bytes and wallets.
@@ -97,7 +97,7 @@ pub async fn create_deposit(
     using_bitcoin: bool,
 ) -> (
     devnet::RiftDevnet,
-    Arc<RiftExchangeWebsocket>,
+    Arc<RiftExchangeHarnessWebsocket>,
     DepositLiquidityParams,
     MultichainAccount,
     TransactionBroadcaster,
@@ -163,7 +163,7 @@ pub async fn create_deposit(
 
     let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
+    let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 
     println!("Safe leaf tip (data engine): {:?}", safe_leaf);
     println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
@@ -193,19 +193,21 @@ pub async fn create_deposit(
     let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
 
     let deposit_params = DepositLiquidityParams {
-        depositOwnerAddress: maker.ethereum_address,
+        base: BaseDepositLiquidityParams {
+            depositOwnerAddress: maker.ethereum_address,
+            btcPayoutScriptPubKey: padded_script.into(),
+            depositSalt: [0x44; 32].into(), // this can be anything
+            confirmationBlocks: 2, // require 2 confirmations (1 block to mine + 1 additional)
+            // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
+            safeBlockLeaf: ContractBlockLeaf {
+                blockHash: safe_leaf.blockHash,
+                height: safe_leaf.height,
+                cumulativeChainwork: safe_leaf.cumulativeChainwork,
+            },
+        },
         specifiedPayoutAddress: maker.ethereum_address,
         depositAmount: deposit_amount,
         expectedSats: expected_sats,
-        btcPayoutScriptPubKey: padded_script.into(),
-        depositSalt: [0x44; 32].into(), // this can be anything
-        confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
-        // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: ContractBlockLeaf {
-            blockHash: safe_leaf.blockHash,
-            height: safe_leaf.height,
-            cumulativeChainwork: safe_leaf.cumulativeChainwork,
-        },
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };

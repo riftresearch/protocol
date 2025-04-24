@@ -8,7 +8,7 @@ use alloy::{
 };
 use eyre::Result;
 use rift_core::vaults::hash_deposit_vault;
-use sol_bindings::Types::{DepositVault, ProposedSwap};
+use sol_bindings::{DepositVault, ProposedSwap};
 use std::str::FromStr;
 use tokio_rusqlite::{params, Connection, Error::Rusqlite};
 use tracing::info;
