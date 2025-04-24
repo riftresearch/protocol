@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
 
+import "./interfaces/IBTCDutchAuctionHouse.sol";
+import {DepositLiquidityParams} from "./interfaces/IRiftExchange.sol";
+
 import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 
-import {Types} from "./libraries/Types.sol";
-import {Events} from "./libraries/Events.sol";
-import {Errors} from "./libraries/Errors.sol";
 import {DutchDecayLib} from "./libraries/DutchDecayLib.sol";
 
 import {HashLib} from "./libraries/HashLib.sol";
@@ -13,11 +13,13 @@ import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {RiftExchange} from "./RiftExchange.sol";
 import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
+
+
 /// @title BTCDutchAuctionHouse
 /// @notice A Dutch auction for ERC20 BTC<>BTC swaps
-contract BTCDutchAuctionHouse is RiftExchange {
-    using HashLib for Types.DutchAuction;
-    using DataIntegrityLib for Types.DutchAuction;
+contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
+    using HashLib for DutchAuction;
+    using DataIntegrityLib for DutchAuction;
     using SafeTransferLib for address;
 
     bytes32[] public auctionHashes;
@@ -29,7 +31,7 @@ contract BTCDutchAuctionHouse is RiftExchange {
         address _verifier,
         address _feeRouter,
         uint16 _takerFeeBips,
-        Types.BlockLeaf memory _tipBlockLeaf
+        BlockLeaf memory _tipBlockLeaf
     )
         RiftExchange(
             _mmrRoot,
@@ -44,33 +46,33 @@ contract BTCDutchAuctionHouse is RiftExchange {
 
     function startAuction(
         uint256 depositAmount,
-        Types.DutchAuctionParams memory auctionParams,
-        Types.BaseDepositLiquidityParams calldata baseDepositParams
+        DutchAuctionParams memory auctionParams,
+        BaseDepositLiquidityParams calldata baseDepositParams
     ) external {
         if (auctionParams.decayBlocks == 0) {
-            revert Errors.InvalidTickSize();
+            revert InvalidTickSize();
         }
 
         if (auctionParams.startBtcOut <= auctionParams.endBtcOut) {
-            revert Errors.InvalidStartBtcOut();
+            revert InvalidStartBtcOut();
         }
 
         if(auctionParams.deadline < block.timestamp) {
-            revert Errors.InvalidDeadline();
+            revert InvalidDeadline();
         }
 
-        Types.DutchAuction memory auction = Types.DutchAuction({
+        DutchAuction memory auction = DutchAuction({
             auctionIndex: auctionHashes.length,
             baseDepositParams: baseDepositParams,
             dutchAuctionParams: auctionParams,
             depositAmount: depositAmount,
             startBlock: block.number,
             startTimestamp: block.timestamp,
-            state: Types.DutchAuctionState.Created
+            state: DutchAuctionState.Created
         });
    
         auctionHashes.push(auction.hash());
-        emit Events.AuctionUpdated(auction);
+        emit AuctionUpdated(auction);
 
         ERC20_BTC.safeTransferFrom(msg.sender, address(this), depositAmount);
     }
@@ -78,21 +80,21 @@ contract BTCDutchAuctionHouse is RiftExchange {
     // 1. validate the auction is live (not already filled/expired)
     // 2. call depositLiquidity()
     function fillAuction(
-        Types.DutchAuction memory auction,
+        DutchAuction memory auction,
         bytes memory fillerAuthData,
         bytes32[] calldata safeBlockSiblings,
         bytes32[] calldata safeBlockPeaks
     ) external {
         auction.checkIntegrity(auctionHashes);
-        if (auction.state == Types.DutchAuctionState.Filled) {
-            revert Errors.AuctionAlreadyFilled();
+        if (auction.state == DutchAuctionState.Filled) {
+            revert AuctionAlreadyFilled();
         }
         if (auction.dutchAuctionParams.deadline < block.timestamp) {
-            revert Errors.AuctionExpired();
+            revert AuctionExpired();
         }
         if (auction.dutchAuctionParams.fillerWhitelistContract != address(0)) {
             if (!IRiftWhitelist(auction.dutchAuctionParams.fillerWhitelistContract).isWhitelisted(msg.sender, fillerAuthData)) {
-                revert Errors.FillerNotWhitelisted();
+                revert FillerNotWhitelisted();
             }
         }
 
@@ -104,7 +106,7 @@ contract BTCDutchAuctionHouse is RiftExchange {
             endAmount: auction.dutchAuctionParams.endBtcOut
         });
 
-        Types.DepositLiquidityParams memory depositLiquidityParams = Types.DepositLiquidityParams({
+        DepositLiquidityParams memory depositLiquidityParams = DepositLiquidityParams({
             base: auction.baseDepositParams,
             specifiedPayoutAddress: msg.sender,
             depositAmount: auction.depositAmount,
@@ -117,29 +119,29 @@ contract BTCDutchAuctionHouse is RiftExchange {
         // so no additional ERC20 deposit is necessary.
         _depositLiquidity(depositLiquidityParams);
 
-        auction.state = Types.DutchAuctionState.Filled;
+        auction.state = DutchAuctionState.Filled;
         auctionHashes[auction.auctionIndex] = auction.hash();
-        emit Events.AuctionUpdated(auction);
+        emit AuctionUpdated(auction);
     }
 
 
     // 1. validate the auction is expired
     // 2. Withdraw deposit token to depositOwnerAddress
-    function withdrawFromExpiredAuction(Types.DutchAuction memory auction) external {
+    function withdrawFromExpiredAuction(DutchAuction memory auction) external {
         auction.checkIntegrity(auctionHashes);
-        if (auction.state == Types.DutchAuctionState.Filled) {
-            revert Errors.AuctionAlreadyFilled();
+        if (auction.state == DutchAuctionState.Filled) {
+            revert AuctionAlreadyFilled();
         }
-        if (auction.state == Types.DutchAuctionState.Withdrawn) {
-            revert Errors.AuctionAlreadyWithdrawn();
+        if (auction.state == DutchAuctionState.Withdrawn) {
+            revert AuctionAlreadyWithdrawn();
         }
         if (auction.dutchAuctionParams.deadline > block.timestamp) {
-            revert Errors.AuctionNotExpired();
+            revert AuctionNotExpired();
         }
 
-        auction.state = Types.DutchAuctionState.Withdrawn;
+        auction.state = DutchAuctionState.Withdrawn;
         auctionHashes[auction.auctionIndex] = auction.hash();
-        emit Events.AuctionUpdated(auction);
+        emit AuctionUpdated(auction);
 
         ERC20_BTC.safeTransfer(auction.baseDepositParams.depositOwnerAddress, auction.depositAmount);
     }

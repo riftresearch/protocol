@@ -87,7 +87,7 @@ base = { key = "${BASE_ETHERSCAN_API_KEY}" }
 [dependencies]
 "forge-std" = "1.9.3"
 "sp1-contracts" = { version = "4.0.0", url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip" }
-"solady" = "0.1.4"
+solady = "0.1.1"
 "bundler3" = { version = "0.1.0", git = "https://github.com/morpho-org/bundler3.git", rev = "4887f33299ba6e60b54a51237b16e7392dceeb97" }
 
 

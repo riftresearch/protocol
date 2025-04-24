@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
 
-import {Types} from "./Types.sol";
-
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
+import {DepositVault} from "../interfaces/IRiftExchange.sol";
+import {ProposedSwap} from "../interfaces/IRiftExchange.sol";
+import {BlockLeaf} from "../interfaces/IBitcoinLightClient.sol";
+import {DutchAuction} from "../interfaces/IBTCDutchAuctionHouse.sol";
+
+
 library HashLib {
-    function hash(Types.DepositVault memory vault) internal pure returns (bytes32) {
+    function hash(DepositVault memory vault) internal pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(vault));
     }
 
-    function hash(Types.ProposedSwap memory swap) internal pure returns (bytes32) {
+    function hash(ProposedSwap memory swap) internal pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(swap));
     }
 
     // TODO: determine if this is cheaper than just abi.encode'ing the struct
-    function hash(Types.BlockLeaf memory blockLeaf) internal pure returns (bytes32) {
+    function hash(BlockLeaf memory blockLeaf) internal pure returns (bytes32) {
         return
             EfficientHashLib.hash(
                 blockLeaf.blockHash,
@@ -24,7 +28,7 @@ library HashLib {
             );
     }
 
-    function hash(Types.DutchAuction memory dutchAuction) internal pure returns (bytes32) {
+    function hash(DutchAuction memory dutchAuction) internal pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(dutchAuction));
     }
 }

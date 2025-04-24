@@ -6,11 +6,14 @@ pragma solidity ^0.8.28;
 *────────────────────────────────────────────────────────────────────────────*/
 import {RiftAuctionAdaptor} from "../../src/RiftAuctionAdaptor.sol";
 import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
-import {Types} from "../../src/libraries/Types.sol";
-import {Errors} from "../../src/libraries/Errors.sol";
+import {IRiftAuctionAdaptor} from "../../src/interfaces/IRiftAuctionAdaptor.sol";
+import {IBTCDutchAuctionHouse} from "../../src/interfaces/IBTCDutchAuctionHouse.sol";
+
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
-import {Events} from "../../src/libraries/Events.sol";
+import {DutchAuction} from "../../src/interfaces/IBTCDutchAuctionHouse.sol";
+import {BaseDepositLiquidityParams} from "../../src/interfaces/IRiftExchange.sol";
+import "../utils/HelperTypes.sol";
 
 import {RiftTest} from "../utils/RiftTest.sol";
 import {Vm} from "forge-std/src/Vm.sol";
@@ -19,7 +22,7 @@ import {Vm} from "forge-std/src/Vm.sol";
 │                       RiftAuctionAdaptor ‑ Unit Tests                      │
 *────────────────────────────────────────────────────────────────────────────*/
 contract RiftAuctionAdaptorUnitTest is RiftTest {
-    using HashLib for Types.DutchAuction;
+    using HashLib for DutchAuction;
 
     /*───────────────────────────────────────────────────────────────────────*/
     /*                               Constants                               */
@@ -37,10 +40,10 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /*───────────────────────────────────────────────────────────────────────*/
     /*                               Helpers                                 */
     /*───────────────────────────────────────────────────────────────────────*/
-    function _extractSingleAuctionFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DutchAuction memory) {
+    function _extractSingleAuctionFromLogs(Vm.Log[] memory logs) internal pure returns (DutchAuction memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.AuctionUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.DutchAuction));
+            if (logs[i].topics[0] == IBTCDutchAuctionHouse.AuctionUpdated.selector) {
+                return abi.decode(logs[i].data, (DutchAuction));
             }
         }
         revert("Auction not found");
@@ -50,14 +53,14 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /*                                Setup                                  */
     /*───────────────────────────────────────────────────────────────────────*/
     function setUp() public virtual override {
-        super.setUp(); // Deploy mockToken, verifier & helpers from RiftTest
+        super.setUp(); // Deploy syntheticBTC, verifier & helpers from RiftTest
 
         // Create a fresh light‑client checkpoint for the AuctionHouse instance
-        Types.MMRProof memory initProof = _generateFakeBlockMMRProofFFI(0);
+        HelperTypes.MMRProof memory initProof = _generateFakeBlockMMRProofFFI(0);
 
         auctionHouse = new BTCDutchAuctionHouse({
             _mmrRoot:               initProof.mmrRoot,
-            _depositToken:          address(mockToken),
+            _depositToken:          address(syntheticBTC),
             _circuitVerificationKey: bytes32("cvk"),
             _verifier:              address(verifier),
             _feeRouter:             address(0xfee),
@@ -77,9 +80,9 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /// @notice Non‑bundler3 callers MUST be rejected.
     function test_onlyBundler3Reverts() public {
         // Arrange ‑ give adaptor some tokens so that revert (if any) is due to access control
-        mockToken.mint(address(adaptor), 1e10);
+        syntheticBTC.mint(address(adaptor), 1e10);
 
-        Types.BaseDepositLiquidityParams memory baseParams;
+        BaseDepositLiquidityParams memory baseParams;
         vm.expectRevert();
         adaptor.createAuction(1e18, 5e17, 1, uint64(block.timestamp + DEADLINE_DELAY), address(0), baseParams);
     }
@@ -99,10 +102,10 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
         uint256 endRateWad   = 8e17;             // 0.8 sBTC / BTC (WAD)
 
         // Give the adaptor the sBTC it will auction
-        mockToken.mint(address(adaptor), deposit);
+        syntheticBTC.mint(address(adaptor), deposit);
 
-        Types.MMRProof memory safeProof = _generateFakeBlockMMRProofFFI(0);
-        Types.BaseDepositLiquidityParams memory baseParams = Types.BaseDepositLiquidityParams({
+        HelperTypes.MMRProof memory safeProof = _generateFakeBlockMMRProofFFI(0);
+        BaseDepositLiquidityParams memory baseParams = BaseDepositLiquidityParams({
             depositOwnerAddress:       address(this),
             btcPayoutScriptPubKey:     _generateBtcPayoutScriptPubKey(),
             depositSalt:               bytes32(uint256(keccak256("salt"))),
@@ -110,8 +113,8 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
             safeBlockLeaf:             safeProof.blockLeaf
         });
 
-        uint256 preAdaptorBal   = mockToken.balanceOf(address(adaptor));
-        uint256 preAuctionBal   = mockToken.balanceOf(address(auctionHouse));
+        uint256 preAdaptorBal   = syntheticBTC.balanceOf(address(adaptor));
+        uint256 preAuctionBal   = syntheticBTC.balanceOf(address(auctionHouse));
         uint256 startAmount     = (deposit * startRateWad) / 1e18;
         uint256 endAmount       = (deposit * endRateWad)   / 1e18;
 
@@ -122,16 +125,16 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
 
         /* ‑‑ Assert ‑‑ */
         // [1] Token flow
-        assertEq(mockToken.balanceOf(address(adaptor)), 0, "Adaptor should have no tokens left");
+        assertEq(syntheticBTC.balanceOf(address(adaptor)), 0, "Adaptor should have no tokens left");
         assertEq(
-            mockToken.balanceOf(address(auctionHouse)),
+            syntheticBTC.balanceOf(address(auctionHouse)),
             preAuctionBal + deposit,
             "AuctionHouse token balance incorrect"
         );
         assertEq(preAdaptorBal - deposit, 0, "Accounting mismatch on adaptor balance");
 
         // [2] Auction event & storage
-        Types.DutchAuction memory auction = _extractSingleAuctionFromLogs(vm.getRecordedLogs());
+        DutchAuction memory auction = _extractSingleAuctionFromLogs(vm.getRecordedLogs());
 
         assertEq(auction.depositAmount, deposit, "Deposit amount mismatch");
         assertEq(auction.dutchAuctionParams.startBtcOut, startAmount, "startBtcOut mismatch");
@@ -147,11 +150,11 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /*───────────────────────────────────────────────────────────────────────*/
     function test_createAuction_revertsInvalidRates() public {
         uint256 deposit = FeeLib.calculateMinDepositAmount(auctionHouse.takerFeeBips()) * 10;
-        mockToken.mint(address(adaptor), deposit);
+        syntheticBTC.mint(address(adaptor), deposit);
 
-        Types.BaseDepositLiquidityParams memory baseParams;
+        BaseDepositLiquidityParams memory baseParams;
         vm.prank(BUNDLER3);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidStartBtcOut.selector));
+        vm.expectRevert(abi.encodeWithSelector(IBTCDutchAuctionHouse.InvalidStartBtcOut.selector));
         adaptor.createAuction(1e18, 2e18, DECAY_BLOCKS, uint64(block.timestamp + DEADLINE_DELAY), address(0), baseParams);
     }
 }

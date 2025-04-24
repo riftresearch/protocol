@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
+import "../../src/interfaces/IRiftExchange.sol";
 
+import {HelperTypes} from "../utils/HelperTypes.sol";
 import {PRNG} from "./PRNG.sol";
 import {Test} from "forge-std/src/Test.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
@@ -10,13 +12,9 @@ import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 import "forge-std/src/console.sol";
 
 import {HashLib} from "../../src/libraries/HashLib.sol";
-import {Types} from "../../src/libraries/Types.sol";
-import {Events} from "../../src/libraries/Events.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
-import {MockToken} from "./MockToken.sol";
-
-
+import {SyntheticBTC} from "./SyntheticBTC.sol";
 contract RiftExchangeHarness is RiftExchange {
     using SafeTransferLib for address;
     constructor(
@@ -26,10 +24,10 @@ contract RiftExchangeHarness is RiftExchange {
         address _verifier,
         address _feeRouter,
         uint16 _takerFeeBips,
-        Types.BlockLeaf memory _tipBlockLeaf
+        BlockLeaf memory _tipBlockLeaf
     ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _takerFeeBips, _tipBlockLeaf) {}
 
-    function depositLiquidity(Types.DepositLiquidityParams memory params) external returns (bytes32) {
+    function depositLiquidity(DepositLiquidityParams memory params) external returns (bytes32) {
         bytes32 hash = super._depositLiquidity(params);
         ERC20_BTC.safeTransferFrom(msg.sender, address(this), params.depositAmount);
         return hash;
@@ -37,22 +35,22 @@ contract RiftExchangeHarness is RiftExchange {
 }
 
 contract RiftTest is Test, PRNG {
-    using HashLib for Types.DepositVault;
-    using HashLib for Types.ProposedSwap;
+    using HashLib for DepositVault;
+    using HashLib for ProposedSwap;
     address exchangeOwner = address(0xbeef);
     RiftExchangeHarness public exchange;
-    MockToken public mockToken;
+    SyntheticBTC public syntheticBTC;
     SP1MockVerifier public verifier;
 
     function setUp() public virtual {
-        mockToken = new MockToken("Synthetic Bitcoin", "sBTC", 8);
+        syntheticBTC = new SyntheticBTC();
         verifier = new SP1MockVerifier();
 
-        Types.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
+        HelperTypes.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
         exchange = new RiftExchangeHarness({
             _mmrRoot: initial_mmr_proof.mmrRoot,
-            _depositToken: address(mockToken),
+            _depositToken: address(syntheticBTC),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),
@@ -60,7 +58,7 @@ contract RiftTest is Test, PRNG {
             _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
-        mockToken = MockToken(address(exchange.ERC20_BTC()));
+        syntheticBTC = SyntheticBTC(address(exchange.ERC20_BTC()));
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
@@ -100,25 +98,25 @@ contract RiftTest is Test, PRNG {
         return bytes32(_callFFI(cmd));
     }
 
-    function _generateFakeBlockMMRProofFFI(uint32 height) public returns (Types.MMRProof memory) {
+    function _generateFakeBlockMMRProofFFI(uint32 height) public returns (HelperTypes.MMRProof memory) {
         bytes memory encodedProof = _callTestUtilsGenerateFakeBlockMMRProof(height);
-        Types.MMRProof memory proof = abi.decode(encodedProof, (Types.MMRProof));
+        HelperTypes.MMRProof memory proof = abi.decode(encodedProof, (HelperTypes.MMRProof));
         return proof;
     }
 
     function _generateFakeBlockWithConfirmationsMMRProofFFI(
         uint32 height,
         uint32 confirmations
-    ) public returns (Types.MMRProof memory, Types.MMRProof memory) {
+    ) public returns (HelperTypes.MMRProof memory, HelperTypes.MMRProof memory) {
         bytes memory combinedEncodedProofs = _callTestUtilsGenerateFakeBlockWithConfirmationsMMRProof(
             height,
             confirmations
         );
-        Types.ReleaseMMRProof memory releaseProof = abi.decode(combinedEncodedProofs, (Types.ReleaseMMRProof));
+        HelperTypes.ReleaseMMRProof memory releaseProof = abi.decode(combinedEncodedProofs, (HelperTypes.ReleaseMMRProof));
         return (releaseProof.proof, releaseProof.tipProof);
     }
 
-    function _hashBlockLeafFFI(Types.BlockLeaf memory leaf) public returns (bytes32) {
+    function _hashBlockLeafFFI(BlockLeaf memory leaf) public returns (bytes32) {
         bytes memory encodedLeaf = abi.encode(leaf);
         bytes32 hashedLeaf = _callTestUtilsHashBlockLeaf(encodedLeaf);
         return hashedLeaf;
@@ -134,19 +132,19 @@ contract RiftTest is Test, PRNG {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
     }
 
-    function _extractSingleVaultFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DepositVault memory) {
+    function _extractSingleVaultFromLogs(Vm.Log[] memory logs) internal pure returns (DepositVault memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.VaultsUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.DepositVault[]))[0];
+            if (logs[i].topics[0] == IRiftExchange.VaultsUpdated.selector) {
+                return abi.decode(logs[i].data, (DepositVault[]))[0];
             }
         }
         revert("Vault not found");
     }
 
-    function _extractSingleSwapFromLogs(Vm.Log[] memory logs) internal pure returns (Types.ProposedSwap memory) {
+    function _extractSingleSwapFromLogs(Vm.Log[] memory logs) internal pure returns (ProposedSwap memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.SwapsUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.ProposedSwap[]))[0];
+            if (logs[i].topics[0] == IRiftExchange.SwapsUpdated.selector) {
+                return abi.decode(logs[i].data, (ProposedSwap[]))[0];
             }
         }
         revert("Swap not found");
@@ -156,22 +154,22 @@ contract RiftTest is Test, PRNG {
         uint256 depositAmount,
         uint64 expectedSats,
         uint8 confirmationBlocks
-    ) internal returns (Types.DepositVault memory) {
+    ) internal returns (DepositVault memory) {
         // [1] mint and approve deposit token
-        mockToken.mint(address(this), depositAmount);
-        mockToken.approve(address(exchange), depositAmount);
+        syntheticBTC.mint(address(this), depositAmount);
+        syntheticBTC.approve(address(exchange), depositAmount);
 
         // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
         bytes22 btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
 
         bytes32 depositSalt = bytes32(keccak256(abi.encode(_random())));
 
-        Types.MMRProof memory mmr_proof = _generateFakeBlockMMRProofFFI(0);
+        HelperTypes.MMRProof memory mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
         // [3] test deposit
         vm.recordLogs();
-        Types.DepositLiquidityParams memory args = Types.DepositLiquidityParams({
-            base: Types.BaseDepositLiquidityParams({
+        DepositLiquidityParams memory args = DepositLiquidityParams({
+            base: BaseDepositLiquidityParams({
                 btcPayoutScriptPubKey: btcPayoutScriptPubKey,
                 depositSalt: depositSalt,
                 confirmationBlocks: confirmationBlocks,
@@ -188,9 +186,9 @@ contract RiftTest is Test, PRNG {
         exchange.depositLiquidity(args);
 
         // [4] grab the logs, find the vault
-        Types.DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
+        DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
         uint256 vaultIndex = exchange.getVaultHashesLength() - 1;
-        bytes32 _hash = exchange.getVaultHash(vaultIndex);
+        bytes32 _hash = exchange.vaultHashes(vaultIndex);
 
         // [5] verify "offchain" calculated hash matches stored vault hash
         bytes32 offchainHash = createdVault.hash();
@@ -200,7 +198,7 @@ contract RiftTest is Test, PRNG {
         assertEq(createdVault.vaultIndex, vaultIndex, "Vault index should match");
 
         // [7] verify caller has no balance left
-        assertEq(mockToken.balanceOf(address(this)), 0, "Caller should have no balance left");
+        assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no balance left");
 
         // [8] verify owner address
         assertEq(createdVault.ownerAddress, address(this), "Owner address should match");

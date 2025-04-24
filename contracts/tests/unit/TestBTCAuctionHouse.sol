@@ -2,28 +2,30 @@
 pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/src/Vm.sol";
+import "../../src/interfaces/IBTCDutchAuctionHouse.sol";
+import "../../src/interfaces/IRiftExchange.sol";
+import {HelperTypes} from "../utils/HelperTypes.sol";
 
 import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
-import {Types} from "../../src/libraries/Types.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
-import {Events} from "../../src/libraries/Events.sol";
+
 
 /// @title BTCDutchAuctionHouse fuzz‑tests (updated for v0.8.28 contracts)
 /// @notice Exercises `startAuction` with fuzzed inputs and checks that
 ///         the contract correctly records the auction and transfers tokens.
 contract BTCDutchAuctionHouseUnitTest is RiftTest {
-    using HashLib for Types.DutchAuction;
+    using HashLib for DutchAuction;
 
     /* ────────────────────────────────────────────────────────────── */
     /*                          Helpers                              */
     /* ────────────────────────────────────────────────────────────── */
 
-    function _extractSingleAuctionFromLogs(Vm.Log[] memory logs) internal pure returns (Types.DutchAuction memory) {
+    function _extractSingleAuctionFromLogs(Vm.Log[] memory logs) internal pure returns (DutchAuction memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.AuctionUpdated.selector) {
-                return abi.decode(logs[i].data, (Types.DutchAuction));
+            if (logs[i].topics[0] == IBTCDutchAuctionHouse.AuctionUpdated.selector) {
+                return abi.decode(logs[i].data, (DutchAuction));
             }
         }
         revert("Auction not found");
@@ -40,14 +42,14 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
     /* ────────────────────────────────────────────────────────────── */
 
     function setUp() public virtual override {
-        super.setUp(); // deploy mockToken & verifier helpers from RiftTest
+        super.setUp(); // deploy SyntheticBTC & verifier helpers from RiftTest
 
         // Use a fresh light‑client checkpoint for this instance
-        Types.MMRProof memory initialProof = _generateFakeBlockMMRProofFFI(0);
+        HelperTypes.MMRProof memory initialProof = _generateFakeBlockMMRProofFFI(0);
 
         auctionHouse = new BTCDutchAuctionHouse({
             _mmrRoot:               initialProof.mmrRoot,
-            _depositToken:          address(mockToken),
+            _depositToken:          address(syntheticBTC),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier:              address(verifier),
             _feeRouter:             address(0xfee),
@@ -74,10 +76,10 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         address fillerWhitelistContract,
         uint8   confirmationBlocks
     ) internal returns (
-        Types.DutchAuction memory auction,
+        DutchAuction memory auction,
         uint256 _depositAmount,
-        Types.BaseDepositLiquidityParams memory baseParams,
-        Types.MMRProof memory mmrProof
+        BaseDepositLiquidityParams memory baseParams,
+        HelperTypes.MMRProof memory mmrProof
     ) {
         /* ── Sanitize fuzzed inputs ─────────────────────────────── */
         decayBlocks = uint64(bound(decayBlocks, 1, 1_000_000));
@@ -96,13 +98,13 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         depositAmount = bound(depositAmount, minDeposit, type(uint64).max);
 
         /* ── Prepare funds ───────────────────────────────────────── */
-        mockToken.mint(address(this), depositAmount);
-        mockToken.approve(address(auctionHouse), depositAmount);
+        syntheticBTC.mint(address(this), depositAmount);
+        syntheticBTC.approve(address(auctionHouse), depositAmount);
 
         /* ── Prepare params ──────────────────────────────────────── */
         mmrProof = _generateFakeBlockMMRProofFFI(0);
 
-        baseParams = Types.BaseDepositLiquidityParams({
+        baseParams = BaseDepositLiquidityParams({
             depositOwnerAddress:       address(this),
             btcPayoutScriptPubKey:     _generateBtcPayoutScriptPubKey(),
             depositSalt:               bytes32(uint256(keccak256(abi.encodePacked(block.timestamp, depositAmount)))),
@@ -110,7 +112,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
             safeBlockLeaf:             mmrProof.blockLeaf
         });
 
-        Types.DutchAuctionParams memory auctionParams = Types.DutchAuctionParams({
+        DutchAuctionParams memory auctionParams = DutchAuctionParams({
             startBtcOut: startBtcOut,
             endBtcOut:   endBtcOut,
             decayBlocks: decayBlocks,
@@ -119,7 +121,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         });
 
         /* ── Snapshot pre‑state ──────────────────────────────────── */
-        uint256 preBalance   = mockToken.balanceOf(address(this));
+        uint256 preBalance   = syntheticBTC.balanceOf(address(this));
         uint256 startBlock   = block.number;
         uint64  startTime    = uint64(block.timestamp);
 
@@ -128,32 +130,32 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         auctionHouse.startAuction(depositAmount, auctionParams, baseParams);
 
         /* ── Asserts ─────────────────────────────────────────────── */
-        Types.DutchAuction memory emmittedAuction = _extractSingleAuctionFromLogs(vm.getRecordedLogs());
+        DutchAuction memory emmittedAuction = _extractSingleAuctionFromLogs(vm.getRecordedLogs());
 
         // [1] Token transfer
-        assertEq(mockToken.balanceOf(address(this)), 0, "Caller should have no tokens left");
-        assertEq(mockToken.balanceOf(address(auctionHouse)), depositAmount, "Contract balance incorrect");
+        assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no tokens left");
+        assertEq(syntheticBTC.balanceOf(address(auctionHouse)), depositAmount, "Contract balance incorrect");
 
         // [2] Hash appended
         bytes32 storedHash = auctionHouse.auctionHashes(0);
         assertTrue(storedHash != bytes32(0), "Auction hash not stored");
 
         // [3] Hash correctness
-        Types.DutchAuction memory expectedAuction = Types.DutchAuction({
+        DutchAuction memory expectedAuction = DutchAuction({
             auctionIndex:       0,
             baseDepositParams:  baseParams,
             dutchAuctionParams: auctionParams,
             depositAmount:      depositAmount,
             startBlock:         startBlock,
             startTimestamp:     startTime,
-            state:              Types.DutchAuctionState.Created
+            state:              DutchAuctionState.Created
         });
 
         assertEq(emmittedAuction.hash(), expectedAuction.hash(), "Mismatched auction between emitted and expected");
         assertEq(storedHash, expectedAuction.hash(), "Mismatched auction hash between storage and expected/emitted");
 
         // [4] Ensure the user actually spent the tokens
-        assertEq(preBalance - depositAmount, mockToken.balanceOf(address(this)), "Balance maths mismatch");
+        assertEq(preBalance - depositAmount, syntheticBTC.balanceOf(address(this)), "Balance maths mismatch");
 
         // Return values
         auction = emmittedAuction; // Use the emitted auction as it's confirmed on-chain
@@ -210,7 +212,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
     ) public {
         address fillerWhitelistContract = address(0);
         // Start the auction using the helper
-        (Types.DutchAuction memory auction, , , Types.MMRProof memory startProof) = 
+        (DutchAuction memory auction, , , HelperTypes.MMRProof memory startProof) = 
             _startAuctionWithAssertions(
                 depositAmount,
                 startBtcOut,
@@ -236,10 +238,10 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
 
         // Generate MMR proof for the safe block leaf relative to the *current* (advanced) block state
         // This proves the original safe block leaf is still part of the canonical chain recognized by the light client.
-        Types.MMRProof memory fillProof = _generateFakeBlockMMRProofFFI(startProof.blockLeaf.height);
+        HelperTypes.MMRProof memory fillProof = _generateFakeBlockMMRProofFFI(startProof.blockLeaf.height);
 
         // Snapshot state before fill
-        uint256 preFillAuctionHouseBalance = mockToken.balanceOf(address(auctionHouse));
+        uint256 preFillAuctionHouseBalance = syntheticBTC.balanceOf(address(auctionHouse));
         vm.recordLogs();
 
         /* ── Act: Fill Auction ───────────────────────────────────── */
@@ -248,10 +250,10 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
 
         /* ── Asserts ─────────────────────────────────────────────── */
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        Types.DutchAuction memory filledAuction = _extractSingleAuctionFromLogs(logs);
+        DutchAuction memory filledAuction = _extractSingleAuctionFromLogs(logs);
 
         // [1] State Transition
-        assertEq(uint(filledAuction.state), uint(Types.DutchAuctionState.Filled), "Auction state should be Filled");
+        assertEq(uint(filledAuction.state), uint(DutchAuctionState.Filled), "Auction state should be Filled");
 
         // [2] Hash Update
         bytes32 storedHash = auctionHouse.auctionHashes(auction.auctionIndex);
@@ -260,10 +262,10 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         // [3] Internal _depositLiquidity call check (via VaultsUpdated event)
         bool foundVaultUpdate = false;
         for (uint i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == Events.VaultsUpdated.selector) {
-                (Types.DepositVault[] memory vaults, Types.VaultUpdateContext context) = 
-                    abi.decode(logs[i].data, (Types.DepositVault[], Types.VaultUpdateContext));
-                assertEq(uint(context), uint(Types.VaultUpdateContext.Created), "Vault context should be Created");
+            if (logs[i].topics[0] == IRiftExchange.VaultsUpdated.selector) {
+                (DepositVault[] memory vaults, VaultUpdateContext context) = 
+                    abi.decode(logs[i].data, (DepositVault[], VaultUpdateContext));
+                assertEq(uint(context), uint(VaultUpdateContext.Created), "Vault context should be Created");
                 assertTrue(vaults.length > 0, "No vaults in VaultsUpdated event");
                 foundVaultUpdate = true;
                 break;
@@ -272,6 +274,6 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         assertTrue(foundVaultUpdate, "VaultsUpdated event not found after fillAuction");
 
         // [4] Token balance check (should remain unchanged as tokens are now in a vault)
-        assertEq(mockToken.balanceOf(address(auctionHouse)), preFillAuctionHouseBalance, "Auction house balance changed unexpectedly on fill");
+        assertEq(syntheticBTC.balanceOf(address(auctionHouse)), preFillAuctionHouseBalance, "Auction house balance changed unexpectedly on fill");
     }
 }

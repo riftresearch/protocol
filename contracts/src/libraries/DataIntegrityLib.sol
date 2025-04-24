@@ -1,44 +1,49 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
 
-import {Types} from "./Types.sol";
-import {Errors} from "./Errors.sol";
 import {HashLib} from "./HashLib.sol";
+import {DepositVault} from "../interfaces/IRiftExchange.sol";
+import {ProposedSwap} from "../interfaces/IRiftExchange.sol";
+import {DutchAuction} from "../interfaces/IBTCDutchAuctionHouse.sol";
 
 library DataIntegrityLib {
-    using HashLib for Types.DepositVault;
-    using HashLib for Types.ProposedSwap;
-    using HashLib for Types.DutchAuction;
+    using HashLib for DepositVault;
+    using HashLib for ProposedSwap;
+    using HashLib for DutchAuction;
+
+    error DepositVaultDoesNotExist();
+    error SwapDoesNotExist();
+    error DutchAuctionDoesNotExist();
 
     function checkIntegrity(
-        Types.DepositVault calldata vault,
+        DepositVault calldata vault,
         bytes32[] storage vaultHashes
     ) internal view returns (bytes32) {
         bytes32 vaultHash = vault.hash();
         if (vaultHash != vaultHashes[vault.vaultIndex]) {
-            revert Errors.DepositVaultDoesNotExist();
+            revert DepositVaultDoesNotExist();
         }
         return vaultHash;
     }
 
     function checkIntegrity(
-        Types.ProposedSwap calldata swap,
+        ProposedSwap calldata swap,
         bytes32[] storage swapHashes
     ) internal view returns (bytes32) {
         bytes32 swapHash = swap.hash();
         if (swapHash != swapHashes[swap.swapIndex]) {
-            revert Errors.SwapDoesNotExist();
+            revert SwapDoesNotExist();
         }
         return swapHash;
     }
 
     function checkIntegrity(
-        Types.DutchAuction memory auction,
+        DutchAuction memory auction,
         bytes32[] storage auctionHashes
     ) internal view returns (bytes32) {
         bytes32 auctionHash = auction.hash();
         if (auctionHash != auctionHashes[auction.auctionIndex]) {
-            revert Errors.DutchAuctionDoesNotExist();
+            revert DutchAuctionDoesNotExist();
         }
         return auctionHash;
     }

@@ -4,8 +4,10 @@ pragma solidity ^0.8.20;
 import "forge-std/src/Script.sol";
 import "forge-std/src/console.sol";
 import "../src/RiftExchange.sol";
+import {HelperTypes} from "../tests/utils/HelperTypes.sol";
 
 contract DeployRiftExchange is Script {
+
     function stringToUint(string memory s) internal pure returns (uint256) {
         bytes memory b = bytes(s);
         uint256 result = 0;
@@ -36,7 +38,7 @@ contract DeployRiftExchange is Script {
 
     function getDeploymentParams(
         string memory checkpointFile
-    ) public returns (Types.DeploymentParams memory deploymentParams) {
+    ) public returns (HelperTypes.DeploymentParams memory deploymentParams) {
         // Prepare the curl command with jq
         string[] memory curlInputs = new string[](3);
         curlInputs[0] = "bash";
@@ -45,7 +47,7 @@ contract DeployRiftExchange is Script {
             "../target/release/test-utils get-deployment-params --checkpoint-file ",
             checkpointFile
         );
-        deploymentParams = abi.decode(vm.ffi(curlInputs), (Types.DeploymentParams));
+        deploymentParams = abi.decode(vm.ffi(curlInputs), (HelperTypes.DeploymentParams));
     }
 
     struct ChainSpecificAddresses {
@@ -69,18 +71,18 @@ contract DeployRiftExchange is Script {
 
     function run() external {
         vm.startBroadcast();
+        // TODO: add deployment logic here
+        /*
         uint16 takerFeeBips = 20;
 
         console.log("Deploying RiftExchange on chain with ID:", block.chainid);
 
-        console.log("Deploying RiftExchange on chain with ID:", block.chainid);
         ChainSpecificAddresses memory chainSpecificAddresses = selectAddressesByChainId();
 
         console.log("Building deployment params...");
-        Types.DeploymentParams memory deploymentParams = getDeploymentParams("../bitcoin_checkpoint_885041.zst");
+        HelperTypes.DeploymentParams memory deploymentParams = getDeploymentParams("../bitcoin_checkpoint_885041.zst");
         console.log("Deployment params built...");
 
-        /*
         RiftExchange riftExchange = new RiftExchange({
             _mmrRoot: deploymentParams.mmrRoot,
             _depositToken: chainSpecificAddresses.depositTokenAddress,

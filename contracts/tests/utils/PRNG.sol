@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity ^0.8.0;
+
 /// @author Modified from Solady (https://github.com/Vectorized/solady/blob/main/test/utils/TestPlus.sol)
 contract PRNG {
     /// @dev This is the keccak256 of a very long string I randomly mashed on my keyboard.

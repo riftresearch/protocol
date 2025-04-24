@@ -10,7 +10,9 @@ mkdir -p artifacts
 rm -rf artifacts/*
 
 # Copy compiled artifacts
-cp out/RiftExchange.sol/RiftExchange.json artifacts/
-cp out/MockToken.sol/MockToken.json artifacts/
+# cp out/RiftExchange.sol/RiftExchange.json artifacts/
+cp out/SyntheticBTC.sol/SyntheticBTC.json artifacts/
 cp out/SP1MockVerifier.sol/SP1MockVerifier.json artifacts/
-cp out/TypeExposer.sol/TypeExposer.json artifacts/
+cp out/BTCDutchAuctionHouse.sol/BTCDutchAuctionHouse.json artifacts/
+cp out/HelperTypes.sol/HelperTypes.json artifacts/
+cp out/RiftTest.sol/RiftExchangeHarness.json artifacts/

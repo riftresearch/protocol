@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.28;
 
+import {IRiftAuctionAdaptor} from "./interfaces/IRiftAuctionAdaptor.sol";
+import {BaseDepositLiquidityParams} from "./interfaces/IRiftExchange.sol";
+import {DutchAuctionParams} from "./interfaces/IBTCDutchAuctionHouse.sol";
+
 import {CoreAdapter} from "bundler3/src/adapters/CoreAdapter.sol";
 import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solady/src/utils/FixedPointMathLib.sol";
 
 import {BTCDutchAuctionHouse} from "./BTCDutchAuctionHouse.sol";
-import {Types} from "./libraries/Types.sol";
 
 /// @title RiftAuctionAdaptor
 /// @notice An adaptor for creating auctions on the BTCDutchAuctionHouse using the adaptor's tokenized BTC balance.
 /// @notice sBTC is an arbitrary ERC20 token that represents BTC.
-contract RiftAuctionAdaptor is CoreAdapter {
+contract RiftAuctionAdaptor is IRiftAuctionAdaptor, CoreAdapter {
 	using SafeTransferLib for address;
 	using FixedPointMathLib for uint256;
 
@@ -43,7 +46,7 @@ contract RiftAuctionAdaptor is CoreAdapter {
 		uint64 decayBlocks,
 		uint64 deadline,
 		address fillerWhitelistContract,
-		Types.BaseDepositLiquidityParams calldata baseParams
+		BaseDepositLiquidityParams calldata baseParams
 	) external onlyBundler3 {
 		address _sBTC = sBTC;
 		address _btcAuctionHouse = btcAuctionHouse;
@@ -56,7 +59,7 @@ contract RiftAuctionAdaptor is CoreAdapter {
 		// Start the auction
 		BTCDutchAuctionHouse(_btcAuctionHouse).startAuction(
 			sBTCBalance,
-			Types.DutchAuctionParams({
+			DutchAuctionParams({
 				startBtcOut: startAmount,
 				endBtcOut: endAmount, 
 				decayBlocks: decayBlocks,

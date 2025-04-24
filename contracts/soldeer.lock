@@ -13,10 +13,10 @@ integrity = "d53734fbd7201cd9e44de730ae045ed8958dd2c7b9493c30b322f6e6c21ca8b2"
 
 [[dependencies]]
 name = "solady"
-version = "0.1.4"
-url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_1_4_05-02-2025_15:02:18_solady.zip"
-checksum = "ecce158b80c996aeb1b1fdec9d357cbe3977e21f037ce6f939d560cec41feb55"
-integrity = "7a3aee946523ebfb9aee4588bf7ab507e23090fd42e7b536a56fb50a825e1221"
+version = "0.1.1"
+url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_1_1_27-01-2025_17:46:37_solady.zip"
+checksum = "c0135c293fd2adda7eb330f182fc8c2d5f210be8232086a1bcb7620ef98b36df"
+integrity = "f494b2f1e9356e9664a55c8d6862c58e08aa9fdf4eb6fdef10c0e104bd3d7cfe"
 
 [[dependencies]]
 name = "sp1-contracts"
