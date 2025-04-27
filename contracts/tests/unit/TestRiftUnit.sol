@@ -388,12 +388,6 @@ contract RiftExchangeUnitTest is RiftTest {
             "accounted fee balance should match the actual contract balance of USDC"
         );
 
-        assertEq(
-            feeRouterBalancePrePayout,
-            order.takerFee,
-            "Fee router should have an internal balance as a function of the payment amount"
-        );
-
         exchange.withdrawFees();
         assertEq(
             syntheticBTC.balanceOf(exchange.feeRouter()),

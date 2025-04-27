@@ -13,8 +13,6 @@ import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {RiftExchange} from "./RiftExchange.sol";
 import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
-
-
 /// @title BTCDutchAuctionHouse
 /// @notice A Dutch auction for ERC20 BTC<>BTC swaps
 contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
@@ -57,7 +55,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
             revert InvalidStartBtcOut();
         }
 
-        if(auctionParams.deadline < block.timestamp) {
+        if (auctionParams.deadline < block.timestamp) {
             revert InvalidDeadline();
         }
 
@@ -70,7 +68,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
             startTimestamp: block.timestamp,
             state: DutchAuctionState.Created
         });
-   
+
         auctionHashes.push(auction.hash());
         emit AuctionUpdated(auction);
 
@@ -93,7 +91,12 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
             revert AuctionExpired();
         }
         if (auction.dutchAuctionParams.fillerWhitelistContract != address(0)) {
-            if (!IRiftWhitelist(auction.dutchAuctionParams.fillerWhitelistContract).isWhitelisted(msg.sender, fillerAuthData)) {
+            if (
+                !IRiftWhitelist(auction.dutchAuctionParams.fillerWhitelistContract).isWhitelisted(
+                    msg.sender,
+                    fillerAuthData
+                )
+            ) {
                 revert FillerNotWhitelisted();
             }
         }
@@ -123,7 +126,6 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         auctionHashes[auction.index] = auction.hash();
         emit AuctionUpdated(auction);
     }
-
 
     // 1. validate the auction is expired
     // 2. Withdraw deposit token to depositOwnerAddress
