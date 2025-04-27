@@ -18,40 +18,30 @@ import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {FeeLib} from "./libraries/FeeLib.sol";
 import {MMRProofLib} from "./libraries/MMRProof.sol";
 import {BitcoinScriptLib} from "./libraries/BitcoinScriptLib.sol";
+import {OrderValidationLib} from "./libraries/OrderValidationLib.sol";
 
-/**
- * @title RiftExchange
- * @notice A decentralized exchange for cross-chain Bitcoin<>Tokenized Bitcoin swaps
- * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
- */
 abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightClient {
     using SafeTransferLib for address;
-    using HashLib for DepositVault;
-    using HashLib for ProposedSwap;
-    using DataIntegrityLib for DepositVault;
-    using DataIntegrityLib for ProposedSwap;
-
-    // -----------------------------------------------------------------------
-    //                                CONSTANTS
-    // -----------------------------------------------------------------------
-
-    uint16 public constant MIN_OUTPUT_SATS = 1000; // to prevent dust errors on btc side
-    uint8 public constant MIN_CONFIRMATION_BLOCKS = 2;
+    using HashLib for Order;
+    using HashLib for Payment;
+    using DataIntegrityLib for Order;
+    using DataIntegrityLib for Payment;
+    using OrderValidationLib for CreateOrderParams;
 
     // -----------------------------------------------------------------------
     //                                IMMUTABLES
     // -----------------------------------------------------------------------
-    address public immutable ERC20_BTC;
-    bytes32 public immutable CIRCUIT_VERIFICATION_KEY;
-    address public immutable VERIFIER;
+    address public immutable syntheticBitcoin;
+    bytes32 public immutable circuitVerificationKey;
+    address public immutable verifier;
 
     // -----------------------------------------------------------------------
     //                                 STATE
     // -----------------------------------------------------------------------
-    bytes32[] public vaultHashes;
-    bytes32[] public swapHashes;
-    uint256 public accumulatedFeeBalance;
-    address public feeRouterAddress;
+    bytes32[] public orderHashes;
+    bytes32[] public paymentHashes;
+    uint256 public accumulatedFees;
+    address public feeRouter;
     uint16 public takerFeeBips;
 
     // -----------------------------------------------------------------------
@@ -70,10 +60,10 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         /// @dev Deposit token checks within the contract assume that the token has 8 decimals
         uint8 depositTokenDecimals = ERC20(_depositToken).decimals();
         if (depositTokenDecimals != 8) revert InvalidDepositTokenDecimals(depositTokenDecimals, 8);
-        ERC20_BTC = _depositToken;
-        CIRCUIT_VERIFICATION_KEY = _circuitVerificationKey;
-        VERIFIER = _verifier;
-        feeRouterAddress = _feeRouter;
+        syntheticBitcoin = _depositToken;
+        circuitVerificationKey = _circuitVerificationKey;
+        verifier = _verifier;
+        feeRouter = _feeRouter;
         takerFeeBips = _takerFeeBips;
     }
 
@@ -89,93 +79,92 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
     /// @notice Sends accumulated protocol fees to the fee router contract
     /// @dev Reverts if there are no fees to pay or if the transfer fails
-    function payoutToFeeRouter() external {
-        uint256 feeBalance = accumulatedFeeBalance;
+    function withdrawFees() external {
+        uint256 feeBalance = accumulatedFees;
         if (feeBalance == 0) revert NoFeeToPay();
-        accumulatedFeeBalance = 0;
-        ERC20_BTC.safeTransfer(feeRouterAddress, feeBalance);
+        accumulatedFees = 0;
+        syntheticBitcoin.safeTransfer(feeRouter, feeBalance);
     }
 
-    function adminSetFeeRouterAddress(address _feeRouter) external onlyOwner {
-        feeRouterAddress = _feeRouter;
+    function adminSetFeeRouter(address _feeRouter) external onlyOwner {
+        feeRouter = _feeRouter;
     }
 
     function adminSetTakerFeeBips(uint16 _takerFeeBips) external onlyOwner {
         takerFeeBips = _takerFeeBips;
     }
 
-    /// @notice Deposits new liquidity into a new vault
-    /// @return The hash of the new deposit
+    /// @notice Creates a new order for Bitcoin<>Tokenized Bitcoin swap
+    /// @return The hash of the new order
     /// @dev This function requires that the child contract handles token accounting
-    function _depositLiquidity(DepositLiquidityParams memory params) internal returns (bytes32) {
-        // Determine vault index
-        uint256 vaultIndex = vaultHashes.length;
+    function _createOrder(CreateOrderParams memory params) internal returns (bytes32) {
+        // Determine order index
+        uint256 orderIndex = orderHashes.length;
 
-        // Create deposit liquidity request
-        (DepositVault memory vault, bytes32 depositHash) = _prepareDeposit(params, vaultIndex);
+        // Create order
+        (Order memory order, bytes32 orderHash) = _prepareOrder(params, orderIndex);
 
-        // Add deposit hash to vault hashes
-        vaultHashes.push(depositHash);
+        // Add order hash to order hashes
+        orderHashes.push(orderHash);
 
-        // Finalize deposit
-        DepositVault[] memory updatedVaults = new DepositVault[](1);
-        updatedVaults[0] = vault;
-        emit VaultsUpdated(updatedVaults, VaultUpdateContext.Created);
+        // Finalize order creation
+        Order[] memory updatedOrders = new Order[](1);
+        updatedOrders[0] = order;
+        emit OrdersUpdated(updatedOrders, OrderUpdateContext.Created);
 
-        return depositHash;
+        return orderHash;
     }
 
-
-    /// @notice Withdraws liquidity from a deposit vault after the lockup period
-    /// @dev Anyone can call, reverts if vault doesn't exist, is empty, or still in lockup period
-    function withdrawLiquidity(DepositVault calldata vault) external {
-        vault.checkIntegrity(vaultHashes);
-        if (vault.vaultAmount == 0) revert EmptyDepositVault();
-        if (block.timestamp < vault.depositUnlockTimestamp) {
+    /// @notice Refunds an order after the unlock period if no valid payment was made
+    /// @dev Anyone can call, reverts if order doesn't exist, is empty, or still in unlock period
+    function refundOrder(Order calldata order) external {
+        order.checkIntegrity(orderHashes);
+        if (order.amount == 0) revert EmptyDepositVault();
+        if (block.timestamp < order.unlockTimestamp) {
             revert DepositStillLocked();
         }
 
-        DepositVault memory updatedVault = vault;
-        updatedVault.vaultAmount = 0;
-        updatedVault.takerFee = 0;
+        Order memory updatedOrder = order;
+        // Mark order as refunded by zeroing out amount
+        updatedOrder.amount = 0;
+        updatedOrder.takerFee = 0;
 
-        vaultHashes[updatedVault.vaultIndex] = updatedVault.hash();
+        orderHashes[updatedOrder.index] = updatedOrder.hash();
 
-        ERC20_BTC.safeTransfer(vault.ownerAddress, vault.vaultAmount + vault.takerFee);
+        syntheticBitcoin.safeTransfer(order.owner, order.amount + order.takerFee);
 
-        DepositVault[] memory updatedVaults = new DepositVault[](1);
-        updatedVaults[0] = updatedVault;
-        emit VaultsUpdated(updatedVaults, VaultUpdateContext.Withdraw);
+        Order[] memory updatedOrders = new Order[](1);
+        updatedOrders[0] = updatedOrder;
+        emit OrdersUpdated(updatedOrders, OrderUpdateContext.Refunded);
     }
 
-    /// @notice Submits a a batch of swap proofs and adds them to swapHashes
-    function submitBatchSwapProofWithLightClientUpdate(
-        SubmitSwapProofParams[] calldata swapParams,
+    /// @notice Submits a batch of payment proofs with light client update
+    function submitPaymentProofs(
+        SubmitPaymentProofParams[] calldata paymentParams,
         BlockProofParams calldata blockProofParams,
         bytes calldata proof
     ) external {
-        // optimistically update root, needed b/c we validate current inclusion in the chain for each swap
+        // optimistically update root, needed b/c we validate current inclusion in the chain for each payment
         _updateRoot(
             blockProofParams.priorMmrRoot,
             blockProofParams.newMmrRoot,
-            blockProofParams.tipBlockLeaf,
-            blockProofParams.compressedBlockLeaves
+            blockProofParams.tipBlockLeaf
         );
 
         uint32 proposedLightClientHeight = blockProofParams.tipBlockLeaf.height;
 
-        (ProposedSwap[] memory swaps, SwapPublicInput[] memory swapPublicInputs) = _validateSwaps(
+        (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) = _validatePayments(
             proposedLightClientHeight,
-            swapParams
+            paymentParams
         );
 
         bytes32 compressedLeavesHash = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
-        verifyZkProof(
+        verifyProof(
             ProofPublicInput({
                 proofType: ProofType.Combined,
-                swaps: swapPublicInputs,
+                payments: paymentPublicInputs,
                 lightClient: LightClientPublicInput({
-                    previousMmrRoot: blockProofParams.priorMmrRoot,
+                    priorMmrRoot: blockProofParams.priorMmrRoot,
                     newMmrRoot: blockProofParams.newMmrRoot,
                     compressedLeavesHash: compressedLeavesHash,
                     tipBlockLeaf: blockProofParams.tipBlockLeaf
@@ -184,27 +173,27 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             proof
         );
 
-        emit SwapsUpdated(swaps, SwapUpdateContext.Created);
+        emit PaymentsUpdated(payments, PaymentUpdateContext.Created);
     }
 
-    /// @notice Submits a batch of swap proofs and adds them to swapHashes, does not update the light client
-    function submitBatchSwapProof(
-        SubmitSwapProofParams[] calldata swapParams,
+    /// @notice Submits a batch of payment proofs without updating the light client
+    function submitPaymentProofs(
+        SubmitPaymentProofParams[] calldata paymentParams,
         bytes calldata proof
     ) external {
-        uint32 currentLightClientHeight = getLightClientHeight();
-        (ProposedSwap[] memory swaps, SwapPublicInput[] memory swapPublicInputs) = _validateSwaps(
+        uint32 currentLightClientHeight = lightClientHeight();
+        (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) = _validatePayments(
             currentLightClientHeight,
-            swapParams
+            paymentParams
         );
 
-        verifyZkProof(
+        verifyProof(
             ProofPublicInput({
-                proofType: ProofType.SwapOnly,
-                swaps: swapPublicInputs,
+                proofType: ProofType.PaymentOnly,
+                payments: paymentPublicInputs,
                 // null light client public input to align with circuit
                 lightClient: LightClientPublicInput({
-                    previousMmrRoot: bytes32(0),
+                    priorMmrRoot: bytes32(0),
                     newMmrRoot: bytes32(0),
                     compressedLeavesHash: bytes32(0),
                     tipBlockLeaf: BlockLeaf({blockHash: bytes32(0), height: 0, cumulativeChainwork: 0})
@@ -212,73 +201,71 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             }),
             proof
         );
-        emit SwapsUpdated(swaps, SwapUpdateContext.Created);
+        emit PaymentsUpdated(payments, PaymentUpdateContext.Created);
     }
 
-    /// @notice Releases locked liquidity for multiple swaps
-    function releaseLiquidityBatch(ReleaseLiquidityParams[] calldata paramsArray) external {
-        ProposedSwap[] memory updatedSwaps = new ProposedSwap[](paramsArray.length);
-        DepositVault[] memory updatedVaults = new DepositVault[](paramsArray.length);
+    /// @notice Settles orders by processing verified payments
+    function settleOrders(SettleOrderParams[] calldata settleOrderParams) external {
+        Payment[] memory updatedPayments = new Payment[](settleOrderParams.length);
+        Order[] memory updatedOrders = new Order[](settleOrderParams.length);
 
-        for (uint256 i = 0; i < paramsArray.length; i++) {
-            paramsArray[i].swap.checkIntegrity(swapHashes);
-            if (paramsArray[i].swap.state != SwapState.Proved) revert SwapNotProved();
-            if (block.timestamp < paramsArray[i].swap.liquidityUnlockTimestamp) revert StillInChallengePeriod();
+        for (uint256 i = 0; i < settleOrderParams.length; i++) {
+            settleOrderParams[i].payment.checkIntegrity(paymentHashes);
+            if (settleOrderParams[i].payment.state != PaymentState.Proved) revert SwapNotProved();
+            if (block.timestamp < settleOrderParams[i].payment.challengeExpiryTimestamp) revert StillInChallengePeriod();
 
-            bytes32 depositVaultHash = paramsArray[i].utilizedVault.checkIntegrity(vaultHashes);
-            if (depositVaultHash != paramsArray[i].swap.depositVaultHash) {
-                revert InvalidVaultHash(paramsArray[i].swap.depositVaultHash, depositVaultHash);
+            bytes32 orderHash = settleOrderParams[i].order.checkIntegrity(orderHashes);
+            if (orderHash != settleOrderParams[i].payment.orderHash) {
+                revert InvalidVaultHash(settleOrderParams[i].payment.orderHash, orderHash);
             }
 
-            BlockLeaf memory swapBlockLeaf = paramsArray[i].swap.swapBitcoinBlockLeaf;
+            BlockLeaf memory paymentBlockLeaf = settleOrderParams[i].payment.paymentBitcoinBlockLeaf;
 
-            // TODO: consider how to optimize this so this is only called the minimum amount for a given collection of releases
+            // TODO: consider how to optimize this so this is only called the minimum amount for a given collection of settlements
             _verifyBlockInclusionAndConfirmations(
-                swapBlockLeaf,
-                paramsArray[i].bitcoinSwapBlockSiblings,
-                paramsArray[i].bitcoinSwapBlockPeaks,
-                paramsArray[i].swap.confirmationBlocks
+                paymentBlockLeaf,
+                settleOrderParams[i].paymentBitcoinBlockSiblings,
+                settleOrderParams[i].paymentBitcoinBlockPeaks,
+                settleOrderParams[i].order.confirmationBlocks
             );
 
-            DepositVault memory updatedVault = paramsArray[i].utilizedVault;
-            updatedVault.vaultAmount = 0;
-            updatedVault.takerFee = 0;
+            Order memory updatedOrder = settleOrderParams[i].order;
+            updatedOrder.amount = 0;
+            updatedOrder.takerFee = 0;
 
-            vaultHashes[updatedVault.vaultIndex] = updatedVault.hash();
+            orderHashes[updatedOrder.index] = updatedOrder.hash();
 
-            updatedVaults[i] = updatedVault;
+            updatedOrders[i] = updatedOrder;
 
-            ProposedSwap memory updatedSwap = paramsArray[i].swap;
-            updatedSwap.state = SwapState.Finalized;
-            swapHashes[paramsArray[i].swap.swapIndex] = updatedSwap.hash();
+            Payment memory updatedPayment = settleOrderParams[i].payment;
+            updatedPayment.state = PaymentState.Settled;
+            paymentHashes[settleOrderParams[i].payment.index] = updatedPayment.hash();
 
-            accumulatedFeeBalance += paramsArray[i].swap.takerFee;
+            accumulatedFees += settleOrderParams[i].order.takerFee;
 
-            ERC20_BTC.safeTransfer(paramsArray[i].swap.specifiedPayoutAddress, paramsArray[i].swap.totalSwapOutput);
+            syntheticBitcoin.safeTransfer(settleOrderParams[i].order.designatedReceiver, settleOrderParams[i].order.amount);
 
-            updatedSwaps[i] = updatedSwap;
+            updatedPayments[i] = updatedPayment;
         }
 
-        emit SwapsUpdated(updatedSwaps, SwapUpdateContext.Complete);
-        emit VaultsUpdated(updatedVaults, VaultUpdateContext.Release);
+        emit PaymentsUpdated(updatedPayments, PaymentUpdateContext.Settled);
+        emit OrdersUpdated(updatedOrders, OrderUpdateContext.Settled);
     }
 
     function updateLightClient(BlockProofParams calldata blockProofParams, bytes calldata proof) external {
-        bytes32 compressedLeavesHash = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
-
         _updateRoot(
             blockProofParams.priorMmrRoot,
             blockProofParams.newMmrRoot,
-            blockProofParams.tipBlockLeaf,
-            blockProofParams.compressedBlockLeaves
+            blockProofParams.tipBlockLeaf
         );
 
-        verifyZkProof(
+        bytes32 compressedLeavesHash = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
+        verifyProof(
             ProofPublicInput({
                 proofType: ProofType.LightClientOnly,
-                swaps: new SwapPublicInput[](0),
+                payments: new PaymentPublicInput[](0),
                 lightClient: LightClientPublicInput({
-                    previousMmrRoot: blockProofParams.priorMmrRoot,
+                    priorMmrRoot: blockProofParams.priorMmrRoot,
                     newMmrRoot: blockProofParams.newMmrRoot,
                     compressedLeavesHash: compressedLeavesHash,
                     tipBlockLeaf: blockProofParams.tipBlockLeaf
@@ -292,115 +279,104 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     //                            INTERNAL FUNCTIONS
     // -----------------------------------------------------------------------
 
-    /// @notice Internal function to prepare and validate a new deposit
-    function _prepareDeposit(
-        DepositLiquidityParams memory params,
-        uint256 depositVaultIndex
-    ) internal view returns (DepositVault memory, bytes32) {
+    /// @notice Internal function to prepare and validate a new order
+    function _prepareOrder(
+        CreateOrderParams memory params,
+        uint256 orderIndex
+    ) internal view returns (Order memory, bytes32) {
         uint16 _takerFeeBips = takerFeeBips; // cache
-        if (params.depositAmount < FeeLib.calculateMinDepositAmount(_takerFeeBips)) revert DepositAmountTooLow();
-        if (params.expectedSats < MIN_OUTPUT_SATS) revert SatOutputTooLow();
-        if (params.base.confirmationBlocks < MIN_CONFIRMATION_BLOCKS) revert NotEnoughConfirmationBlocks();
-        if (!BitcoinScriptLib.validateScriptPubKey(params.base.btcPayoutScriptPubKey))
-            revert InvalidScriptPubKey();
 
-        _verifyBlockInclusion(params.base.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
+        params.validate(_takerFeeBips);
 
-        uint256 depositFee = FeeLib.calculateFeeFromDeposit(params.depositAmount, _takerFeeBips);
+        verifyBlockInclusion(params.base.safeBlockLeaf, params.safeBlockSiblings, params.safeBlockPeaks);
 
-        DepositVault memory vault = DepositVault({
-            vaultIndex: depositVaultIndex,
-            depositTimestamp: uint64(block.timestamp),
-            depositUnlockTimestamp: uint64(
+        uint256 takerFee = FeeLib.calculateFeeFromDeposit(params.depositAmount, _takerFeeBips);
+
+        Order memory order = Order({
+            index: orderIndex,
+            timestamp: uint64(block.timestamp),
+            unlockTimestamp: uint64(
                 block.timestamp + PeriodLib.calculateDepositLockupPeriod(params.base.confirmationBlocks)
             ),
-            vaultAmount: params.depositAmount - depositFee,
-            takerFee: depositFee,
+            amount: params.depositAmount - takerFee,
+            takerFee: takerFee,
             expectedSats: params.expectedSats,
-            btcPayoutScriptPubKey: params.base.btcPayoutScriptPubKey,
-            specifiedPayoutAddress: params.specifiedPayoutAddress,
-            ownerAddress: params.base.depositOwnerAddress,
-            salt: EfficientHashLib.hash(_domainSeparator(), params.base.depositSalt, bytes32(depositVaultIndex)),
+            bitcoinScriptPubKey: params.base.bitcoinScriptPubKey,
+            designatedReceiver: params.designatedReceiver,
+            owner: params.base.owner,
+            salt: EfficientHashLib.hash(_domainSeparator(), params.base.salt, bytes32(orderIndex)),
             confirmationBlocks: params.base.confirmationBlocks,
-            attestedBitcoinBlockHeight: params.base.safeBlockLeaf.height
+            safeBitcoinBlockHeight: params.base.safeBlockLeaf.height
         });
 
-        return (vault, vault.hash());
+        return (order, order.hash());
     }
 
-
-
-    /// @notice Internal function to prepare and validate a batch of swap proofs
-    function _validateSwaps(
+    /// @notice Internal function to prepare and validate a batch of payment proofs
+    function _validatePayments(
         uint32 proposedLightClientHeight,
-        SubmitSwapProofParams[] calldata swapParams
-    ) internal returns (ProposedSwap[] memory swaps, SwapPublicInput[] memory swapPublicInputs) {
-        if (swapParams.length == 0) revert NoSwapsToSubmit();
-        swapPublicInputs = new SwapPublicInput[](swapParams.length);
-        swaps = new ProposedSwap[](swapParams.length);
+        SubmitPaymentProofParams[] calldata paymentParams
+    ) internal returns (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) {
+        if (paymentParams.length == 0) revert NoSwapsToSubmit();
+        paymentPublicInputs = new PaymentPublicInput[](paymentParams.length);
+        payments = new Payment[](paymentParams.length);
 
-        uint256 initialSwapIndexPointer = swapHashes.length;
-        for (uint256 i = 0; i < swapParams.length; i++) {
-            uint256 swapIndex = initialSwapIndexPointer + i;
-            SubmitSwapProofParams calldata params = swapParams[i];
+        uint256 initialPaymentIndexPointer = paymentHashes.length;
+        for (uint256 i = 0; i < paymentParams.length; i++) {
+            uint256 paymentIndex = initialPaymentIndexPointer + i;
+            SubmitPaymentProofParams calldata params = paymentParams[i];
 
-            bytes32 depositVaultHash = params.vault.checkIntegrity(vaultHashes);
+            bytes32 orderHash = params.order.checkIntegrity(orderHashes);
 
-            swapPublicInputs[i] = SwapPublicInput({
-                swapBitcoinTxid: params.swapBitcoinTxid,
-                swapBitcoinBlockHash: params.swapBitcoinBlockLeaf.blockHash,
-                depositVaultHash: depositVaultHash
+            paymentPublicInputs[i] = PaymentPublicInput({
+                paymentBitcoinTxid: params.paymentBitcoinTxid,
+                paymentBitcoinBlockHash: params.paymentBitcoinBlockLeaf.blockHash,
+                orderHash: orderHash
             });
 
             _verifyBlockInclusionAndConfirmations(
-                params.swapBitcoinBlockLeaf,
-                params.swapBitcoinBlockSiblings,
-                params.swapBitcoinBlockPeaks,
-                params.vault.confirmationBlocks
+                params.paymentBitcoinBlockLeaf,
+                params.paymentBitcoinBlockSiblings,
+                params.paymentBitcoinBlockPeaks,
+                params.order.confirmationBlocks
             );
 
-            swaps[i] = ProposedSwap({
-                swapIndex: swapIndex,
-                swapBitcoinBlockLeaf: params.swapBitcoinBlockLeaf,
-                confirmationBlocks: params.vault.confirmationBlocks,
-                liquidityUnlockTimestamp: uint64(
+            payments[i] = Payment({
+                index: paymentIndex,
+                orderHash: orderHash,
+                paymentBitcoinBlockLeaf: params.paymentBitcoinBlockLeaf,
+                challengeExpiryTimestamp: uint64(
                     block.timestamp +
                         PeriodLib.calculateChallengePeriod(
                             // The challenge period is based on the worst case reorg which would be to the
-                            // depositors originally attested bitcoin block height
-                            proposedLightClientHeight - params.vault.attestedBitcoinBlockHeight
+                            // order creator's originally attested bitcoin block height
+                            proposedLightClientHeight - params.order.safeBitcoinBlockHeight
                         )
                 ),
-                specifiedPayoutAddress: params.vault.specifiedPayoutAddress,
-                totalSwapOutput: params.vault.vaultAmount,
-                takerFee: params.vault.takerFee,
-                state: SwapState.Proved,
-                depositVaultHash: depositVaultHash
+                state: PaymentState.Proved
             });
 
-            bytes32 swapHash = swaps[i].hash();
-            swapHashes.push(swapHash);
+            bytes32 paymentHash = payments[i].hash();
+            paymentHashes.push(paymentHash);
         }
     }
 
     // Convenience function to verify a rift proof via eth_call
-    function verifyZkProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
-        ISP1Verifier(VERIFIER).verifyProof(CIRCUIT_VERIFICATION_KEY, abi.encode(proofPublicInput), proof);
+    function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
+        ISP1Verifier(verifier).verifyProof(circuitVerificationKey, abi.encode(proofPublicInput), proof);
     }
-
 
     // -----------------------------------------------------------------------
     //                              READ FUNCTIONS
     // -----------------------------------------------------------------------
 
-    function getVaultHashesLength() external view returns (uint256) {
-        return vaultHashes.length;
+    function getTotalOrders() external view returns (uint256) {
+        return orderHashes.length;
     }
 
-    function getSwapHashesLength() external view returns (uint256) {
-        return swapHashes.length;
+    function getTotalPayments() external view returns (uint256) {
+        return paymentHashes.length;
     }
-
 
     function serializeLightClientPublicInput(
         LightClientPublicInput memory input

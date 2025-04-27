@@ -2,39 +2,38 @@
 pragma solidity =0.8.28;
 
 import {HashLib} from "./HashLib.sol";
-import {DepositVault} from "../interfaces/IRiftExchange.sol";
-import {ProposedSwap} from "../interfaces/IRiftExchange.sol";
+import {Order, Payment} from "../interfaces/IRiftExchange.sol";
 import {DutchAuction} from "../interfaces/IBTCDutchAuctionHouse.sol";
 
 library DataIntegrityLib {
-    using HashLib for DepositVault;
-    using HashLib for ProposedSwap;
+    using HashLib for Order;
+    using HashLib for Payment;
     using HashLib for DutchAuction;
 
-    error DepositVaultDoesNotExist();
-    error SwapDoesNotExist();
+    error OrderDoesNotExist();
+    error PaymentDoesNotExist();
     error DutchAuctionDoesNotExist();
 
     function checkIntegrity(
-        DepositVault calldata vault,
-        bytes32[] storage vaultHashes
+        Order calldata order,
+        bytes32[] storage orderHashes
     ) internal view returns (bytes32) {
-        bytes32 vaultHash = vault.hash();
-        if (vaultHash != vaultHashes[vault.vaultIndex]) {
-            revert DepositVaultDoesNotExist();
+        bytes32 orderHash = order.hash();
+        if (orderHash != orderHashes[order.index]) {
+            revert OrderDoesNotExist();
         }
-        return vaultHash;
+        return orderHash;
     }
 
     function checkIntegrity(
-        ProposedSwap calldata swap,
-        bytes32[] storage swapHashes
+        Payment calldata payment,
+        bytes32[] storage paymentHashes
     ) internal view returns (bytes32) {
-        bytes32 swapHash = swap.hash();
-        if (swapHash != swapHashes[swap.swapIndex]) {
-            revert SwapDoesNotExist();
+        bytes32 paymentHash = payment.hash();
+        if (paymentHash != paymentHashes[payment.index]) {
+            revert PaymentDoesNotExist();
         }
-        return swapHash;
+        return paymentHash;
     }
 
     function checkIntegrity(
@@ -42,7 +41,7 @@ library DataIntegrityLib {
         bytes32[] storage auctionHashes
     ) internal view returns (bytes32) {
         bytes32 auctionHash = auction.hash();
-        if (auctionHash != auctionHashes[auction.auctionIndex]) {
+        if (auctionHash != auctionHashes[auction.index]) {
             revert DutchAuctionDoesNotExist();
         }
         return auctionHash;

@@ -1,7 +1,10 @@
 use accumulators::mmr::map_leaf_index_to_element_index;
 use alloy::{
-    eips::eip7251::ConsolidationRequest, primitives::Address, providers::Provider,
-    pubsub::PubSubFrontend, sol_types::SolValue,
+    eips::eip7251::ConsolidationRequest,
+    primitives::Address,
+    providers::{DynProvider, Provider},
+    pubsub::PubSubFrontend,
+    sol_types::SolValue,
 };
 use bitcoin::{block::Version, consensus::Decodable, CompactTarget};
 use bitcoin_data_engine::BitcoinDataEngine;
@@ -14,7 +17,7 @@ use bitcoincore_rpc_async::{
     json::GetBlockResult,
     RpcApi,
 };
-use data_engine::{engine::ContractDataEngine, models::ChainAwareDeposit};
+use data_engine::{engine::ContractDataEngine, models::ChainAwareOrder};
 use rift_core::{
     giga::RiftProgramInput,
     payments::{validate_bitcoin_payment, OP_PUSHBYTES_32, OP_RETURN_CODE},
@@ -28,10 +31,9 @@ use rift_sdk::{
     indexed_mmr::IndexedMMR,
     proof_generator::RiftProofGenerator,
     txn_builder::serialize_no_segwit,
-    WebsocketWalletProvider,
 };
 use sol_bindings::{
-    BlockProofParams, DepositVault, RiftExchangeHarnessInstance, SubmitSwapProofParams,
+    BlockProofParams, Order, RiftExchangeHarnessInstance, SubmitPaymentProofParams,
 };
 use std::sync::Arc;
 use tokio::{
@@ -46,13 +48,13 @@ use tracing::{info, info_span, instrument, warn, Instrument};
 
 use crate::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 
-struct PendingSwap {
-    chain_aware_deposit: ChainAwareDeposit,
+struct PendingPayment {
+    chain_aware_order: ChainAwareOrder,
     payment_txid: Txid, //rely on bitcoin core for telling us how many confirmations this has?
 }
 
-struct ConfirmedSwap {
-    chain_aware_deposit: ChainAwareDeposit,
+struct ConfirmedPayment {
+    chain_aware_order: ChainAwareOrder,
     payment_txid: Txid,
     payment_block_leaf: BlockLeaf,
     rift_transaction_input: RiftTransaction,
@@ -64,7 +66,7 @@ impl SwapWatchtower {
     pub fn run(
         contract_data_engine: Arc<ContractDataEngine>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
-        evm_rpc: Arc<WebsocketWalletProvider>,
+        evm_rpc: DynProvider,
         btc_rpc: Arc<AsyncBitcoinClient>,
         rift_exchange_address: Address,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
@@ -73,7 +75,7 @@ impl SwapWatchtower {
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) {
         let (confirmed_swaps_tx, confirmed_swaps_rx) =
-            tokio::sync::mpsc::unbounded_channel::<Vec<ConfirmedSwap>>();
+            tokio::sync::mpsc::unbounded_channel::<Vec<ConfirmedPayment>>();
 
         let evm_rpc_clone = evm_rpc.clone();
         let btc_rpc_clone = btc_rpc.clone();
@@ -122,12 +124,12 @@ impl SwapWatchtower {
 
     // called by search_for_swaps thread
     async fn search_for_swap_payments(
-        evm_rpc: Arc<dyn Provider<PubSubFrontend>>,
+        evm_rpc: DynProvider,
         btc_rpc: Arc<AsyncBitcoinClient>,
         contract_data_engine: Arc<ContractDataEngine>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         bitcoin_concurrency_limit: usize,
-        confirmed_swaps_tx: UnboundedSender<Vec<ConfirmedSwap>>,
+        confirmed_swaps_tx: UnboundedSender<Vec<ConfirmedPayment>>,
     ) -> eyre::Result<()> {
         info!("Starting swap search");
         let mut block_subscribtion = bitcoin_data_engine.subscribe_to_new_blocks();
@@ -230,14 +232,14 @@ impl SwapWatchtower {
     }
 
     async fn finalize_confirmed_swaps(
-        mut confirmed_swaps_rx: UnboundedReceiver<Vec<ConfirmedSwap>>,
+        mut confirmed_swaps_rx: UnboundedReceiver<Vec<ConfirmedPayment>>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         contract_data_engine: Arc<ContractDataEngine>,
         bitcoin_concurrency_limit: usize,
         proof_generator: Arc<RiftProofGenerator>,
         evm_address: Address,
-        evm_rpc: Arc<WebsocketWalletProvider>,
+        evm_rpc: DynProvider,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
     ) -> eyre::Result<()> {
         let rift_exchange = RiftExchangeHarnessInstance::new(evm_address, evm_rpc);
@@ -305,12 +307,12 @@ impl SwapWatchtower {
                 let proof = bitcoin_mmr
                     .get_circuit_proof(swap.payment_block_leaf.height as usize, None)
                     .await?;
-                swap_params.push(SubmitSwapProofParams {
-                    swapBitcoinTxid: swap.payment_txid.as_raw_hash().to_byte_array().into(),
-                    vault: swap.chain_aware_deposit.deposit.clone(),
-                    swapBitcoinBlockLeaf: swap.payment_block_leaf.into(),
-                    swapBitcoinBlockSiblings: proof.siblings.iter().map(From::from).collect(),
-                    swapBitcoinBlockPeaks: proof.peaks.iter().map(From::from).collect(),
+                swap_params.push(SubmitPaymentProofParams {
+                    paymentBitcoinTxid: swap.payment_txid.as_raw_hash().to_byte_array().into(),
+                    order: swap.chain_aware_order.order.clone(),
+                    paymentBitcoinBlockLeaf: swap.payment_block_leaf.into(),
+                    paymentBitcoinBlockSiblings: proof.siblings.iter().map(From::from).collect(),
+                    paymentBitcoinBlockPeaks: proof.peaks.iter().map(From::from).collect(),
                 });
             }
 
@@ -341,7 +343,7 @@ impl SwapWatchtower {
 
             let block_proof_params = if light_client_update {
                 Some(BlockProofParams {
-                    priorMmrRoot: public_values_simulated.previousMmrRoot,
+                    priorMmrRoot: public_values_simulated.priorMmrRoot,
                     newMmrRoot: public_values_simulated.newMmrRoot,
                     tipBlockLeaf: public_values_simulated.tipBlockLeaf,
                     compressedBlockLeaves: auxiliary_data.compressed_leaves.into(),
@@ -360,7 +362,7 @@ impl SwapWatchtower {
 
             let (transaction_request, calldata) =
                 if let Some(block_proof_params) = block_proof_params {
-                    let call = rift_exchange.submitBatchSwapProofWithLightClientUpdate(
+                    let call = rift_exchange.submitPaymentProofs_1(
                         swap_params,
                         block_proof_params,
                         proof_bytes.into(),
@@ -369,7 +371,7 @@ impl SwapWatchtower {
                     let transaction_request = call.into_transaction_request();
                     (transaction_request, calldata)
                 } else {
-                    let call = rift_exchange.submitBatchSwapProof(swap_params, proof_bytes.into());
+                    let call = rift_exchange.submitPaymentProofs_0(swap_params, proof_bytes.into());
                     let calldata = call.calldata().to_owned();
                     let transaction_request = call.into_transaction_request();
                     (transaction_request, calldata)
@@ -386,16 +388,13 @@ impl SwapWatchtower {
 
 // Computes how far back in terms of bitcoin blocks to search for swaps based on the oldest active deposit
 async fn compute_block_search_range(
-    evm_rpc: Arc<dyn Provider<PubSubFrontend>>,
+    evm_rpc: DynProvider,
     btc_rpc: Arc<AsyncBitcoinClient>,
     contract_data_engine: Arc<ContractDataEngine>,
     bitcoin_data_engine: Arc<BitcoinDataEngine>,
 ) -> eyre::Result<(u32, u32)> {
     let current_evm_timestamp = evm_rpc
-        .get_block_by_number(
-            alloy::eips::BlockNumberOrTag::Latest,
-            alloy::rpc::types::BlockTransactionsKind::Hashes,
-        )
+        .get_block_by_number(alloy::eips::BlockNumberOrTag::Latest)
         .await?
         .ok_or_else(|| eyre::eyre!("Failed to get latest block"))?
         .header
@@ -419,11 +418,11 @@ async fn compute_block_search_range(
         if let Some(oldest_active_deposit) = oldest_active_deposit {
             info!(
                 message = "Oldest active deposit",
-                deposit_timestamp = oldest_active_deposit.deposit.depositTimestamp,
+                deposit_timestamp = oldest_active_deposit.order.timestamp,
                 operation = "compute_block_search_range"
             );
             btc_rpc
-                .find_oldest_block_before_timestamp(oldest_active_deposit.deposit.depositTimestamp)
+                .find_oldest_block_before_timestamp(oldest_active_deposit.order.timestamp)
                 .await?
         } else {
             info!(
@@ -443,7 +442,7 @@ async fn compute_block_search_range(
 async fn find_new_swaps_in_blocks(
     contract_data_engine: Arc<ContractDataEngine>,
     blocks: &[Block],
-) -> eyre::Result<Vec<PendingSwap>> {
+) -> eyre::Result<Vec<PendingPayment>> {
     /*
     Rift Transaction Filter [function]
     given a block
@@ -493,7 +492,7 @@ async fn find_new_swaps_in_blocks(
 
                 let payment_validation = validate_bitcoin_payment(
                     &tx_data_no_segwit,
-                    &chain_aware_deposit.deposit,
+                    &chain_aware_deposit.order,
                     &potential_deposit_vault_commitment,
                 );
                 if payment_validation.is_err() {
@@ -510,8 +509,8 @@ async fn find_new_swaps_in_blocks(
                     hex::encode(potential_deposit_vault_commitment),
                     txid
                 );
-                pending_swaps.push(PendingSwap {
-                    chain_aware_deposit,
+                pending_swaps.push(PendingPayment {
+                    chain_aware_order: chain_aware_deposit,
                     payment_txid: txid,
                 });
             }
@@ -524,8 +523,8 @@ async fn find_new_swaps_in_blocks(
 #[instrument(level = "info", skip(btc_rpc, pending_swaps))]
 async fn find_pending_swaps_with_sufficient_confirmations(
     btc_rpc: Arc<AsyncBitcoinClient>,
-    pending_swaps: &mut Vec<PendingSwap>,
-) -> eyre::Result<Vec<ConfirmedSwap>> {
+    pending_swaps: &mut Vec<PendingPayment>,
+) -> eyre::Result<Vec<ConfirmedPayment>> {
     let mut confirmed_swaps = Vec::new();
     let mut i = 0;
 
@@ -542,12 +541,7 @@ async fn find_pending_swaps_with_sufficient_confirmations(
             .confirmations
             .expect("Confirmations wasn't returned");
 
-        if confirmations
-            >= pending_swaps[i]
-                .chain_aware_deposit
-                .deposit
-                .confirmationBlocks as u32
-        {
+        if confirmations >= pending_swaps[i].chain_aware_order.order.confirmationBlocks as u32 {
             let pending_swap = pending_swaps.remove(i);
 
             // (getblock w/ verbosity 1 is light bandwidth wise compared to full block download)
@@ -581,13 +575,13 @@ async fn find_pending_swaps_with_sufficient_confirmations(
 
             let rift_transaction_input = RiftTransaction {
                 txn: serialize_no_segwit(&txn).unwrap(),
-                reserved_vault: pending_swap.chain_aware_deposit.deposit.clone(),
+                reserved_vault: pending_swap.chain_aware_order.order.clone(),
                 block_header,
                 txn_merkle_proof: merkle_proof,
             };
             // This swap is confirmed, move it to confirmed_swaps
-            confirmed_swaps.push(ConfirmedSwap {
-                chain_aware_deposit: pending_swap.chain_aware_deposit,
+            confirmed_swaps.push(ConfirmedPayment {
+                chain_aware_order: pending_swap.chain_aware_order,
                 payment_txid: pending_swap.payment_txid,
                 payment_block_leaf: block_leaf,
                 rift_transaction_input,

@@ -14,17 +14,17 @@ use bitcoin_core_rs::get_block_hash;
 use bitcoin_light_client_core::light_client::Header;
 use serde::{Deserialize, Serialize};
 use sol_bindings::{
-    DepositVault, LightClientPublicInput, ProofPublicInput, ProofType, SwapPublicInput,
+    LightClientPublicInput, Order, PaymentPublicInput, ProofPublicInput, ProofType,
 };
 
-use vaults::hash_deposit_vault;
+use vaults::SolidityHash;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RiftTransaction {
     // no segwit data serialized bitcoin transaction
     pub txn: Vec<u8>,
     // the vault reserved for this transaction
-    pub reserved_vault: DepositVault,
+    pub reserved_vault: Order,
     // block header where the txn is included
     pub block_header: Header,
     // merkle proof of the txn hash in the block
@@ -32,7 +32,7 @@ pub struct RiftTransaction {
 }
 
 impl RiftTransaction {
-    pub fn verify(&self) -> SwapPublicInput {
+    pub fn verify(&self) -> PaymentPublicInput {
         let block_header = self.block_header.as_bytes();
 
         // [0] Validate Bitcoin merkle proof of the transaction hash
@@ -47,7 +47,7 @@ impl RiftTransaction {
 
         // [1] Validate Bitcoin payment given the reserved deposit vault
 
-        let vault_commitment: [u8; 32] = hash_deposit_vault(&self.reserved_vault);
+        let vault_commitment: [u8; 32] = self.reserved_vault.hash();
         validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment)
             .expect("Failed to validate bitcoin payment");
 
@@ -60,10 +60,10 @@ impl RiftTransaction {
         let mut txid = txn_hash;
         txid.reverse();
 
-        SwapPublicInput {
-            depositVaultHash: vault_commitment.into(),
-            swapBitcoinBlockHash: block_hash.into(),
-            swapBitcoinTxid: txid.into(),
+        PaymentPublicInput {
+            orderHash: vault_commitment.into(),
+            paymentBitcoinBlockHash: block_hash.into(),
+            paymentBitcoinTxid: txid.into(),
         }
     }
 }
@@ -190,7 +190,7 @@ pub mod giga {
         pub fn verify(self) -> ProofPublicInput {
             match self.proof_type {
                 RustProofType::SwapOnly => {
-                    let rift_transaction_public_input = self
+                    let payment_public_inputs = self
                         .rift_transaction_input
                         .expect("rift_transaction_input is required for SwapOnly proof type")
                         .iter()
@@ -200,7 +200,7 @@ pub mod giga {
                     ProofPublicInput {
                         proofType: self.proof_type as u8,
                         lightClient: LightClientPublicInput::default(),
-                        swaps: rift_transaction_public_input,
+                        payments: payment_public_inputs,
                     }
                 }
 
@@ -213,7 +213,7 @@ pub mod giga {
                     ProofPublicInput {
                         proofType: self.proof_type as u8,
                         lightClient: light_client_public_input,
-                        swaps: Vec::default(),
+                        payments: Vec::default(),
                     }
                 }
                 RustProofType::Combined => {
@@ -221,7 +221,7 @@ pub mod giga {
                         .light_client_input
                         .expect("light_client_input is required for Combined proof type")
                         .verify::<Keccak256Hasher>(false);
-                    let rift_transaction_public_input = self
+                    let payment_public_inputs = self
                         .rift_transaction_input
                         .expect("rift_transaction_input is required for Combined proof type")
                         .iter()
@@ -231,7 +231,7 @@ pub mod giga {
                     ProofPublicInput {
                         proofType: self.proof_type as u8,
                         lightClient: light_client_public_input,
-                        swaps: rift_transaction_public_input,
+                        payments: payment_public_inputs,
                     }
                 }
             }

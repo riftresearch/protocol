@@ -27,16 +27,16 @@ contract RiftExchangeHarness is RiftExchange {
         BlockLeaf memory _tipBlockLeaf
     ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _takerFeeBips, _tipBlockLeaf) {}
 
-    function depositLiquidity(DepositLiquidityParams memory params) external returns (bytes32) {
-        bytes32 hash = super._depositLiquidity(params);
-        ERC20_BTC.safeTransferFrom(msg.sender, address(this), params.depositAmount);
+    function createOrder(CreateOrderParams memory params) external returns (bytes32) {
+        bytes32 hash = super._createOrder(params);
+        syntheticBitcoin.safeTransferFrom(msg.sender, address(this), params.depositAmount);
         return hash;
     }
 }
 
 contract RiftTest is Test, PRNG {
-    using HashLib for DepositVault;
-    using HashLib for ProposedSwap;
+    using HashLib for Order;
+    using HashLib for Payment;
     address exchangeOwner = address(0xbeef);
     RiftExchangeHarness public exchange;
     SyntheticBTC public syntheticBTC;
@@ -58,7 +58,7 @@ contract RiftTest is Test, PRNG {
             _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
-        syntheticBTC = SyntheticBTC(address(exchange.ERC20_BTC()));
+        syntheticBTC = SyntheticBTC(address(exchange.syntheticBitcoin()));
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
@@ -132,29 +132,29 @@ contract RiftTest is Test, PRNG {
         return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
     }
 
-    function _extractSingleVaultFromLogs(Vm.Log[] memory logs) internal pure returns (DepositVault memory) {
+    function _extractSingleOrderFromLogs(Vm.Log[] memory logs) internal pure returns (Order memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == IRiftExchange.VaultsUpdated.selector) {
-                return abi.decode(logs[i].data, (DepositVault[]))[0];
+            if (logs[i].topics[0] == IRiftExchange.OrdersUpdated.selector) {
+                return abi.decode(logs[i].data, (Order[]))[0];
             }
         }
-        revert("Vault not found");
+        revert("Order not found");
     }
 
-    function _extractSingleSwapFromLogs(Vm.Log[] memory logs) internal pure returns (ProposedSwap memory) {
+    function _extractSinglePaymentFromLogs(Vm.Log[] memory logs) internal pure returns (Payment memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == IRiftExchange.SwapsUpdated.selector) {
-                return abi.decode(logs[i].data, (ProposedSwap[]))[0];
+            if (logs[i].topics[0] == IRiftExchange.PaymentsUpdated.selector) {
+                return abi.decode(logs[i].data, (Payment[]))[0];
             }
         }
-        revert("Swap not found");
+        revert("Payment not found");
     }
 
-    function _depositLiquidityWithAssertions(
+    function _createOrderWithAssertions(
         uint256 depositAmount,
         uint64 expectedSats,
         uint8 confirmationBlocks
-    ) internal returns (DepositVault memory) {
+    ) internal returns (Order memory) {
         // [1] mint and approve deposit token
         syntheticBTC.mint(address(this), depositAmount);
         syntheticBTC.approve(address(exchange), depositAmount);
@@ -168,40 +168,40 @@ contract RiftTest is Test, PRNG {
 
         // [3] test deposit
         vm.recordLogs();
-        DepositLiquidityParams memory args = DepositLiquidityParams({
-            base: BaseDepositLiquidityParams({
-                btcPayoutScriptPubKey: btcPayoutScriptPubKey,
-                depositSalt: depositSalt,
+        CreateOrderParams memory args = CreateOrderParams({
+            base: BaseCreateOrderParams({
+                bitcoinScriptPubKey: btcPayoutScriptPubKey,
+                salt: depositSalt,
                 confirmationBlocks: confirmationBlocks,
                 safeBlockLeaf: mmr_proof.blockLeaf,
-                depositOwnerAddress: address(this)
+                owner: address(this)
             }),
-            specifiedPayoutAddress: address(this),
+            designatedReceiver: address(this),
             depositAmount: depositAmount,
             expectedSats: expectedSats,
             safeBlockSiblings: mmr_proof.siblings,
             safeBlockPeaks: mmr_proof.peaks
         });
 
-        exchange.depositLiquidity(args);
+        exchange.createOrder(args);
 
         // [4] grab the logs, find the vault
-        DepositVault memory createdVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
-        uint256 vaultIndex = exchange.getVaultHashesLength() - 1;
-        bytes32 _hash = exchange.vaultHashes(vaultIndex);
+        Order memory createdOrder = _extractSingleOrderFromLogs(vm.getRecordedLogs());
+        uint256 orderIndex = exchange.getTotalOrders() - 1;
+        bytes32 _hash = exchange.orderHashes(orderIndex);
 
         // [5] verify "offchain" calculated hash matches stored vault hash
-        bytes32 offchainHash = createdVault.hash();
-        assertEq(offchainHash, _hash, "Offchain vault hash should match");
+        bytes32 offchainHash = createdOrder.hash();
+        assertEq(offchainHash, _hash, "Offchain order hash should match");
 
-        // [6] verify vault index
-        assertEq(createdVault.vaultIndex, vaultIndex, "Vault index should match");
+        // [6] verify order index
+        assertEq(createdOrder.index, orderIndex, "Order index should match");
 
         // [7] verify caller has no balance left
         assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no balance left");
 
         // [8] verify owner address
-        assertEq(createdVault.ownerAddress, address(this), "Owner address should match");
-        return createdVault;
+        assertEq(createdOrder.owner, address(this), "Owner address should match");
+        return createdOrder;
     }
 }

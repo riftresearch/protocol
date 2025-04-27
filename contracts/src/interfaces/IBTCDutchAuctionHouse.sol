@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicensed
 pragma solidity =0.8.28;
 
-import {IRiftExchange, BaseDepositLiquidityParams} from "./IRiftExchange.sol";
+import {IRiftExchange, BaseCreateOrderParams} from "./IRiftExchange.sol";
 import {BlockLeaf} from "./IBitcoinLightClient.sol";
 
 enum DutchAuctionState {
@@ -11,21 +11,33 @@ enum DutchAuctionState {
 }
 
 struct DutchAuction {
-    uint256 auctionIndex;
-    BaseDepositLiquidityParams baseDepositParams;
+    // The index of the auction in the auction hash array
+    uint256 index;
+    // The base parameters for the auction, to be used when the order is created
+    BaseCreateOrderParams baseCreateOrderParams;
+    // The parameters that define the Dutch auction (start/end amounts, decay, deadline)
     DutchAuctionParams dutchAuctionParams;
+    // The amount of ERC‑20 BTC (sat‑denominated token) supplied by the auction creator
     uint256 depositAmount;
+    // The block number at which the auction was started
     uint256 startBlock;
+    // The timestamp at which the auction was started
     uint256 startTimestamp;
+    // The state of the auction
     DutchAuctionState state;
 }
 
 struct DutchAuctionParams {
-    uint256 startBtcOut; // the starting amount of BTC the auction will sell
-    uint256 endBtcOut; // the ending amount of BTC the auction will sell
-    uint256 decayBlocks; // the number of blocks price will decay over
-    uint256 deadline; // the deadline of the auction (as a timestamp)
-    address fillerWhitelistContract; // the whitelist contract to use for validating the filler
+    // The starting amount of BTC the auction will sell 
+    uint256 startBtcOut;
+    // The ending amount of BTC the auction will sell
+    uint256 endBtcOut;
+    // The number of blocks price will decay over
+    uint256 decayBlocks;
+    // The deadline of the auction (as a timestamp)
+    uint256 deadline;
+    // The whitelist contract to use for validating the filler
+    address fillerWhitelistContract;
 }
 
 
@@ -35,7 +47,6 @@ struct DutchAuctionParams {
 interface IBTCDutchAuctionHouse is IRiftExchange {
 
     event AuctionUpdated(DutchAuction auction);
-
     error InvalidTickSize();
     error InvalidStartBtcOut();
     error InvalidDeadline();
@@ -46,18 +57,18 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     error FillerNotWhitelisted();
 
     /// @notice Returns the hash of the auction at the specified index.
-    /// @param auctionIndex The index of the auction.
-    /// @return The keccak256 hash of the auction struct.
-    function auctionHashes(uint256 auctionIndex) external view returns (bytes32);
+    /// @param index The index of the auction.
+    /// @return auctionHash hash of the auction struct.
+    function auctionHashes(uint256 index) external view returns (bytes32 auctionHash);
 
     /// @notice Starts a new Dutch auction.
     /// @param depositAmount     Amount of ERC‑20 BTC (sat‑denominated token) supplied by the auction creator.
     /// @param auctionParams     Parameters that define the Dutch auction (start/end amounts, decay, deadline).
-    /// @param baseDepositParams Standard RiftExchange deposit‑liquidity parameters.
+    /// @param baseCreateOrderParams Standard RiftExchange create‑order parameters.
     function startAuction(
         uint256 depositAmount,
         DutchAuctionParams calldata auctionParams, 
-        BaseDepositLiquidityParams calldata baseDepositParams 
+        BaseCreateOrderParams calldata baseCreateOrderParams 
     ) external;
 
     /// @notice Fills a live Dutch auction at the current price.
@@ -72,7 +83,7 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
         bytes32[] calldata safeBlockPeaks
     ) external;
 
-    /// @notice Withdraws the creator's deposit from an un‑filled, expired auction.
+    /// @notice Refunds the creator's deposit from an un‑filled, expired auction.
     /// @param auction Full auction struct (must match on‑chain hash).
-    function withdrawFromExpiredAuction(DutchAuction calldata auction) external;
+    function refundAuction(DutchAuction calldata auction) external;
 } 

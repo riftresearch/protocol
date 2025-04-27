@@ -3,19 +3,18 @@ pragma solidity =0.8.28;
 
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
-import {DepositVault} from "../interfaces/IRiftExchange.sol";
-import {ProposedSwap} from "../interfaces/IRiftExchange.sol";
+import {Order, Payment} from "../interfaces/IRiftExchange.sol";
 import {BlockLeaf} from "../interfaces/IBitcoinLightClient.sol";
 import {DutchAuction} from "../interfaces/IBTCDutchAuctionHouse.sol";
 
 
 library HashLib {
-    function hash(DepositVault memory vault) internal pure returns (bytes32) {
-        return EfficientHashLib.hash(abi.encode(vault));
+    function hash(Order memory order) internal pure returns (bytes32) {
+        return EfficientHashLib.hash(abi.encode(order));
     }
 
-    function hash(ProposedSwap memory swap) internal pure returns (bytes32) {
-        return EfficientHashLib.hash(abi.encode(swap));
+    function hash(Payment memory payment) internal pure returns (bytes32) {
+        return EfficientHashLib.hash(abi.encode(payment));
     }
 
     // TODO: determine if this is cheaper than just abi.encode'ing the struct

@@ -13,13 +13,13 @@ use bitcoin::{
     ScriptBuf, Sequence, TxOut, Txid,
 };
 use rift_core::payments::remove_script_pubkey_contract_padding;
-use rift_core::vaults::hash_deposit_vault;
+use rift_core::vaults::SolidityHash;
 
 use crate::errors::{Result, RiftSdkError};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::{stream, StreamExt};
-use sol_bindings::DepositVault;
+use sol_bindings::Order;
 use std::io::Read;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -147,14 +147,14 @@ pub fn serialize_no_segwit(tx: &Transaction) -> eyre::Result<Vec<u8>> {
 }
 
 pub fn build_rift_payment_transaction(
-    deposit_vault: &DepositVault,
+    deposit_vault: &Order,
     in_txid: &Txid,
     transaction: &Transaction,
     in_txvout: u32,
     wallet: &P2WPKHBitcoinWallet,
     fee_sats: u64,
 ) -> Result<Transaction> {
-    let vault_commitment = hash_deposit_vault(deposit_vault);
+    let vault_commitment = deposit_vault.hash();
     let total_lp_sum_btc: u64 = deposit_vault.expectedSats;
 
     let vin_sats = transaction.output[in_txvout as usize].value.to_sat();
@@ -166,7 +166,7 @@ pub fn build_rift_payment_transaction(
 
     // Add liquidity provider outputs
     let amount = deposit_vault.expectedSats;
-    let script_pubkey = &deposit_vault.btcPayoutScriptPubKey.0;
+    let script_pubkey = &deposit_vault.bitcoinScriptPubKey.0;
 
     // remove padding
     let script_pubkey = remove_script_pubkey_contract_padding(script_pubkey).unwrap();

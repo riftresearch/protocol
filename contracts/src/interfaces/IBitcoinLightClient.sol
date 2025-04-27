@@ -3,22 +3,35 @@ pragma solidity =0.8.28;
 
 // --- Structs ---
 
-/// @notice Represents a leaf node in the Bitcoin block header MMR.
 struct BlockLeaf {
+    // The hash of the Bitcoin block
     bytes32 blockHash;
+    // The height of the Bitcoin block
     uint32 height;
+    // The cumulative chainwork of the Bitcoin block
     uint256 cumulativeChainwork;
 }
 
-/// @notice Stores the tip block leaf associated with an MMR root.
 struct BitcoinCheckpoint {
+    // Whether the checkpoint has been established
     bool established;
+    // The tip block leaf associated with the MMR root
     BlockLeaf tipBlockLeaf;
 }
 
-/// @title IBitcoinLightClient
-/// @notice Interface for the BitcoinLightClient contract.
+/**
+ * @title The interface for the Bitcoin Light Client 
+ * @notice A Bitcoin light client implementation that maintains a Merkle Mountain Range (MMR)
+ * of Bitcoin blocks for verification purposes
+ *
+ * Each block is stored as a leaf in the MMR containing:
+ * - Block hash
+ * - Block height
+ * - Cumulative chainwork
+ * Updates to the MMR root rely on a ZK proof that the new leaves satisfy the Bitcoin Consensus rules.
+ */
 interface IBitcoinLightClient {
+
     // --- Errors ---
 
     /// @notice Thrown when a provided block is not found in the verified chain (MMR).
@@ -33,24 +46,34 @@ interface IBitcoinLightClient {
     // --- Events ---
 
     /// @notice Emitted when the light client's MMR root is successfully updated.
-    /// @param priorMmrRoot The MMR root before the update.
+    /// @param priorMmrRoot The MMR root from which the update is built. 
     /// @param newMmrRoot The new MMR root after the update.
-    /// @param compressedBlockLeaves Compressed block leaf data included in the update proof.
-    event BitcoinLightClientUpdated(bytes32 priorMmrRoot, bytes32 newMmrRoot, bytes compressedBlockLeaves);
+    event BitcoinLightClientUpdated(bytes32 priorMmrRoot, bytes32 newMmrRoot);
 
 
-    /// @notice Returns the current Merkle Mountain Range (MMR) root hash representing the tip of the verified Bitcoin chain.
-    /// @return The current MMR root.
-    function mmrRoot() external view returns (bytes32);
+    /// @notice The MMR root the light client is currently attesting as the best chain.
+    /// @return root The current MMR root.
+    function mmrRoot() external view returns (bytes32 root);
 
     /// @notice Retrieves checkpoint information for a given MMR root.
-    /// @param mmrRootHash The MMR root to query.
-    /// @return established Whether the checkpoint has been established.
-    /// @return tipBlockLeaf The tip block leaf.
-    function checkpoints(bytes32 mmrRootHash) external view returns (bool established, BlockLeaf memory tipBlockLeaf);
+    /// @param _mmrRoot The MMR root to query.
+    /// @return established Whether the checkpoint has been established (ie. _mmrRoot was the light client mmrRoot at one point)
+    /// @return tipBlockLeaf The tip block leaf associated with the root
+    function checkpoints(bytes32 _mmrRoot) external view returns (bool established, BlockLeaf memory tipBlockLeaf);
 
 
     /// @notice Returns the block height of the current tip of the verified chain.
-    /// @return The height of the highest block verified by the light client.
-    function getLightClientHeight() external view returns (uint32);
+    /// @return height The height of the highest block verified by the light client.
+    function lightClientHeight() external view returns (uint32 height);
+
+
+    /// @notice Verifies that a block is included in the verified chain (MMR).
+    /// @param blockLeaf The block leaf to verify.
+    /// @param siblings The sibling nodes of the block leaf in the MMR.
+    /// @param peaks The peak nodes of the block leaf in the MMR.
+    function verifyBlockInclusion(
+        BlockLeaf memory blockLeaf,
+        bytes32[] memory siblings,
+        bytes32[] memory peaks
+    ) external view;
 } 

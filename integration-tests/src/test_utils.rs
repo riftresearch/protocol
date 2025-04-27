@@ -35,8 +35,7 @@ use rift_sdk::{
     txn_builder, DatabaseLocation,
 };
 use sol_bindings::{
-    BaseDepositLiquidityParams, BlockLeaf as ContractBlockLeaf, DepositLiquidityParams,
-    DepositVault,
+    BaseCreateOrderParams, BlockLeaf as ContractBlockLeaf, CreateOrderParams, Order,
 };
 
 /// Holds the components of a multichain account including secret bytes and wallets.
@@ -98,7 +97,7 @@ pub async fn create_deposit(
 ) -> (
     devnet::RiftDevnet,
     Arc<RiftExchangeHarnessWebsocket>,
-    DepositLiquidityParams,
+    CreateOrderParams,
     MultichainAccount,
     TransactionBroadcaster,
 ) {
@@ -142,8 +141,7 @@ pub async fn create_deposit(
         .decimals()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
 
     // Approve the RiftExchange to spend the maker's tokens
     let approve_call = token_contract.approve(*rift_exchange.address(), U256::MAX);
@@ -171,11 +169,10 @@ pub async fn create_deposit(
     let light_client_height = devnet
         .ethereum
         .rift_exchange_contract
-        .getLightClientHeight()
+        .lightClientHeight()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
 
     let mmr_root = devnet
         .ethereum
@@ -183,8 +180,8 @@ pub async fn create_deposit(
         .mmrRoot()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
+
     println!("Light client height (queried): {:?}", light_client_height);
     println!("Mmr root (queried): {:?}", mmr_root);
 
@@ -192,12 +189,12 @@ pub async fn create_deposit(
 
     let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
 
-    let deposit_params = DepositLiquidityParams {
-        base: BaseDepositLiquidityParams {
-            depositOwnerAddress: maker.ethereum_address,
-            btcPayoutScriptPubKey: padded_script.into(),
-            depositSalt: [0x44; 32].into(), // this can be anything
-            confirmationBlocks: 2, // require 2 confirmations (1 block to mine + 1 additional)
+    let deposit_params = CreateOrderParams {
+        base: BaseCreateOrderParams {
+            owner: maker.ethereum_address,
+            bitcoinScriptPubKey: padded_script.into(),
+            salt: [0x44; 32].into(), // this can be anything
+            confirmationBlocks: 2,   // require 2 confirmations (1 block to mine + 1 additional)
             // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
             safeBlockLeaf: ContractBlockLeaf {
                 blockHash: safe_leaf.blockHash,
@@ -205,7 +202,7 @@ pub async fn create_deposit(
                 cumulativeChainwork: safe_leaf.cumulativeChainwork,
             },
         },
-        specifiedPayoutAddress: maker.ethereum_address,
+        designatedReceiver: maker.ethereum_address,
         depositAmount: deposit_amount,
         expectedSats: expected_sats,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
@@ -224,7 +221,7 @@ pub async fn create_deposit(
 pub async fn send_bitcoin_for_deposit(
     devnet: &RiftDevnet,
     taker: &MultichainAccount,
-    vault: &DepositVault,
+    vault: &Order,
 ) {
     let dealed_amount = vault.expectedSats * 2; // deal double so we have plenty to cover the fee
 

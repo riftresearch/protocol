@@ -10,7 +10,7 @@ import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
-
+import {OrderValidationLib} from "../../src/libraries/OrderValidationLib.sol";
 
 /// @title BTCDutchAuctionHouse fuzz‑tests (updated for v0.8.28 contracts)
 /// @notice Exercises `startAuction` with fuzzed inputs and checks that
@@ -78,17 +78,17 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
     ) internal returns (
         DutchAuction memory auction,
         uint256 _depositAmount,
-        BaseDepositLiquidityParams memory baseParams,
+        BaseCreateOrderParams memory baseParams,
         HelperTypes.MMRProof memory mmrProof
     ) {
         /* ── Sanitize fuzzed inputs ─────────────────────────────── */
         decayBlocks = uint64(bound(decayBlocks, 1, 1_000_000));
-        startBtcOut = uint64(bound(startBtcOut, auctionHouse.MIN_OUTPUT_SATS() + 1, type(uint64).max));
-        endBtcOut = uint64(bound(endBtcOut, auctionHouse.MIN_OUTPUT_SATS(), startBtcOut - 1));
+        startBtcOut = uint64(bound(startBtcOut, OrderValidationLib.MIN_OUTPUT_SATS + 1, type(uint64).max));
+        endBtcOut = uint64(bound(endBtcOut, OrderValidationLib.MIN_OUTPUT_SATS + 1, startBtcOut - 1));
 
         confirmationBlocks = uint8(bound(
             confirmationBlocks,
-            auctionHouse.MIN_CONFIRMATION_BLOCKS(),
+            OrderValidationLib.MIN_CONFIRMATION_BLOCKS,
             type(uint8).max
         ));
 
@@ -104,10 +104,10 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         /* ── Prepare params ──────────────────────────────────────── */
         mmrProof = _generateFakeBlockMMRProofFFI(0);
 
-        baseParams = BaseDepositLiquidityParams({
-            depositOwnerAddress:       address(this),
-            btcPayoutScriptPubKey:     _generateBtcPayoutScriptPubKey(),
-            depositSalt:               bytes32(uint256(keccak256(abi.encodePacked(block.timestamp, depositAmount)))),
+        baseParams = BaseCreateOrderParams({
+            owner:                     address(this),
+            bitcoinScriptPubKey:       _generateBtcPayoutScriptPubKey(),
+            salt:                      bytes32(uint256(keccak256(abi.encodePacked(block.timestamp, depositAmount)))),
             confirmationBlocks:        confirmationBlocks,
             safeBlockLeaf:             mmrProof.blockLeaf
         });
@@ -142,8 +142,8 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
 
         // [3] Hash correctness
         DutchAuction memory expectedAuction = DutchAuction({
-            auctionIndex:       0,
-            baseDepositParams:  baseParams,
+            index:       0,
+            baseCreateOrderParams:  baseParams,
             dutchAuctionParams: auctionParams,
             depositAmount:      depositAmount,
             startBlock:         startBlock,
@@ -256,22 +256,22 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         assertEq(uint(filledAuction.state), uint(DutchAuctionState.Filled), "Auction state should be Filled");
 
         // [2] Hash Update
-        bytes32 storedHash = auctionHouse.auctionHashes(auction.auctionIndex);
+        bytes32 storedHash = auctionHouse.auctionHashes(auction.index);
         assertEq(storedHash, filledAuction.hash(), "Stored hash mismatch after fill");
 
         // [3] Internal _depositLiquidity call check (via VaultsUpdated event)
-        bool foundVaultUpdate = false;
+        bool foundOrderUpdate = false;
         for (uint i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == IRiftExchange.VaultsUpdated.selector) {
-                (DepositVault[] memory vaults, VaultUpdateContext context) = 
-                    abi.decode(logs[i].data, (DepositVault[], VaultUpdateContext));
-                assertEq(uint(context), uint(VaultUpdateContext.Created), "Vault context should be Created");
-                assertTrue(vaults.length > 0, "No vaults in VaultsUpdated event");
-                foundVaultUpdate = true;
+            if (logs[i].topics[0] == IRiftExchange.OrdersUpdated.selector) {
+                (Order[] memory orders, OrderUpdateContext context) = 
+                    abi.decode(logs[i].data, (Order[], OrderUpdateContext));
+                assertEq(uint(context), uint(OrderUpdateContext.Created), "Order context should be Created");
+                assertTrue(orders.length > 0, "No orders in OrdersUpdated event");
+                foundOrderUpdate = true;
                 break;
             }
         }
-        assertTrue(foundVaultUpdate, "VaultsUpdated event not found after fillAuction");
+        assertTrue(foundOrderUpdate, "VaultsUpdated event not found after fillAuction");
 
         // [4] Token balance check (should remain unchanged as tokens are now in a vault)
         assertEq(syntheticBTC.balanceOf(address(auctionHouse)), preFillAuctionHouseBalance, "Auction house balance changed unexpectedly on fill");

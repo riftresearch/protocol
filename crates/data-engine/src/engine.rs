@@ -1,9 +1,21 @@
 use alloy::{
-    primitives::Address,
-    providers::Provider,
-    pubsub::PubSubFrontend,
-    rpc::types::{BlockNumberOrTag, Filter, Log},
-    sol_types::SolEvent,
+    network::Ethereum,
+    primitives::{Address, FixedBytes},
+    providers::{
+        ext::{DebugApi, TraceApi},
+        DynProvider, Provider, ProviderBuilder,
+    },
+    rpc::types::{
+        trace::{
+            geth::{
+                GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
+                GethDefaultTracingOptions,
+            },
+            parity::Action,
+        },
+        BlockNumberOrTag, Filter, Log,
+    },
+    sol_types::{SolCall, SolEvent},
 };
 use bitcoin_light_client_core::{
     hasher::{Digest, Keccak256Hasher},
@@ -13,7 +25,10 @@ use eyre::Result;
 use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
-use sol_bindings::{BitcoinLightClientUpdated, DepositVault, SwapsUpdated, VaultsUpdated};
+use sol_bindings::{
+    submitPaymentProofs_1Call, updateLightClientCall, BitcoinLightClientUpdated, Order,
+    OrdersUpdated, PaymentsUpdated, RiftExchangeHarnessCalls,
+};
 use tokio_util::task::{task_tracker, TaskTracker};
 
 use core::panic;
@@ -32,9 +47,9 @@ use crate::{
         add_deposit, add_proposed_swap, get_deposits_for_recipient, get_otc_swap_by_deposit_id,
         get_proposed_swap_id, get_swaps_ready_to_be_released, get_virtual_swaps,
         setup_swaps_database, update_deposit_to_withdrawn, update_proposed_swap_to_released,
-        ChainAwareProposedSwapWithDeposit,
+        ChainAwarePaymentWithOrder,
     },
-    models::{ChainAwareDeposit, ChainAwareProposedSwap},
+    models::ChainAwareOrder,
 };
 use crate::{
     db::{get_deposit_by_id, get_oldest_active_deposit},
@@ -99,7 +114,7 @@ impl ContractDataEngine {
     /// Internally this uses seed() and then start_server().
     pub async fn start(
         database_location: &DatabaseLocation,
-        provider: Arc<dyn Provider<PubSubFrontend>>,
+        provider: DynProvider,
         rift_exchange_address: Address,
         deploy_block_number: u64,
         checkpoint_leaves: Vec<BlockLeaf>,
@@ -124,7 +139,7 @@ impl ContractDataEngine {
     /// This method will only spawn the event listener once.
     pub async fn start_event_listener(
         &mut self,
-        provider: Arc<dyn Provider<PubSubFrontend>>,
+        provider: DynProvider,
         rift_exchange_address: Address,
         deploy_block_number: u64,
         join_set: &mut JoinSet<eyre::Result<()>>,
@@ -187,7 +202,7 @@ impl ContractDataEngine {
         &self,
         address: Address,
         deposit_block_cutoff: u64,
-    ) -> Result<Vec<DepositVault>> {
+    ) -> Result<Vec<Order>> {
         get_deposits_for_recipient(
             &self.swap_database_connection,
             address,
@@ -209,7 +224,7 @@ impl ContractDataEngine {
     pub async fn get_oldest_active_deposit(
         &self,
         current_block_timestamp: u64,
-    ) -> Result<Option<ChainAwareDeposit>> {
+    ) -> Result<Option<ChainAwareOrder>> {
         get_oldest_active_deposit(&self.swap_database_connection, current_block_timestamp).await
     }
 
@@ -223,7 +238,7 @@ impl ContractDataEngine {
     pub async fn get_swaps_ready_to_be_released(
         &self,
         current_block_timestamp: u64,
-    ) -> Result<Vec<ChainAwareProposedSwapWithDeposit>> {
+    ) -> Result<Vec<ChainAwarePaymentWithOrder>> {
         get_swaps_ready_to_be_released(&self.swap_database_connection, current_block_timestamp)
             .await
     }
@@ -274,10 +289,7 @@ impl ContractDataEngine {
             .map_err(|e| eyre::eyre!(e))
     }
 
-    pub async fn get_deposit_by_id(
-        &self,
-        deposit_id: [u8; 32],
-    ) -> Result<Option<ChainAwareDeposit>> {
+    pub async fn get_deposit_by_id(&self, deposit_id: [u8; 32]) -> Result<Option<ChainAwareOrder>> {
         get_deposit_by_id(&self.swap_database_connection, deposit_id).await
     }
 }
@@ -290,7 +302,7 @@ fn get_qualified_swaps_database_path(database_location: String) -> String {
 
 // This will run indefinitely
 pub async fn listen_for_events(
-    provider: Arc<dyn Provider<PubSubFrontend>>,
+    provider: DynProvider,
     db_conn: &Arc<tokio_rusqlite::Connection>,
     checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: Address,
@@ -317,9 +329,15 @@ pub async fn listen_for_events(
 
     // Process historical logs
     for log in historical_logs.iter() {
-        process_log(log, db_conn, &checkpointed_block_tree).await?;
+        process_log(
+            log,
+            db_conn,
+            &checkpointed_block_tree,
+            provider.clone(),
+            rift_exchange_address,
+        )
+        .await?;
     }
-
     info!("Processed {} historical logs", historical_logs.len());
 
     // Get the latest block number again to ensure we don't miss any blocks
@@ -347,7 +365,14 @@ pub async fn listen_for_events(
 
         // Process gap logs
         for log in gap_logs {
-            process_log(&log, db_conn, &checkpointed_block_tree).await?;
+            process_log(
+                &log,
+                db_conn,
+                &checkpointed_block_tree,
+                provider.clone(),
+                rift_exchange_address,
+            )
+            .await?;
         }
     }
     // TODO: This can potentially drop blocks, update this to subscribe BEFORE pulling historical logs
@@ -376,7 +401,14 @@ pub async fn listen_for_events(
 
     // Now process the subscription stream
     while let Some(log) = stream.next().await {
-        process_log(&log, db_conn, &checkpointed_block_tree).await?;
+        process_log(
+            &log,
+            db_conn,
+            &checkpointed_block_tree,
+            provider.clone(),
+            rift_exchange_address,
+        )
+        .await?;
     }
 
     println!("Subscription stream closed");
@@ -388,6 +420,8 @@ async fn process_log(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
     checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
+    provider: DynProvider,
+    rift_exchange_address: Address,
 ) -> Result<()> {
     info!("Processing log: {:?}", log);
 
@@ -397,20 +431,25 @@ async fn process_log(
         .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
 
     match *topic {
-        VaultsUpdated::SIGNATURE_HASH => {
-            info_span!("handle_vault_updated")
-                .in_scope(|| handle_vault_updated_event(log, db_conn))
+        OrdersUpdated::SIGNATURE_HASH => {
+            info_span!("handle_order_updated")
+                .in_scope(|| handle_order_updated_event(log, db_conn))
                 .await?;
         }
-        SwapsUpdated::SIGNATURE_HASH => {
-            info_span!("handle_swap_updated")
-                .in_scope(|| handle_swap_updated_event(log, db_conn))
+        PaymentsUpdated::SIGNATURE_HASH => {
+            info_span!("handle_payment_updated")
+                .in_scope(|| handle_payment_updated_event(log, db_conn))
                 .await?;
         }
         BitcoinLightClientUpdated::SIGNATURE_HASH => {
             info_span!("handle_bitcoin_light_client_updated")
                 .in_scope(|| {
-                    handle_bitcoin_light_client_updated_event(log, checkpointed_block_tree.clone())
+                    handle_bitcoin_light_client_updated_event(
+                        log,
+                        provider.clone(),
+                        checkpointed_block_tree.clone(),
+                        rift_exchange_address,
+                    )
                 })
                 .await?;
         }
@@ -422,33 +461,33 @@ async fn process_log(
     Ok(())
 }
 
-async fn handle_vault_updated_event(
+async fn handle_order_updated_event(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
 ) -> Result<()> {
-    info!("Received VaultUpdated event...");
+    info!("Received OrderUpdated event...");
 
     // Propagate any decoding error.
-    let decoded = VaultsUpdated::decode_log(&log.inner, false)
-        .map_err(|e| eyre::eyre!("Failed to decode VaultUpdated event: {:?}", e))?;
+    let decoded = OrdersUpdated::decode_log(&log.inner)
+        .map_err(|e| eyre::eyre!("Failed to decode OrderUpdated event: {:?}", e))?;
 
-    let deposit_vaults = decoded.data.vaults;
+    let orders = decoded.data.orders;
     let log_txid = log
         .transaction_hash
-        .ok_or_else(|| eyre::eyre!("Missing txid in VaultUpdated event"))?;
+        .ok_or_else(|| eyre::eyre!("Missing txid in OrderUpdated event"))?;
     let log_block_number = log
         .block_number
-        .ok_or_else(|| eyre::eyre!("Missing block number in VaultUpdated event"))?;
+        .ok_or_else(|| eyre::eyre!("Missing block number in OrderUpdated event"))?;
     let log_block_hash = log
         .block_hash
-        .ok_or_else(|| eyre::eyre!("Missing block hash in VaultUpdated event"))?;
+        .ok_or_else(|| eyre::eyre!("Missing block hash in OrderUpdated event"))?;
 
-    for deposit_vault in deposit_vaults {
+    for order in orders {
         match decoded.data.context {
-            0 /* VaultUpdateContext::Created */ => {
+            0 /* OrderUpdateContext::Created */ => {
                 add_deposit(
                     db_conn,
-                    deposit_vault,
+                    order,
                     log_block_number,
                     log_block_hash.into(),
                     log_txid.into(),
@@ -456,10 +495,10 @@ async fn handle_vault_updated_event(
                 .await
                 .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
             }
-            1 /* VaultUpdateContext::Withdraw */ => {
+            1 /* OrderUpdateContext::Refunded */ => {
                 update_deposit_to_withdrawn(
                     db_conn,
-                    deposit_vault.salt.into(),
+                    order.salt.into(),
                     log_txid.into(),
                     log_block_number,
                     log_block_hash.into(),
@@ -474,15 +513,15 @@ async fn handle_vault_updated_event(
     Ok(())
 }
 
-async fn handle_swap_updated_event(
+async fn handle_payment_updated_event(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
 ) -> Result<()> {
-    info!("Received SwapUpdated event");
+    info!("Received PaymentUpdated event");
 
     // Propagate any decoding error.
-    let decoded = SwapsUpdated::decode_log(&log.inner, false)
-        .map_err(|e| eyre::eyre!("Failed to decode SwapUpdated event: {:?}", e))?;
+    let decoded = PaymentsUpdated::decode_log(&log.inner)
+        .map_err(|e| eyre::eyre!("Failed to decode PaymentUpdated event: {:?}", e))?;
 
     let log_txid = log
         .transaction_hash
@@ -496,14 +535,14 @@ async fn handle_swap_updated_event(
 
     match decoded.data.context {
         0 /* SwapUpdateContext::Created */ => {
-            for swap in decoded.data.swaps {
+            for payment in decoded.data.payments {
                 info!(
-                    "Received SwapUpdated event: proposed_swap_id = {:?}",
-                    get_proposed_swap_id(&swap)
+                    "Received PaymentUpdated event: proposed_swap_id = {:?}",
+                    get_proposed_swap_id(&payment)
                 );
                 add_proposed_swap(
                     db_conn,
-                    &swap,
+                    &payment,
                     log_block_number,
                     log_block_hash.into(),
                     log_txid.into(),
@@ -513,10 +552,10 @@ async fn handle_swap_updated_event(
             }
         }
         1 /* SwapUpdateContext::Complete */ => {
-            for swap in decoded.data.swaps {
+            for payment in decoded.data.payments {
                 update_proposed_swap_to_released(
                     db_conn,
-                    get_proposed_swap_id(&swap),
+                    get_proposed_swap_id(&payment),
                     log_txid.into(),
                     log_block_number,
                     log_block_hash.into(),
@@ -532,18 +571,31 @@ async fn handle_swap_updated_event(
 
 async fn handle_bitcoin_light_client_updated_event(
     log: &Log,
+    provider: DynProvider,
     checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
+    rift_exchange_address: Address,
 ) -> Result<()> {
     info!("Received BitcoinLightClientUpdated event");
+    let txid = log
+        .transaction_hash
+        .ok_or_else(|| eyre::eyre!("Missing txid in BitcoinLightClientUpdated event"))?;
 
     // Propagate any decoding error.
-    let decoded = BitcoinLightClientUpdated::decode_log(&log.inner, false)
+    let decoded = BitcoinLightClientUpdated::decode_log(&log.inner)
         .map_err(|e| eyre::eyre!("Failed to decode BitcoinLightClientUpdated event: {:?}", e))?;
 
     let block_tree_data = &decoded.data;
     let prior_mmr_root = block_tree_data.priorMmrRoot.0;
     let new_mmr_root = block_tree_data.newMmrRoot.0;
-    let compressed_block_leaves = block_tree_data.compressedBlockLeaves.0.to_vec();
+    // TODO: We need to get the compressed block leaves from the calldata using trace_transaction
+    let compressed_block_leaves = extract_compressed_block_leaves_from_light_client_updating_tx(
+        provider,
+        rift_exchange_address,
+        &prior_mmr_root,
+        &new_mmr_root,
+        txid,
+    )
+    .await?;
     let block_leaves = decompress_block_leaves(&compressed_block_leaves);
 
     {
@@ -568,4 +620,80 @@ async fn handle_bitcoin_light_client_updated_event(
     }
 
     Ok(())
+}
+
+/// Extracts the calldata from a light client updating transaction.
+/// Done by tracing the transaction and finding the calldata which has
+/// has a 4 byte selector for any function that fires the LightClientUpdated event.
+/// These functions are:
+/// - updateLightClient
+/// - submitPaymentProofs()
+
+async fn extract_compressed_block_leaves_from_light_client_updating_tx(
+    provider: DynProvider,
+    rift_exchange_address: Address,
+    expected_prior_mmr_root: &[u8; 32],
+    expected_new_mmr_root: &[u8; 32],
+    txid: FixedBytes<32>,
+) -> Result<Vec<u8>> {
+    /*
+        let call_tracer_options = GethDebugTracingOptions {
+            config: GethDefaultTracingOptions::default(),
+            tracer: Some(GethDebugTracerType::BuiltInTracer(
+                GethDebugBuiltInTracerType::CallTracer,
+            )),
+            ..Default::default()
+        };
+    */
+
+    let transaction_trace = provider.trace_transaction(txid).await?;
+
+    let compressed_block_leaves = transaction_trace
+        .iter()
+        // Grab all CALL
+        .filter_map(|call| match &call.trace.action {
+            Action::Call(call) => Some(call),
+            _ => None,
+        })
+        // Only calls to the rift exchange address
+        .filter_map(|call| {
+            if call.to == rift_exchange_address {
+                Some(call.input.clone())
+            } else {
+                None
+            }
+        })
+        // Only calldata that starts with the submitPaymentProofs_1 selector OR the updateLightClient selector
+        .filter_map(|calldata| {
+            if calldata.len() < 4 {
+                return None;
+            }
+            let selector: &[u8; 4] = &calldata[0..4].try_into().unwrap();
+            match *selector {
+                submitPaymentProofs_1Call::SELECTOR => {
+                    submitPaymentProofs_1Call::abi_decode(&calldata)
+                        .map(|decoded| decoded.blockProofParams)
+                        .ok()
+                }
+                updateLightClientCall::SELECTOR => updateLightClientCall::abi_decode(&calldata)
+                    .map(|decoded| decoded.blockProofParams)
+                    .ok(),
+                _ => None,
+            }
+        })
+        // Filter out any calldata not strictly related to this specific event
+        .filter_map(|block_proof_params| {
+            if block_proof_params.priorMmrRoot != expected_prior_mmr_root {
+                return None;
+            }
+            if block_proof_params.newMmrRoot != expected_new_mmr_root {
+                return None;
+            }
+            Some(block_proof_params.compressedBlockLeaves)
+        })
+        .collect::<Vec<_>>();
+    let compressed_block_leaves = compressed_block_leaves.first().ok_or_else(|| {
+        eyre::eyre!("No compressed block leaves found in light client updating tx")
+    })?;
+    Ok(compressed_block_leaves.to_vec())
 }

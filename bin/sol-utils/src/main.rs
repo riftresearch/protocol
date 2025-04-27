@@ -284,7 +284,7 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
 
 async fn hash_block_leaf(abi_encoded_leaf: &str) {
     let abi_encoded_leaf = hex::decode(abi_encoded_leaf.strip_prefix("0x").unwrap()).unwrap();
-    let sol_leaf = sol_bindings::BlockLeaf::abi_decode(&abi_encoded_leaf, false).unwrap();
+    let sol_leaf = sol_bindings::BlockLeaf::abi_decode(&abi_encoded_leaf).unwrap();
 
     let core_leaf = BlockLeaf::new(
         sol_leaf.blockHash.into(),

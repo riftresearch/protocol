@@ -2,7 +2,7 @@
 pragma solidity =0.8.28;
 
 import {IRiftAuctionAdaptor} from "./interfaces/IRiftAuctionAdaptor.sol";
-import {BaseDepositLiquidityParams} from "./interfaces/IRiftExchange.sol";
+import {BaseCreateOrderParams} from "./interfaces/IRiftExchange.sol";
 import {DutchAuctionParams} from "./interfaces/IBTCDutchAuctionHouse.sol";
 
 import {CoreAdapter} from "bundler3/src/adapters/CoreAdapter.sol";
@@ -19,7 +19,7 @@ contract RiftAuctionAdaptor is IRiftAuctionAdaptor, CoreAdapter {
 	using FixedPointMathLib for uint256;
 
 	/// @notice The synthetic BTC token contract.
-	address public immutable sBTC;
+	address public immutable syntheticBitcoin;
 
 	/// @notice The BTC Dutch Auction House contract.
 	address public immutable btcAuctionHouse;
@@ -27,7 +27,7 @@ contract RiftAuctionAdaptor is IRiftAuctionAdaptor, CoreAdapter {
 	// --- Constructor ---
 	constructor(address _bundler3, address _btcAuctionHouse) CoreAdapter(_bundler3) {
 		btcAuctionHouse = _btcAuctionHouse;
-		sBTC = BTCDutchAuctionHouse(_btcAuctionHouse).ERC20_BTC();
+		syntheticBitcoin = BTCDutchAuctionHouse(_btcAuctionHouse).syntheticBitcoin();
 	}
 
 	// --- Auction ---
@@ -46,19 +46,19 @@ contract RiftAuctionAdaptor is IRiftAuctionAdaptor, CoreAdapter {
 		uint64 decayBlocks,
 		uint64 deadline,
 		address fillerWhitelistContract,
-		BaseDepositLiquidityParams calldata baseParams
+		BaseCreateOrderParams calldata baseParams
 	) external onlyBundler3 {
-		address _sBTC = sBTC;
+		address _syntheticBitcoin = syntheticBitcoin;
 		address _btcAuctionHouse = btcAuctionHouse;
-		uint256 sBTCBalance = _sBTC.balanceOf(address(this));
+		uint256 syntheticBitcoinBalance = _syntheticBitcoin.balanceOf(address(this));
 
-		(uint256 startAmount, uint256 endAmount) = _computeAuctionRange(startsBTCperBTCRate, endcbsBTCperBTCRate, sBTCBalance);
+		(uint256 startAmount, uint256 endAmount) = _computeAuctionRange(startsBTCperBTCRate, endcbsBTCperBTCRate, syntheticBitcoinBalance);
 
-		_sBTC.safeApprove(_btcAuctionHouse, sBTCBalance);
+		_syntheticBitcoin.safeApprove(_btcAuctionHouse, syntheticBitcoinBalance);
 
 		// Start the auction
 		BTCDutchAuctionHouse(_btcAuctionHouse).startAuction(
-			sBTCBalance,
+			syntheticBitcoinBalance,
 			DutchAuctionParams({
 				startBtcOut: startAmount,
 				endBtcOut: endAmount, 

@@ -1,6 +1,6 @@
 use alloy::hex;
 use serde::{Deserialize, Serialize};
-use sol_bindings::{DepositVault, ProposedSwap};
+use sol_bindings::{Order, Payment};
 use std::fmt;
 
 // Custom Debug for the SwapStatus enum is optional, but let's keep it derived for simplicity.
@@ -10,7 +10,7 @@ pub enum SwapStatus {
     PaymentPending,
     ChallengePeriod,
     Completed,
-    LiquidityWithdrawn,
+    Refunded,
 }
 
 impl fmt::Debug for SwapStatus {
@@ -19,106 +19,107 @@ impl fmt::Debug for SwapStatus {
             SwapStatus::PaymentPending => write!(f, "PaymentPending"),
             SwapStatus::ChallengePeriod => write!(f, "ChallengePeriod"),
             SwapStatus::Completed => write!(f, "Completed"),
-            SwapStatus::LiquidityWithdrawn => write!(f, "LiquidityWithdrawn"),
+            SwapStatus::Refunded => write!(f, "Refunded"),
         }
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ChainAwareDeposit {
-    pub deposit: DepositVault,
-    pub deposit_block_number: u64,
-    pub deposit_block_hash: [u8; 32],
-    pub deposit_txid: [u8; 32],
+pub struct ChainAwareOrder {
+    pub order: Order,
+    pub order_block_number: u64,
+    pub order_block_hash: [u8; 32],
+    pub order_txid: [u8; 32],
 }
 
-impl fmt::Debug for ChainAwareDeposit {
+impl fmt::Debug for ChainAwareOrder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChainAwareDeposit")
-            .field("deposit", &self.deposit)
-            .field("deposit_block_number", &self.deposit_block_number)
-            .field("deposit_block_hash", &hex::encode(self.deposit_block_hash))
-            .field("deposit_txid", &hex::encode(self.deposit_txid))
+        f.debug_struct("ChainAwareOrder")
+            .field("order", &self.order)
+            .field("order_block_number", &self.order_block_number)
+            .field("order_block_hash", &hex::encode(self.order_block_hash))
+            .field("order_txid", &hex::encode(self.order_txid))
             .finish()
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ChainAwareRelease {
-    pub release_txid: [u8; 32],
-    pub release_block_hash: [u8; 32],
-    pub release_block_number: u64,
+pub struct ChainAwareSettlement {
+    pub settlement_txid: [u8; 32],
+    pub settlement_block_hash: [u8; 32],
+    pub settlement_block_number: u64,
 }
 
-impl fmt::Debug for ChainAwareRelease {
+impl fmt::Debug for ChainAwareSettlement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChainAwareRelease")
-            .field("release_txid", &hex::encode(self.release_txid))
-            .field("release_block_hash", &hex::encode(self.release_block_hash))
-            .field("release_block_number", &self.release_block_number)
-            .finish()
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ChainAwareWithdraw {
-    pub withdraw_txid: [u8; 32],
-    pub withdraw_block_hash: [u8; 32],
-    pub withdraw_block_number: u64,
-}
-
-impl fmt::Debug for ChainAwareWithdraw {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChainAwareWithdraw")
-            .field("withdraw_txid", &hex::encode(self.withdraw_txid))
+        f.debug_struct("ChainAwareSettlement")
+            .field("settlement_txid", &hex::encode(self.settlement_txid))
             .field(
-                "withdraw_block_hash",
-                &hex::encode(self.withdraw_block_hash),
+                "settlement_block_hash",
+                &hex::encode(self.settlement_block_hash),
             )
-            .field("withdraw_block_number", &self.withdraw_block_number)
+            .field("settlement_block_number", &self.settlement_block_number)
             .finish()
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ChainAwareProposedSwap {
-    pub swap: ProposedSwap,
-    pub swap_proof_txid: [u8; 32],
-    pub swap_proof_block_hash: [u8; 32],
-    pub swap_proof_block_number: u64,
-    pub release: Option<ChainAwareRelease>,
+pub struct ChainAwareRefund {
+    pub refund_txid: [u8; 32],
+    pub refund_block_hash: [u8; 32],
+    pub refund_block_number: u64,
 }
 
-impl fmt::Debug for ChainAwareProposedSwap {
+impl fmt::Debug for ChainAwareRefund {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChainAwareProposedSwap")
-            .field("swap", &self.swap)
-            .field("swap_proof_txid", &hex::encode(self.swap_proof_txid))
-            .field(
-                "swap_proof_block_hash",
-                &hex::encode(self.swap_proof_block_hash),
-            )
-            .field("swap_proof_block_number", &self.swap_proof_block_number)
-            .field("release", &self.release)
+        f.debug_struct("ChainAwareRefund")
+            .field("refund_txid", &hex::encode(self.refund_txid))
+            .field("refund_block_hash", &hex::encode(self.refund_block_hash))
+            .field("refund_block_number", &self.refund_block_number)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ChainAwarePayment {
+    pub payment: Payment,
+    pub payment_txid: [u8; 32],
+    pub payment_block_hash: [u8; 32],
+    pub payment_block_number: u64,
+    pub settlement: Option<ChainAwareSettlement>,
+}
+
+impl fmt::Debug for ChainAwarePayment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChainAwarePayment")
+            .field("payment", &self.payment)
+            .field("payment_txid", &hex::encode(self.payment_txid))
+            .field("payment_block_hash", &hex::encode(self.payment_block_hash))
+            .field("payment_block_number", &self.payment_block_number)
+            .field("settlement", &self.settlement)
             .finish()
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct OTCSwap {
-    pub deposit: ChainAwareDeposit,
-    pub swap_proofs: Vec<ChainAwareProposedSwap>,
-    pub withdraw: Option<ChainAwareWithdraw>,
+    pub order: ChainAwareOrder,
+    pub payments: Vec<ChainAwarePayment>,
+    pub refund: Option<ChainAwareRefund>,
 }
 
 impl OTCSwap {
     pub fn swap_status(&self) -> SwapStatus {
-        if self.withdraw.is_some() {
-            SwapStatus::LiquidityWithdrawn
-        } else if self.swap_proofs.is_empty() {
+        if self.refund.is_some() {
+            SwapStatus::Refunded
+        } else if self.payments.is_empty() {
             SwapStatus::PaymentPending
         // If any swap proof has a release, it means the swap is complete
-        } else if self.swap_proofs.iter().any(|swap| swap.release.is_none()) {
+        } else if self
+            .payments
+            .iter()
+            .any(|payment| payment.settlement.is_none())
+        {
             SwapStatus::ChallengePeriod
         } else {
             SwapStatus::Completed
@@ -130,9 +131,9 @@ impl fmt::Debug for OTCSwap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let status = self.swap_status();
         f.debug_struct("OTCSwap")
-            .field("deposit", &self.deposit)
-            .field("swap_proofs", &self.swap_proofs)
-            .field("withdraw", &self.withdraw)
+            .field("order", &self.order)
+            .field("payments", &self.payments)
+            .field("refund", &self.refund)
             .field("swap_status", &status)
             .finish()
     }

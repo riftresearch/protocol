@@ -11,39 +11,40 @@ import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
+import {OrderValidationLib} from "../../src/libraries/OrderValidationLib.sol";
 
 import "forge-std/src/console.sol";
 
 contract RiftExchangeUnitTest is RiftTest {
-    using HashLib for DepositVault;
-    using HashLib for ProposedSwap;
+    using HashLib for Order;
+    using HashLib for Payment;
     using HashLib for BlockLeaf;
 
     // hacky way to get nice formatting for the vault in logs
-    event VaultLog(DepositVault vault);
-    event VaultCommitmentLog(bytes32 vaultCommitment);
-    event LogVaults(DepositVault[] vaults);
-    uint256 constant MAX_VAULTS = 2;
+    event OrderLog(Order order);
+    event OrderCommitmentLog(bytes32 orderCommitment);
+    event LogOrders(Order[] orders);
+    uint256 constant MAX_ORDERS = 2;
 
-    // functional clone of validateDepositvaultHashes, but doesn't attempt to validate the vaults existence in storage
+    // functional clone of validateOrderHashes, but doesn't attempt to validate the orders existence in storage
     // used to generate test data for circuits
     // TODO: directly call the rust api from here as part of fuzzer
-    function generatedepositVaultHash(DepositVault[] memory vaults) internal pure returns (bytes32) {
-        bytes32[] memory vaultHashes = new bytes32[](vaults.length);
-        for (uint256 i = 0; i < vaults.length; i++) {
-            vaultHashes[i] = vaults[i].hash();
+    function generateOrderHash(Order[] memory orders) internal pure returns (bytes32) {
+        bytes32[] memory orderHashes = new bytes32[](orders.length);
+        for (uint256 i = 0; i < orders.length; i++) {
+            orderHashes[i] = orders[i].hash();
         }
-        return EfficientHashLib.hash(vaultHashes);
+        return EfficientHashLib.hash(orderHashes);
     }
 
     // use to generate test data for circuits
     // TODO: directly call the rust api from here as part of fuzzer
-    function test_vaultHashes(DepositVault memory vault, uint256) public {
+    function test_orderHashes(Order memory order, uint256) public {
         // uint64 max here so it can be set easily in rust
-        bound(vault.vaultIndex, 0, uint256(type(uint64).max));
-        bytes32 vault_commitment = vault.hash();
-        emit VaultLog(vault);
-        emit VaultCommitmentLog(vault_commitment);
+        bound(order.index, 0, uint256(type(uint64).max));
+        bytes32 order_commitment = order.hash();
+        emit OrderLog(order);
+        emit OrderCommitmentLog(order_commitment);
     }
 
     // used to generate test data for circuits
@@ -65,51 +66,44 @@ contract RiftExchangeUnitTest is RiftTest {
         console.logBytes32(blockLeafHash);
     }
 
-    function constrainVault(
-        DepositVault memory vault,
-        uint64 maxValue
-    ) internal pure returns (DepositVault memory) {
+    function constrainOrder(Order memory order, uint64 maxValue) internal pure returns (Order memory) {
         return
-            DepositVault({
-                vaultIndex: vault.vaultIndex % maxValue,
-                depositTimestamp: vault.depositTimestamp % maxValue,
-                depositUnlockTimestamp: vault.depositUnlockTimestamp % maxValue,
-                vaultAmount: vault.vaultAmount % maxValue,
-                takerFee: vault.takerFee % maxValue,
-                expectedSats: vault.expectedSats % maxValue,
-                btcPayoutScriptPubKey: vault.btcPayoutScriptPubKey,
-                specifiedPayoutAddress: vault.specifiedPayoutAddress,
-                ownerAddress: vault.ownerAddress,
-                salt: vault.salt,
-                confirmationBlocks: vault.confirmationBlocks,
-                attestedBitcoinBlockHeight: vault.attestedBitcoinBlockHeight % 2016
+            Order({
+                index: order.index % maxValue,
+                timestamp: order.timestamp % maxValue,
+                unlockTimestamp: order.unlockTimestamp % maxValue,
+                amount: order.amount % maxValue,
+                takerFee: order.takerFee % maxValue,
+                expectedSats: order.expectedSats % maxValue,
+                bitcoinScriptPubKey: order.bitcoinScriptPubKey,
+                designatedReceiver: order.designatedReceiver,
+                owner: order.owner,
+                salt: order.salt,
+                confirmationBlocks: order.confirmationBlocks,
+                safeBitcoinBlockHeight: order.safeBitcoinBlockHeight
             });
     }
 
     // use to generate test data for circuits
-    function test_aggregatevaultHashes(
-        DepositVault[1] memory singleVaultSet,
-        DepositVault[2] memory twoVaultSet,
-        uint256
-    ) public {
+    function test_aggregateOrderHashes(Order[1] memory singleOrderSet, Order[2] memory twoOrderSet, uint256) public {
         uint64 maxValue = type(uint64).max;
 
-        DepositVault[] memory singleVaultSetArray = new DepositVault[](1);
-        singleVaultSetArray[0] = constrainVault(singleVaultSet[0], maxValue);
-        bytes32 singleVaultCommitment = generatedepositVaultHash(singleVaultSetArray);
-        emit LogVaults(singleVaultSetArray);
-        emit VaultCommitmentLog(singleVaultCommitment);
+        Order[] memory singleOrderSetArray = new Order[](1);
+        singleOrderSetArray[0] = constrainOrder(singleOrderSet[0], maxValue);
+        bytes32 singleOrderCommitment = generateOrderHash(singleOrderSetArray);
+        emit LogOrders(singleOrderSetArray);
+        emit OrderCommitmentLog(singleOrderCommitment);
 
-        DepositVault[] memory twoVaultSetArray = new DepositVault[](2);
-        twoVaultSetArray[0] = constrainVault(twoVaultSet[0], maxValue);
-        twoVaultSetArray[1] = constrainVault(twoVaultSet[1], maxValue);
-        bytes32 twoVaultCommitment = generatedepositVaultHash(twoVaultSetArray);
-        emit LogVaults(twoVaultSetArray);
-        emit VaultCommitmentLog(twoVaultCommitment);
+        Order[] memory twoOrderSetArray = new Order[](2);
+        twoOrderSetArray[0] = constrainOrder(twoOrderSet[0], maxValue);
+        twoOrderSetArray[1] = constrainOrder(twoOrderSet[1], maxValue);
+        bytes32 twoOrderCommitment = generateOrderHash(twoOrderSetArray);
+        emit LogOrders(twoOrderSetArray);
+        emit OrderCommitmentLog(twoOrderCommitment);
     }
 
     // Test that depositLiquidity appends a new commitment to the vaultHashes array
-    function testFuzz_depositLiquidity(
+    function testFuzz_createOrder(
         uint256 depositAmount,
         uint64 expectedSats,
         uint8 confirmationBlocks,
@@ -121,12 +115,14 @@ contract RiftExchangeUnitTest is RiftTest {
             FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
-        confirmationBlocks = uint8(bound(confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max));
-        _depositLiquidityWithAssertions(depositAmount, expectedSats, confirmationBlocks);
+        expectedSats = uint64(bound(expectedSats, OrderValidationLib.MIN_OUTPUT_SATS, type(uint64).max));
+        confirmationBlocks = uint8(
+            bound(confirmationBlocks, OrderValidationLib.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
+        );
+        _createOrderWithAssertions(depositAmount, expectedSats, confirmationBlocks);
     }
 
-    function testFuzz_withdrawLiquidity(
+    function testFuzz_refundOrder(
         uint256 depositAmount,
         uint64 expectedSats,
         uint8 confirmationBlocks,
@@ -138,15 +134,13 @@ contract RiftExchangeUnitTest is RiftTest {
             FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        expectedSats = uint64(bound(expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
-        confirmationBlocks = uint8(bound(confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max));
+        expectedSats = uint64(bound(expectedSats, OrderValidationLib.MIN_OUTPUT_SATS, type(uint64).max));
+        confirmationBlocks = uint8(
+            bound(confirmationBlocks, OrderValidationLib.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
+        );
 
         // [1] create initial deposit and get vault
-        DepositVault memory vault = _depositLiquidityWithAssertions(
-            depositAmount,
-            expectedSats,
-            confirmationBlocks
-        );
+        Order memory order = _createOrderWithAssertions(depositAmount, expectedSats, confirmationBlocks);
         uint256 initialBalance = syntheticBTC.balanceOf(address(this));
 
         // [2] warp to future time after lockup period
@@ -154,39 +148,41 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
-        exchange.withdrawLiquidity(vault);
-        DepositVault memory updatedVault = _extractSingleVaultFromLogs(vm.getRecordedLogs());
+        exchange.refundOrder(order);
+        Order memory updatedOrder = _extractSingleOrderFromLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
-        bytes32 storedCommitment = exchange.vaultHashes(vault.vaultIndex);
-        bytes32 calculatedCommitment = updatedVault.hash();
-        assertEq(calculatedCommitment, storedCommitment, "Vault commitment mismatch");
+        bytes32 storedCommitment = exchange.orderHashes(order.index);
+        bytes32 calculatedCommitment = updatedOrder.hash();
+        assertEq(calculatedCommitment, storedCommitment, "Order commitment mismatch");
 
         // [5] verify vault is now empty
-        assertEq(updatedVault.vaultAmount, 0, "Updated vault should be empty");
-        assertEq(updatedVault.vaultIndex, vault.vaultIndex, "Vault index should remain unchanged");
+        assertEq(updatedOrder.amount, 0, "Updated order should be empty");
+        assertEq(updatedOrder.index, order.index, "Order index should remain unchanged");
 
         // [6] verify tokens were transferred correctly
         assertEq(syntheticBTC.balanceOf(address(this)), initialBalance + depositAmount, "Incorrect withdrawal amount");
     }
 
-    function testFuzz_submitSwapProof(SubmitSwapProofParams memory params, uint256) public {
+    function testFuzz_submitPaymentProofs(SubmitPaymentProofParams memory params, uint256) public {
         // [0] bound inputs
-        params.vault.vaultAmount = bound(
-            params.vault.vaultAmount,
+        params.order.amount = bound(
+            params.order.amount,
             FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
             type(uint64).max
         );
-        params.vault.expectedSats = uint64(bound(params.vault.expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
-        params.vault.confirmationBlocks = uint8(
-            bound(params.vault.confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max)
+        params.order.expectedSats = uint64(
+            bound(params.order.expectedSats, OrderValidationLib.MIN_OUTPUT_SATS, type(uint64).max)
+        );
+        params.order.confirmationBlocks = uint8(
+            bound(params.order.confirmationBlocks, OrderValidationLib.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
         );
 
         // [1] create deposit vault
-        DepositVault memory vault = _depositLiquidityWithAssertions(
-            params.vault.vaultAmount,
-            params.vault.expectedSats,
-            params.vault.confirmationBlocks
+        Order memory order = _createOrderWithAssertions(
+            params.order.amount,
+            params.order.expectedSats,
+            params.order.confirmationBlocks
         );
 
         // [3] create dummy proof data
@@ -198,7 +194,7 @@ contract RiftExchangeUnitTest is RiftTest {
         (
             HelperTypes.MMRProof memory mmrProof,
             HelperTypes.MMRProof memory tipMmrProof
-        ) = _generateFakeBlockWithConfirmationsMMRProofFFI(0, params.vault.confirmationBlocks);
+        ) = _generateFakeBlockWithConfirmationsMMRProofFFI(0, params.order.confirmationBlocks);
         /*
             SubmitSwapProofParams[] calldata swapParams,
             BlockProofParams calldata blockProofParams,
@@ -207,16 +203,15 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [4] submit swap proof and capture logs
         vm.recordLogs();
-        SubmitSwapProofParams[] memory swapParams = new SubmitSwapProofParams[](1);
+        SubmitPaymentProofParams[] memory paymentParams = new SubmitPaymentProofParams[](1);
 
-        swapParams[0] = SubmitSwapProofParams({
-            swapBitcoinTxid: params.swapBitcoinTxid,
-            vault: vault,
-            swapBitcoinBlockLeaf: mmrProof.blockLeaf,
-            swapBitcoinBlockSiblings: mmrProof.siblings,
-            swapBitcoinBlockPeaks: mmrProof.peaks
+        paymentParams[0] = SubmitPaymentProofParams({
+            paymentBitcoinTxid: params.paymentBitcoinTxid,
+            order: order,
+            paymentBitcoinBlockLeaf: mmrProof.blockLeaf,
+            paymentBitcoinBlockSiblings: mmrProof.siblings,
+            paymentBitcoinBlockPeaks: mmrProof.peaks
         });
-
 
         BlockProofParams memory blockProofParams = BlockProofParams({
             priorMmrRoot: priorMmrRoot,
@@ -226,29 +221,25 @@ contract RiftExchangeUnitTest is RiftTest {
         });
         console.log("blockProofParams.tipBlockLeaf.height", blockProofParams.tipBlockLeaf.height);
 
-        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, proof);
+        exchange.submitPaymentProofs(paymentParams, blockProofParams, proof);
 
-        // [5] extract swap from logs
-        ProposedSwap memory createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
-        uint256 swapIndex = exchange.getSwapHashesLength() - 1;
-        bytes32 hash = exchange.swapHashes(swapIndex);
+        // [5] extract payment from logs
+        Payment memory createdPayment = _extractSinglePaymentFromLogs(vm.getRecordedLogs());
+        uint256 paymentIndex = exchange.getTotalPayments() - 1;
+        bytes32 hash = exchange.paymentHashes(paymentIndex);
 
-        uint256 takerFee = FeeLib.calculateFeeFromDeposit(params.vault.vaultAmount, exchange.takerFeeBips());
-
-        // [6] verify swap details
-        assertEq(createdSwap.swapIndex, swapIndex, "Swap index should match");
-        assertEq(createdSwap.specifiedPayoutAddress, address(this), "Payout address should match");
-        assertEq(createdSwap.totalSwapOutput, params.vault.vaultAmount - takerFee, "Swap amount should match");
-        assertEq(createdSwap.takerFee, takerFee, "Swap fee should match");
-        assertEq(uint8(createdSwap.state), uint8(SwapState.Proved), "Swap should be in Proved state");
+        // [6] verify payment details
+        assertEq(createdPayment.index, paymentIndex, "Payment index should match");
+        assertEq(order.designatedReceiver, address(this), "Payout address should match");
+        assertEq(uint8(createdPayment.state), uint8(PaymentState.Proved), "Payment should be in Proved state");
 
         // [7] verify hash
-        bytes32 offchainHash = createdSwap.hash();
-        assertEq(offchainHash, hash, "Offchain swap hash should match");
+        bytes32 offchainHash = createdPayment.hash();
+        assertEq(offchainHash, hash, "Offchain payment hash should match");
     }
 
     struct FuzzReleaseLiquidityParams {
-        bytes32 swapBitcoinTxid;
+        bytes32 paymentBitcoinTxid;
         uint256 depositAmount;
         uint64 expectedSats;
         uint8 confirmationBlocks;
@@ -260,31 +251,31 @@ contract RiftExchangeUnitTest is RiftTest {
     )
         internal
         returns (
-            DepositVault memory vault,
-            ProposedSwap memory createdSwap,
-            HelperTypes.MMRProof memory swapMmrProof,
+            Order memory order,
+            Payment memory createdPayment,
+            HelperTypes.MMRProof memory paymentMmrProof,
             HelperTypes.MMRProof memory tipMmrProof
         )
     {
         // Create deposit vault
-        vault = _depositLiquidityWithAssertions(params.depositAmount, params.expectedSats, params.confirmationBlocks);
+        order = _createOrderWithAssertions(params.depositAmount, params.expectedSats, params.confirmationBlocks);
 
         // [3] create dummy proof data
         (bytes memory proof, bytes memory compressedBlockLeaves) = _getMockProof();
 
         bytes32 priorMmrRoot = exchange.mmrRoot();
-        (swapMmrProof, tipMmrProof) = _generateFakeBlockWithConfirmationsMMRProofFFI(1, params.confirmationBlocks);
+        (paymentMmrProof, tipMmrProof) = _generateFakeBlockWithConfirmationsMMRProofFFI(1, params.confirmationBlocks);
 
-        assertEq(swapMmrProof.mmrRoot, tipMmrProof.mmrRoot, "Mmr roots should match");
+        assertEq(paymentMmrProof.mmrRoot, tipMmrProof.mmrRoot, "Mmr roots should match");
 
         vm.recordLogs();
-        SubmitSwapProofParams[] memory swapParams = new SubmitSwapProofParams[](1);
-        swapParams[0] = SubmitSwapProofParams({
-            swapBitcoinTxid: params.swapBitcoinTxid,
-            vault: vault,
-            swapBitcoinBlockLeaf: swapMmrProof.blockLeaf,
-            swapBitcoinBlockSiblings: swapMmrProof.siblings,
-            swapBitcoinBlockPeaks: swapMmrProof.peaks
+        SubmitPaymentProofParams[] memory paymentParams = new SubmitPaymentProofParams[](1);
+        paymentParams[0] = SubmitPaymentProofParams({
+            paymentBitcoinTxid: params.paymentBitcoinTxid,
+            order: order,
+            paymentBitcoinBlockLeaf: paymentMmrProof.blockLeaf,
+            paymentBitcoinBlockSiblings: paymentMmrProof.siblings,
+            paymentBitcoinBlockPeaks: paymentMmrProof.peaks
         });
         BlockProofParams memory blockProofParams = BlockProofParams({
             priorMmrRoot: priorMmrRoot,
@@ -293,15 +284,15 @@ contract RiftExchangeUnitTest is RiftTest {
             tipBlockLeaf: tipMmrProof.blockLeaf
         });
 
-        exchange.submitBatchSwapProofWithLightClientUpdate(swapParams, blockProofParams, proof);
+        exchange.submitPaymentProofs(paymentParams, blockProofParams, proof);
 
-        createdSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
-        return (vault, createdSwap, swapMmrProof, tipMmrProof);
+        createdPayment = _extractSinglePaymentFromLogs(vm.getRecordedLogs());
+        return (order, createdPayment, paymentMmrProof, tipMmrProof);
     }
 
     // Helper function to verify balances and empty vaults
     function _verifyBalancesAndVaults(
-        DepositVault memory vault,
+        Order memory order,
         uint256 initialBalance,
         uint256 initialFeeBalance,
         uint256 totalSwapOutput,
@@ -314,41 +305,41 @@ contract RiftExchangeUnitTest is RiftTest {
             "Incorrect amount transferred to recipient"
         );
 
-        assertEq(
-            exchange.accumulatedFeeBalance(),
-            initialFeeBalance + totalSwapFee,
-            "Incorrect fee amount accumulated"
-        );
+        assertEq(exchange.accumulatedFees(), initialFeeBalance + totalSwapFee, "Incorrect fee amount accumulated");
 
         // Verify vaults were emptied
-        bytes32 vaultCommitment = exchange.vaultHashes(vault.vaultIndex);
-        vault.vaultAmount = 0;
-        vault.takerFee = 0;
-        bytes32 expectedCommitment = vault.hash();
-        assertEq(vaultCommitment, expectedCommitment, "Vault should be empty");
+        bytes32 orderCommitment = exchange.orderHashes(order.index);
+        order.amount = 0;
+        order.takerFee = 0;
+        bytes32 expectedCommitment = order.hash();
+        assertEq(orderCommitment, expectedCommitment, "Order should be empty");
     }
 
- function testFuzz_releaseLiquidity(FuzzReleaseLiquidityParams memory params, uint256) public {
+    function testFuzz_releaseLiquidity(FuzzReleaseLiquidityParams memory params, uint256) public {
         // Bound inputs
-        params.depositAmount = bound(params.depositAmount, FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()), type(uint64).max);
-        params.expectedSats = uint64(bound(params.expectedSats, exchange.MIN_OUTPUT_SATS(), type(uint64).max));
+        params.depositAmount = bound(
+            params.depositAmount,
+            FeeLib.calculateMinDepositAmount(exchange.takerFeeBips()),
+            type(uint64).max
+        );
+        params.expectedSats = uint64(bound(params.expectedSats, OrderValidationLib.MIN_OUTPUT_SATS, type(uint64).max));
         params.confirmationBlocks = uint8(
-            bound(params.confirmationBlocks, exchange.MIN_CONFIRMATION_BLOCKS(), type(uint8).max)
+            bound(params.confirmationBlocks, OrderValidationLib.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
         );
 
         console.log("[0] setup vaults and submit swap");
 
         // Set up vaults and submit swap
         (
-            DepositVault memory vault,
-            ProposedSwap memory createdSwap,
-            HelperTypes.MMRProof memory swapMmrProof,
+            Order memory order,
+            Payment memory createdPayment,
+            HelperTypes.MMRProof memory paymentMmrProof,
             HelperTypes.MMRProof memory tipMmrProof
         ) = _setupVaultsAndSubmitSwap(params);
 
         // Record initial balances
         uint256 initialBalance = syntheticBTC.balanceOf(address(this));
-        uint256 initialFeeBalance = exchange.accumulatedFeeBalance();
+        uint256 initialFeeBalance = exchange.accumulatedFees();
 
         // validate the erc20 balance of the contract is equal to the amount sent params.depositAmount
         assertEq(
@@ -357,47 +348,35 @@ contract RiftExchangeUnitTest is RiftTest {
             "Contract should have the correct balance"
         );
 
-        // total swap output + total swap fee should be equal to the deposited amount
-        assertEq(
-            params.depositAmount,
-            createdSwap.totalSwapOutput + createdSwap.takerFee,
-            "Total swap output + total swap fee should be equal to the total amount deposited"
-        );
-
         // Warp past challenge period
         vm.warp(block.timestamp + PeriodLib.calculateChallengePeriod(params.confirmationBlocks) + 2);
 
         // Release liquidity
         console.log("[1] release liquidity");
         vm.recordLogs();
-        ReleaseLiquidityParams memory releaseLiquidityParams = ReleaseLiquidityParams({
-            swap: createdSwap,
-            bitcoinSwapBlockSiblings: swapMmrProof.siblings,
-            bitcoinSwapBlockPeaks: swapMmrProof.peaks,
-            utilizedVault: vault,
+
+        SettleOrderParams memory settleOrderParams = SettleOrderParams({
+            order: order,
+            payment: createdPayment,
+            paymentBitcoinBlockSiblings: paymentMmrProof.siblings,
+            paymentBitcoinBlockPeaks: paymentMmrProof.peaks,
             tipBlockHeight: tipMmrProof.blockLeaf.height
         });
 
-        ReleaseLiquidityParams[] memory releaseLiquidityParamsArray = new ReleaseLiquidityParams[](1);
-        releaseLiquidityParamsArray[0] = releaseLiquidityParams;
+        SettleOrderParams[] memory settleOrderParamsArray = new SettleOrderParams[](1);
+        settleOrderParamsArray[0] = settleOrderParams;
 
-        exchange.releaseLiquidityBatch(releaseLiquidityParamsArray);
+        exchange.settleOrders(settleOrderParamsArray);
 
         // Verify swap completion
-        ProposedSwap memory updatedSwap = _extractSingleSwapFromLogs(vm.getRecordedLogs());
-        assertEq(uint8(updatedSwap.state), uint8(SwapState.Finalized), "Swap should be finalized");
+        Payment memory updatedPayment = _extractSinglePaymentFromLogs(vm.getRecordedLogs());
+        assertEq(uint8(updatedPayment.state), uint8(PaymentState.Settled), "Payment should be finalized");
 
         // Verify balances and vaults
-        _verifyBalancesAndVaults(
-            vault,
-            initialBalance,
-            initialFeeBalance,
-            updatedSwap.totalSwapOutput,
-            updatedSwap.takerFee
-        );
+        _verifyBalancesAndVaults(order, initialBalance, initialFeeBalance, order.amount, order.takerFee);
 
         // Verify fee router balance and payout
-        uint256 accountedFeeRouterBalancePrePayout = exchange.accumulatedFeeBalance();
+        uint256 accountedFeeRouterBalancePrePayout = exchange.accumulatedFees();
         uint256 feeRouterBalancePrePayout = syntheticBTC.balanceOf(address(exchange));
 
         console.log("accountedFeeRouterBalancePrePayout", accountedFeeRouterBalancePrePayout);
@@ -411,13 +390,13 @@ contract RiftExchangeUnitTest is RiftTest {
 
         assertEq(
             feeRouterBalancePrePayout,
-            updatedSwap.takerFee,
-            "Fee router should have an internal balance as a function of the swap amount"
+            order.takerFee,
+            "Fee router should have an internal balance as a function of the payment amount"
         );
 
-        exchange.payoutToFeeRouter();
+        exchange.withdrawFees();
         assertEq(
-            syntheticBTC.balanceOf(exchange.feeRouterAddress()),
+            syntheticBTC.balanceOf(exchange.feeRouter()),
             feeRouterBalancePrePayout,
             "Fee router should have received all fees"
         );

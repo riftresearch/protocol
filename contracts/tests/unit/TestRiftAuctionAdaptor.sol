@@ -8,11 +8,12 @@ import {RiftAuctionAdaptor} from "../../src/RiftAuctionAdaptor.sol";
 import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
 import {IRiftAuctionAdaptor} from "../../src/interfaces/IRiftAuctionAdaptor.sol";
 import {IBTCDutchAuctionHouse} from "../../src/interfaces/IBTCDutchAuctionHouse.sol";
+import {OrderValidationLib} from "../../src/libraries/OrderValidationLib.sol";
 
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {DutchAuction} from "../../src/interfaces/IBTCDutchAuctionHouse.sol";
-import {BaseDepositLiquidityParams} from "../../src/interfaces/IRiftExchange.sol";
+import {BaseCreateOrderParams} from "../../src/interfaces/IRiftExchange.sol";
 import "../utils/HelperTypes.sol";
 
 import {RiftTest} from "../utils/RiftTest.sol";
@@ -82,7 +83,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
         // Arrange ‑ give adaptor some tokens so that revert (if any) is due to access control
         syntheticBTC.mint(address(adaptor), 1e10);
 
-        BaseDepositLiquidityParams memory baseParams;
+        BaseCreateOrderParams memory baseParams;
         vm.expectRevert();
         adaptor.createAuction(1e18, 5e17, 1, uint64(block.timestamp + DEADLINE_DELAY), address(0), baseParams);
     }
@@ -105,11 +106,11 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
         syntheticBTC.mint(address(adaptor), deposit);
 
         HelperTypes.MMRProof memory safeProof = _generateFakeBlockMMRProofFFI(0);
-        BaseDepositLiquidityParams memory baseParams = BaseDepositLiquidityParams({
-            depositOwnerAddress:       address(this),
-            btcPayoutScriptPubKey:     _generateBtcPayoutScriptPubKey(),
-            depositSalt:               bytes32(uint256(keccak256("salt"))),
-            confirmationBlocks:        auctionHouse.MIN_CONFIRMATION_BLOCKS(),
+        BaseCreateOrderParams memory baseParams = BaseCreateOrderParams({
+            owner:                     address(this),
+            bitcoinScriptPubKey:       _generateBtcPayoutScriptPubKey(),
+            salt:                      bytes32(uint256(keccak256("salt"))),
+            confirmationBlocks:        OrderValidationLib.MIN_CONFIRMATION_BLOCKS,
             safeBlockLeaf:             safeProof.blockLeaf
         });
 
@@ -141,7 +142,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
         assertEq(auction.dutchAuctionParams.endBtcOut,   endAmount,   "endBtcOut mismatch");
         assertEq(auction.dutchAuctionParams.decayBlocks, DECAY_BLOCKS, "decayBlocks mismatch");
 
-        bytes32 storedHash = auctionHouse.auctionHashes(auction.auctionIndex);
+        bytes32 storedHash = auctionHouse.auctionHashes(auction.index);
         assertEq(storedHash, auction.hash(), "Stored auction hash mismatch");
     }
 
@@ -152,7 +153,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
         uint256 deposit = FeeLib.calculateMinDepositAmount(auctionHouse.takerFeeBips()) * 10;
         syntheticBTC.mint(address(adaptor), deposit);
 
-        BaseDepositLiquidityParams memory baseParams;
+        BaseCreateOrderParams memory baseParams;
         vm.prank(BUNDLER3);
         vm.expectRevert(abi.encodeWithSelector(IBTCDutchAuctionHouse.InvalidStartBtcOut.selector));
         adaptor.createAuction(1e18, 2e18, DECAY_BLOCKS, uint64(block.timestamp + DEADLINE_DELAY), address(0), baseParams);

@@ -2,7 +2,7 @@
 pragma solidity =0.8.28;
 
 import "./interfaces/IBTCDutchAuctionHouse.sol";
-import {DepositLiquidityParams} from "./interfaces/IRiftExchange.sol";
+import {CreateOrderParams} from "./interfaces/IRiftExchange.sol";
 
 import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
 
@@ -47,7 +47,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     function startAuction(
         uint256 depositAmount,
         DutchAuctionParams memory auctionParams,
-        BaseDepositLiquidityParams calldata baseDepositParams
+        BaseCreateOrderParams calldata baseCreateOrderParams
     ) external {
         if (auctionParams.decayBlocks == 0) {
             revert InvalidTickSize();
@@ -62,8 +62,8 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         }
 
         DutchAuction memory auction = DutchAuction({
-            auctionIndex: auctionHashes.length,
-            baseDepositParams: baseDepositParams,
+            index: auctionHashes.length,
+            baseCreateOrderParams: baseCreateOrderParams,
             dutchAuctionParams: auctionParams,
             depositAmount: depositAmount,
             startBlock: block.number,
@@ -74,7 +74,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         auctionHashes.push(auction.hash());
         emit AuctionUpdated(auction);
 
-        ERC20_BTC.safeTransferFrom(msg.sender, address(this), depositAmount);
+        syntheticBitcoin.safeTransferFrom(msg.sender, address(this), depositAmount);
     }
 
     // 1. validate the auction is live (not already filled/expired)
@@ -106,28 +106,28 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
             endAmount: auction.dutchAuctionParams.endBtcOut
         });
 
-        DepositLiquidityParams memory depositLiquidityParams = DepositLiquidityParams({
-            base: auction.baseDepositParams,
-            specifiedPayoutAddress: msg.sender,
+        CreateOrderParams memory createOrderParams = CreateOrderParams({
+            base: auction.baseCreateOrderParams,
+            designatedReceiver: msg.sender,
             depositAmount: auction.depositAmount,
             expectedSats: uint64(currentBtcOut),
             safeBlockSiblings: safeBlockSiblings,
             safeBlockPeaks: safeBlockPeaks
         });
 
-        // Note:  _depositLiquidity takes care of accounting for tokens deposited via fillAuction.
-        // so no additional ERC20 deposit is necessary.
-        _depositLiquidity(depositLiquidityParams);
+        // Note:  _createOrder takes care of accounting for tokens deposited via fillAuction.
+        // so no additional ERC20 transfer is necessary.
+        _createOrder(createOrderParams);
 
         auction.state = DutchAuctionState.Filled;
-        auctionHashes[auction.auctionIndex] = auction.hash();
+        auctionHashes[auction.index] = auction.hash();
         emit AuctionUpdated(auction);
     }
 
 
     // 1. validate the auction is expired
     // 2. Withdraw deposit token to depositOwnerAddress
-    function withdrawFromExpiredAuction(DutchAuction memory auction) external {
+    function refundAuction(DutchAuction memory auction) external {
         auction.checkIntegrity(auctionHashes);
         if (auction.state == DutchAuctionState.Filled) {
             revert AuctionAlreadyFilled();
@@ -140,9 +140,9 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         }
 
         auction.state = DutchAuctionState.Withdrawn;
-        auctionHashes[auction.auctionIndex] = auction.hash();
+        auctionHashes[auction.index] = auction.hash();
         emit AuctionUpdated(auction);
 
-        ERC20_BTC.safeTransfer(auction.baseDepositParams.depositOwnerAddress, auction.depositAmount);
+        syntheticBitcoin.safeTransfer(auction.baseCreateOrderParams.owner, auction.depositAmount);
     }
 }

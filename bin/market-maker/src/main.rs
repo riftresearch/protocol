@@ -1,26 +1,26 @@
 mod mempool_electrs;
 use crate::mempool_electrs::MempoolElectrsClient;
-use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::network::BlockResponse;
 use alloy::primitives::Address;
-use alloy::providers::Provider;
+use alloy::providers::{DynProvider, Provider};
 use alloy::pubsub::PubSubFrontend;
 use alloy::rpc::types::BlockTransactionsKind;
 use alloy::sol_types::SolValue;
+use alloy::{consensus::BlockHeader, network::Ethereum};
 use bitcoincore_rpc_async::RpcApi;
 use clap::Parser;
 use data_engine::engine::ContractDataEngine;
 use eyre::{eyre, Result};
 use mempool_electrs::{TxStatus, Utxo};
-use rift_core::vaults::hash_deposit_vault;
+use rift_core::vaults::SolidityHash;
 use rift_sdk::{
     bitcoin_utils::AsyncBitcoinClient,
     create_websocket_provider,
     txn_builder::{build_rift_payment_transaction, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
-use sol_bindings::DepositVault;
+use sol_bindings::Order;
 use std::{cmp::Reverse, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -100,7 +100,7 @@ struct MarketMaker {
     data_engine: ContractDataEngine,
     config: MakerConfig,
     mempool_electrs_client: Arc<MempoolElectrsClient>,
-    provider: Arc<dyn Provider<PubSubFrontend>>,
+    provider: DynProvider,
     mempool_utxo: Option<Utxo>,
 }
 
@@ -128,8 +128,7 @@ impl MarketMaker {
         let mempool_electrs_client =
             Arc::new(MempoolElectrsClient::new(&config.mempool_electrs_url));
 
-        let provider: Arc<dyn Provider<PubSubFrontend>> =
-            Arc::new(create_websocket_provider(&config.evm_ws_url).await?);
+        let provider: DynProvider = create_websocket_provider(&config.evm_ws_url).await?;
         let checkpoint_leaves =
             checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
         let mut join_set = JoinSet::new();
@@ -265,7 +264,7 @@ impl MarketMaker {
     }
 
     /// Fetch fillable deposits from the data engine
-    async fn fetch_fillable_deposits(&self) -> Result<Vec<DepositVault>> {
+    async fn fetch_fillable_deposits(&self) -> Result<Vec<Order>> {
         // TODO: Track the block number of the last deposit processed
         let deposits = self
             .data_engine
@@ -278,21 +277,15 @@ impl MarketMaker {
     }
 
     /// Filter out deposits that we've already processed
-    async fn filter_processed_deposits(
-        &self,
-        deposits: Vec<DepositVault>,
-    ) -> Result<Vec<DepositVault>> {
+    async fn filter_processed_deposits(&self, deposits: Vec<Order>) -> Result<Vec<Order>> {
         let mut unprocessed = Vec::new();
 
-        let latest_block = self
-            .provider
-            .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
-            .await?;
+        let latest_block = self.provider.get_block(BlockId::latest()).await?;
 
         let latest_block_timestamp = latest_block.unwrap().header().timestamp();
 
         for deposit in deposits {
-            let commitment = format!("0x{}", hex::encode(hash_deposit_vault(&deposit)));
+            let commitment = format!("0x{}", hex::encode(deposit.hash()));
 
             let already_processed = self
                 .payment_database_connection
@@ -304,23 +297,21 @@ impl MarketMaker {
                     let count: i64 = stmt.query_row(params![commitment], |row| row.get(0))?;
 
                     if latest_block_timestamp
-                        > deposit.depositTimestamp
-                            + (LOCKUP_PERIOD * deposit.confirmationBlocks as u64)
+                        > deposit.timestamp + (LOCKUP_PERIOD * deposit.confirmationBlocks as u64)
                     {
-                        println!("Deposit has expired: {}", deposit.vaultIndex);
+                        println!("Deposit has expired: {}", deposit.index);
                         return Ok(true);
                     }
 
                     if count > 0 {
-                        println!("Deposit has already been processed: {}", deposit.vaultIndex);
+                        println!("Deposit has already been processed: {}", deposit.index);
                     }
 
                     let ignored_deposits: Vec<u32> = (16..=27).collect();
 
-                    if ignored_deposits
-                        .contains(&u32::try_from(deposit.vaultIndex).unwrap_or_default())
+                    if ignored_deposits.contains(&u32::try_from(deposit.index).unwrap_or_default())
                     {
-                        println!("Deposit is manually ignored: {}", deposit.vaultIndex);
+                        println!("Deposit is manually ignored: {}", deposit.index);
                         return Ok(true);
                     }
 
@@ -337,7 +328,7 @@ impl MarketMaker {
     }
 
     /// Process a single deposit by creating and sending a Bitcoin transaction
-    async fn process_deposit(&mut self, deposit: DepositVault) -> Result<()> {
+    async fn process_deposit(&mut self, deposit: Order) -> Result<()> {
         info!(
             "Processing deposit with expected sats: {}",
             deposit.expectedSats
@@ -396,7 +387,7 @@ impl MarketMaker {
         info!("Transaction sent with txid: {}", tx_result);
 
         // Record the transaction in our database
-        let commitment = format!("0x{}", hex::encode(hash_deposit_vault(&deposit)));
+        let commitment = format!("0x{}", hex::encode(deposit.hash()));
         let tx_hex = tx_result.to_string();
         let now = chrono::Utc::now().timestamp();
 

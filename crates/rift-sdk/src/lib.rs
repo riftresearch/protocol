@@ -9,24 +9,18 @@ use alloy::network::{Ethereum, EthereumWallet};
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };
-use alloy::providers::{Identity, ProviderBuilder, RootProvider, WsConnect};
+use alloy::providers::Provider;
+use alloy::providers::{DynProvider, Identity, ProviderBuilder, RootProvider, WsConnect};
 use alloy::pubsub::{ConnectionHandle, PubSubConnect};
 use alloy::rpc::client::ClientBuilder;
 use alloy::signers::local::LocalSigner;
-use alloy::signers::Signer;
 use alloy::transports::{impl_future, TransportResult};
-use alloy::{providers::Provider, pubsub::PubSubFrontend};
 use backoff::exponential::ExponentialBackoff;
 use bitcoin::hashes::hex::FromHex;
-use rift_core::giga::RiftProgramInput;
 use sol_bindings::RiftExchangeHarnessInstance;
-use sp1_sdk::{include_elf, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
-use sp1_sdk::{EnvProver, HashableKey};
-use sp1_sdk::{Prover, SP1ProvingKey};
+use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient};
 use std::fmt::Write;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Instant;
 
 pub type WebsocketWalletProvider = FillProvider<
     JoinFill<
@@ -36,36 +30,15 @@ pub type WebsocketWalletProvider = FillProvider<
         >,
         WalletFiller<EthereumWallet>,
     >,
-    RootProvider<PubSubFrontend>,
-    PubSubFrontend,
-    Ethereum,
+    RootProvider,
 >;
 
-pub type RiftExchangeHarnessClient = RiftExchangeHarnessInstance<
-    PubSubFrontend,
-    Arc<
-        FillProvider<
-            JoinFill<
-                JoinFill<
-                    Identity,
-                    JoinFill<
-                        GasFiller,
-                        JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>,
-                    >,
-                >,
-                WalletFiller<EthereumWallet>,
-            >,
-            RootProvider<PubSubFrontend>,
-            PubSubFrontend,
-            Ethereum,
-        >,
-    >,
->;
+pub type RiftExchangeHarnessClient = RiftExchangeHarnessInstance<DynProvider>;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const RIFT_PROGRAM_ELF: &[u8] = include_elf!("rift-program");
 
-/// This is expensive to compute, so if you have a proof generator, use that instead.
+/// This is expensive to compute, so if you have a `ProofGenerator` instantiated, use that instead.
 pub fn get_rift_program_hash() -> [u8; 32] {
     let client = ProverClient::builder().mock().build();
     let (_, vk) = client.setup(RIFT_PROGRAM_ELF);
@@ -128,22 +101,6 @@ impl PubSubConnect for RetryWsConnect {
     }
 }
 
-pub async fn create_websocket_provider(
-    evm_rpc_websocket_url: &str,
-) -> errors::Result<impl Provider<PubSubFrontend>> {
-    let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
-    let client = ClientBuilder::default()
-        .pubsub(ws)
-        .await
-        .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
-
-    let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .on_client(client);
-
-    Ok(provider)
-}
-
 pub fn right_pad_to_25_bytes(input: &[u8]) -> [u8; 25] {
     let mut padded = [0u8; 25];
     let copy_len = input.len().min(25);
@@ -151,6 +108,19 @@ pub fn right_pad_to_25_bytes(input: &[u8]) -> [u8; 25] {
     padded
 }
 
+/// Creates a type erased websocket provider
+pub async fn create_websocket_provider(evm_rpc_websocket_url: &str) -> errors::Result<DynProvider> {
+    let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
+    let client = ClientBuilder::default()
+        .pubsub(ws)
+        .await
+        .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
+
+    Ok(ProviderBuilder::new().on_client(client).erased())
+}
+
+/// Creates a provider that is both a websocket provider and a wallet provider.
+/// note NOT type erased so we can access the wallet methods of the provider
 pub async fn create_websocket_wallet_provider(
     evm_rpc_websocket_url: &str,
     private_key: [u8; 32],
@@ -162,7 +132,6 @@ pub async fn create_websocket_wallet_provider(
         .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
 
     let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
         .wallet(EthereumWallet::new(
             LocalSigner::from_str(&hex::encode(private_key))
                 .map_err(|e| errors::RiftSdkError::InvalidPrivateKey(e.to_string()))?,

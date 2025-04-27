@@ -1,7 +1,7 @@
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::{Transaction, TxOut};
 
-use sol_bindings::DepositVault;
+use sol_bindings::Order;
 
 // Constants
 pub const OP_RETURN_CODE: u8 = 0x6a;
@@ -32,7 +32,7 @@ pub fn remove_script_pubkey_contract_padding(
 /// 3. The second output contains an OP_RETURN with the vault commitment
 pub fn validate_bitcoin_payment(
     txn_data: &[u8],
-    reserved_vault: &DepositVault,
+    reserved_vault: &Order,
     vault_commitment: &[u8; 32],
 ) -> Result<(), &'static str> {
     // [0] deserialize txn data
@@ -54,7 +54,7 @@ pub fn validate_bitcoin_payment(
     }
 
     // [4] check txn recipient matches on-chain LP wallet
-    let script_pubkey: [u8; 25] = reserved_vault.btcPayoutScriptPubKey.into();
+    let script_pubkey: [u8; 25] = reserved_vault.bitcoinScriptPubKey.into();
     let script_pubkey_without_padding = remove_script_pubkey_contract_padding(&script_pubkey)?;
 
     if tx_out.script_pubkey.as_bytes() != script_pubkey_without_padding {

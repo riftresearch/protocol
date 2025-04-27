@@ -1,17 +1,23 @@
+use alloy_sol_types::SolValue;
 // Effectively a Rust impl of `contracts/src/libraries/CommitmentVerificationLib.sol`
-use alloy_sol_types::SolType;
-use sol_bindings::DepositVault;
+use sol_bindings::Order;
 use tiny_keccak::{Hasher, Keccak};
 
-pub fn hash_deposit_vault(vault: &DepositVault) -> [u8; 32] {
-    let mut hasher = Keccak::v256();
-    let mut output = [0u8; 32];
+pub trait SolidityHash {
+    fn hash(&self) -> [u8; 32];
+}
 
-    let abi_encoded = DepositVault::abi_encode(vault);
+impl SolidityHash for Order {
+    fn hash(&self) -> [u8; 32] {
+        let mut hasher = Keccak::v256();
+        let mut output = [0u8; 32];
 
-    hasher.update(&abi_encoded);
-    hasher.finalize(&mut output);
-    output
+        let abi_encoded = Order::abi_encode(self);
+
+        hasher.update(&abi_encoded);
+        hasher.finalize(&mut output);
+        output
+    }
 }
 
 #[cfg(test)]

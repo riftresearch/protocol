@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 
-use rift_sdk::{get_rift_program_hash, DatabaseLocation, WebsocketWalletProvider};
+use rift_sdk::{create_websocket_wallet_provider, get_rift_program_hash, DatabaseLocation};
 
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::RpcApi;
@@ -58,14 +58,12 @@ sol!(
 
 use alloy::network::{Ethereum, EthereumWallet, NetworkWallet};
 use alloy::primitives::{Address as EvmAddress, U256};
-use alloy::providers::{Identity, Provider, RootProvider};
+use alloy::providers::{DynProvider, Identity, Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 
-pub type RiftExchangeHarnessWebsocket =
-    RiftExchangeHarnessInstance<PubSubFrontend, Arc<WebsocketWalletProvider>>;
+pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>;
 
-pub type SyntheticBTCWebsocket =
-    SyntheticBTC::SyntheticBTCInstance<PubSubFrontend, Arc<WebsocketWalletProvider>>;
+pub type SyntheticBTCWebsocket = SyntheticBTC::SyntheticBTCInstance<DynProvider>;
 
 // ================== Deploy Function ================== //
 
@@ -98,14 +96,11 @@ pub async fn deploy_contracts(
     let deployer_address = deployer_wallet.default_signer().address();
 
     // Build a provider
-    let provider = Arc::new(
-        ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(deployer_wallet)
-            .on_ws(WsConnect::new(anvil.ws_endpoint_url()))
-            .await
-            .map_err(|e| eyre!("Error connecting to Anvil: {e}"))?,
-    );
+    let provider = create_websocket_wallet_provider(
+        &anvil.ws_endpoint(),
+        deployer_signer.credential().to_bytes().try_into().unwrap(),
+    )
+    .await?;
 
     let verifier_contract = Address::from_str("0xaeE21CeadF7A03b3034DAE4f190bFE5F861b6ebf")?;
     // Insert the SP1MockVerifier bytecode
@@ -125,13 +120,13 @@ pub async fn deploy_contracts(
             )
             .await?;
         println!("Deploying MockToken at {}", token_address);
-        SyntheticBTC::new(token_address, provider.clone())
+        SyntheticBTC::new(token_address, provider.clone().erased())
     } else {
         println!("POINTING TO EXISTING MockToken at {}", token_address);
-        SyntheticBTC::new(token_address, provider.clone())
+        SyntheticBTC::new(token_address, provider.clone().erased())
     };
 
-    println!("token decimals: {}", token.decimals().call().await?._0);
+    println!("token decimals: {}", token.decimals().call().await?);
 
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
@@ -139,7 +134,7 @@ pub async fn deploy_contracts(
     let tip_block_leaf_sol: sol_bindings::BlockLeaf = tip_block_leaf.into();
     // Deploy RiftExchange
     let exchange = RiftExchangeHarnessInstance::deploy(
-        provider.clone(),
+        provider.clone().erased(),
         genesis_mmr_root.into(),
         *token.address(),
         circuit_verification_key_hash.into(),
@@ -374,8 +369,7 @@ impl RiftDevnetBuilder {
                 .token_contract
                 .balanceOf(address)
                 .call()
-                .await?
-                .result;
+                .await?;
             println!("Token Balance of {} => {:?}", addr_str, token_balance);
         }
 
