@@ -1,8 +1,6 @@
 use alloy::{
-    network::EthereumWallet,
     primitives::{utils::format_units, U256},
     providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
-    signers::local::LocalSigner,
     sol_types::SolEvent,
 };
 use bitcoin::{
@@ -309,6 +307,7 @@ async fn test_hypernode_simple_swap() {
             rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
             deploy_block_number: 0,
             btc_batch_rpc_size: 100,
+            log_chunk_size: 10000,
             proof_generator: ProofGeneratorType::Execute,
         };
         hypernode::run(hypernode_args)

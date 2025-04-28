@@ -100,7 +100,7 @@ impl BitcoinDataEngine {
         let mut subscription = self.initial_sync_broadcaster.subscribe();
         match self
             .initial_sync_complete
-            .load(std::sync::atomic::Ordering::Acquire)
+            .load(std::sync::atomic::Ordering::SeqCst)
         {
             true => Ok(()),
             false => {

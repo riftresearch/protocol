@@ -34,7 +34,7 @@ use tokio_util::task::{task_tracker, TaskTracker};
 use core::panic;
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{
-    sync::{Mutex, RwLock},
+    sync::{broadcast, Mutex, RwLock},
     task::JoinSet,
 };
 use tracing::{info, info_span, instrument, warn, Instrument};
@@ -61,8 +61,8 @@ pub struct ContractDataEngine {
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
     // New field to track if the event listener has been started already.
     server_started: Arc<AtomicBool>,
-    initial_sync_complete_watcher: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<bool>>>>,
     initial_sync_complete: Arc<AtomicBool>,
+    initial_sync_broadcaster: broadcast::Sender<bool>,
 }
 
 impl ContractDataEngine {
@@ -89,25 +89,17 @@ impl ContractDataEngine {
             checkpointed_block_tree,
             swap_database_connection,
             initial_sync_complete: Arc::new(AtomicBool::new(false)),
-            initial_sync_complete_watcher: Arc::new(Mutex::new(Vec::new())),
+            initial_sync_broadcaster: broadcast::channel(1).0,
             server_started: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub async fn wait_for_initial_sync(&self) -> eyre::Result<()> {
-        let mut initial_sync_complete_watcher = self.initial_sync_complete_watcher.lock().await;
-        if self
-            .initial_sync_complete
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        let mut rx = self.initial_sync_broadcaster.subscribe();
+        if self.initial_sync_complete.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        initial_sync_complete_watcher.push(tx);
-        drop(initial_sync_complete_watcher);
-        rx.await
-            .map_err(|_| eyre::eyre!("Initial sync watcher channel closed unexpectedly"))?;
-        Ok(())
+        rx.recv().await.map(|_| ()).map_err(Into::into)
     }
 
     /// Seeds the DataEngine and immediately starts the event listener.
@@ -117,6 +109,7 @@ impl ContractDataEngine {
         provider: DynProvider,
         rift_exchange_address: Address,
         deploy_block_number: u64,
+        log_chunk_size: u64,
         checkpoint_leaves: Vec<BlockLeaf>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<Self> {
@@ -128,6 +121,7 @@ impl ContractDataEngine {
                 provider,
                 rift_exchange_address,
                 deploy_block_number,
+                log_chunk_size,
                 join_set,
             )
             .await?;
@@ -142,6 +136,7 @@ impl ContractDataEngine {
         provider: DynProvider,
         rift_exchange_address: Address,
         deploy_block_number: u64,
+        chunk_size: u64,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> eyre::Result<()> {
         // If the server is already started, return an error.
@@ -153,7 +148,7 @@ impl ContractDataEngine {
         let checkpointed_block_tree_clone = self.checkpointed_block_tree.clone();
         let swap_database_connection_clone = self.swap_database_connection.clone();
         let initial_sync_complete_clone = self.initial_sync_complete.clone();
-        let initial_sync_complete_watcher_clone = self.initial_sync_complete_watcher.clone();
+        let initial_sync_broadcaster_clone = self.initial_sync_broadcaster.clone();
 
         join_set.spawn(
             async move {
@@ -165,7 +160,8 @@ impl ContractDataEngine {
                     rift_exchange_address,
                     deploy_block_number,
                     initial_sync_complete_clone,
-                    initial_sync_complete_watcher_clone,
+                    initial_sync_broadcaster_clone,
+                    chunk_size,
                 )
                 .await
             }
@@ -300,7 +296,20 @@ fn get_qualified_swaps_database_path(database_location: String) -> String {
     swaps_db_path.to_str().expect("Invalid path").to_string()
 }
 
-// This will run indefinitely
+/// Process every past + future event for `rift_exchange_address` without gaps.
+///
+/// 1.  Start the Web-socket subscription *first* (race-free).
+/// 2.  Push every live log into an **unbounded** MPSC channel; it will grow
+///     in RAM for as long as the synchronous back-fill lasts.
+/// 3.  Snapshot the chain head once, then walk `[deploy_block … head]`
+///     in `CHUNK_SIZE` windows.
+/// 4.  Drain whatever accumulated in the channel while back-filling.
+/// 5.  Mark initial sync done, then forever `recv` from the channel.
+///
+/// Safety notes:
+/// * No log loss, no double processing (checkpoint tree dedupes reorgs).
+/// * Memory is the only buffer; high-traffic contracts + slow back-fills
+///   can eat GBs of RAM.  Instrument `BACKLOG.store(len)` if you want alerts.
 pub async fn listen_for_events(
     provider: DynProvider,
     db_conn: &Arc<tokio_rusqlite::Connection>,
@@ -308,63 +317,49 @@ pub async fn listen_for_events(
     rift_exchange_address: Address,
     deploy_block_number: u64,
     initial_sync_complete: Arc<AtomicBool>,
-    initial_sync_complete_watcher: Arc<Mutex<Vec<tokio::sync::oneshot::Sender<bool>>>>,
+    initial_sync_broadcaster: broadcast::Sender<bool>,
+    chunk_size: u64,
 ) -> Result<()> {
-    // First, get the current block number
-    let current_block = provider.get_block_number().await?;
-    info!("Current block number: {}", current_block);
+    use std::sync::atomic::Ordering;
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
-    // Create filter for historical logs from deploy_block_number to current_block (inclusive)
-    let historical_filter = Filter::new()
-        .address(rift_exchange_address)
-        .from_block(BlockNumberOrTag::Number(deploy_block_number))
-        .to_block(BlockNumberOrTag::Number(current_block));
-
-    // Fetch all historical logs
-    info!(
-        "Fetching historical logs from block {} to {}",
-        deploy_block_number, current_block
-    );
-    let historical_logs = provider.get_logs(&historical_filter).await?;
-
-    // Process historical logs
-    for log in historical_logs.iter() {
-        process_log(
-            log,
-            db_conn,
-            &checkpointed_block_tree,
-            provider.clone(),
-            rift_exchange_address,
-        )
+    // ---------------------------------------------------------------------
+    // 1. Live subscription first (race-free)
+    // ---------------------------------------------------------------------
+    let sub = provider
+        .subscribe_logs(&Filter::new().address(rift_exchange_address))
         .await?;
-    }
-    info!("Processed {} historical logs", historical_logs.len());
+    let mut live_stream = sub.into_stream();
 
-    // Get the latest block number again to ensure we don't miss any blocks
-    // that might have been produced while processing historical logs
-    let latest_block = provider.get_block_number().await?;
-    info!(
-        "Latest block after processing historical logs: {}",
-        latest_block
-    );
+    // 2. Unbounded buffer for live logs
+    let (tx, mut rx): (_, UnboundedReceiver<Log>) = unbounded_channel();
+    tokio::spawn(async move {
+        while let Some(log) = live_stream.next().await {
+            if tx.send(log).is_err() {
+                break;
+            }
+        }
+    });
 
-    // Check for any logs that might have been emitted during historical processing
-    if latest_block > current_block {
-        let gap_filter = Filter::new()
-            .address(rift_exchange_address)
-            .from_block(BlockNumberOrTag::Number(current_block + 1))
-            .to_block(BlockNumberOrTag::Number(latest_block));
+    // ---------------------------------------------------------------------
+    // 3. Historical back-fill
+    // ---------------------------------------------------------------------
+    let head = provider.get_block_number().await?; // single snapshot
+    let mut from = deploy_block_number;
 
-        let gap_logs = provider.get_logs(&gap_filter).await?;
-        info!(
-            "Found {} logs in the gap between {} and {}",
-            gap_logs.len(),
-            current_block + 1,
-            latest_block
-        );
+    while from <= head {
+        let to = head.min(from + chunk_size - 1);
+        let logs = provider
+            .get_logs(
+                &Filter::new()
+                    .address(rift_exchange_address)
+                    .from_block(BlockNumberOrTag::Number(from))
+                    .to_block(BlockNumberOrTag::Number(to)),
+            )
+            .await?;
 
-        // Process gap logs
-        for log in gap_logs {
+        // Synchronous / ordered processing
+        for log in logs {
             process_log(
                 &log,
                 db_conn,
@@ -374,33 +369,13 @@ pub async fn listen_for_events(
             )
             .await?;
         }
-    }
-    // TODO: This can potentially drop blocks, update this to subscribe BEFORE pulling historical logs
-
-    // Create subscription filter for new logs starting after the latest processed block
-    let subscription_filter = Filter::new()
-        .address(rift_exchange_address)
-        .from_block(BlockNumberOrTag::Number(latest_block + 1));
-
-    // Subscribe to new logs
-    let sub = provider.subscribe_logs(&subscription_filter).await?;
-    let mut stream = sub.into_stream();
-    info!(
-        "Subscribed to new logs starting from block {}",
-        latest_block + 1
-    );
-
-    // Signal that the initial sync is complete
-    initial_sync_complete.store(true, std::sync::atomic::Ordering::SeqCst);
-    {
-        let mut initial_sync_complete_watcher = initial_sync_complete_watcher.lock().await;
-        for tx in initial_sync_complete_watcher.drain(..) {
-            let _ = tx.send(true);
-        }
+        from = to + 1;
     }
 
-    // Now process the subscription stream
-    while let Some(log) = stream.next().await {
+    // ---------------------------------------------------------------------
+    // 4. Drain buffered live events emitted during back-fill
+    // ---------------------------------------------------------------------
+    while let Ok(log) = rx.try_recv() {
         process_log(
             &log,
             db_conn,
@@ -411,8 +386,29 @@ pub async fn listen_for_events(
         .await?;
     }
 
-    println!("Subscription stream closed");
+    // ---------------------------------------------------------------------
+    // 5. Signal initial sync complete
+    // ---------------------------------------------------------------------
+    initial_sync_complete.store(true, Ordering::SeqCst);
+    {
+        let _ = initial_sync_broadcaster.send(true);
+    }
 
+    // ---------------------------------------------------------------------
+    // 6. Tail the unbounded channel forever
+    // ---------------------------------------------------------------------
+    while let Some(log) = rx.recv().await {
+        process_log(
+            &log,
+            db_conn,
+            &checkpointed_block_tree,
+            provider.clone(),
+            rift_exchange_address,
+        )
+        .await?;
+    }
+
+    // If the subscription closes we exit the function gracefully
     Ok(())
 }
 

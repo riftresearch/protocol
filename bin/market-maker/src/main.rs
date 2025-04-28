@@ -80,6 +80,10 @@ pub struct MakerConfig {
     /// Checkpoint leaves
     #[arg(long)]
     checkpoint_file: String,
+
+    /// Log chunk size
+    #[arg(long, default_value = "10000")]
+    log_chunk_size: u64,
 }
 
 /// Represents a swap in our local database
@@ -140,6 +144,7 @@ impl MarketMaker {
             provider.clone(),
             rift_exchange_address,
             config.rift_deployment_block_number,
+            config.log_chunk_size,
             checkpoint_leaves,
             &mut join_set,
         )

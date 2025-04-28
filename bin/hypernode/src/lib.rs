@@ -72,6 +72,10 @@ pub struct HypernodeArgs {
     #[arg(long, env)]
     pub deploy_block_number: u64,
 
+    /// Log chunk size
+    #[arg(long, env, default_value = "10000")]
+    pub log_chunk_size: u64,
+
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
     pub btc_batch_rpc_size: usize,
@@ -138,6 +142,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
             evm_rpc.clone(),
             rift_exchange_address,
             args.deploy_block_number,
+            args.log_chunk_size,
             checkpoint_leaves,
             &mut join_set,
         )

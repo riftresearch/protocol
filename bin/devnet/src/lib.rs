@@ -179,6 +179,7 @@ pub struct RiftDevnetBuilder {
     funded_bitcoin_address: Option<String>,
     fork_config: Option<ForkConfig>,
     data_engine_db_location: DatabaseLocation,
+    log_chunk_size: u64,
 }
 
 impl Default for RiftDevnetBuilder {
@@ -190,6 +191,7 @@ impl Default for RiftDevnetBuilder {
             funded_bitcoin_address: None,
             fork_config: None,
             data_engine_db_location: DatabaseLocation::InMemory,
+            log_chunk_size: 10000,
         }
     }
 }
@@ -253,6 +255,7 @@ impl RiftDevnetBuilder {
             funded_bitcoin_address,
             fork_config,
             data_engine_db_location,
+            log_chunk_size,
         } = self;
 
         let mut join_set = JoinSet::new();
@@ -312,6 +315,7 @@ impl RiftDevnetBuilder {
                 ethereum_devnet.funded_provider.clone(),
                 *ethereum_devnet.rift_exchange_contract.address(),
                 deployment_block_number,
+                log_chunk_size,
                 &mut join_set,
             )
             .await?;
