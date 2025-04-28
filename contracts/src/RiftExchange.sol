@@ -192,6 +192,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         Payment[] memory updatedPayments = new Payment[](settleOrderParams.length);
         Order[] memory updatedOrders = new Order[](settleOrderParams.length);
 
+        uint256 localFees = 0;
         for (uint256 i = 0; i < settleOrderParams.length; i++) {
             settleOrderParams[i].payment.checkIntegrity(paymentHashes);
             if (settleOrderParams[i].payment.state != PaymentState.Proved) revert PaymentNotProved();
@@ -225,7 +226,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             updatedPayment.state = PaymentState.Settled;
             paymentHashes[settleOrderParams[i].payment.index] = updatedPayment.hash();
 
-            accumulatedFees += settleOrderParams[i].order.takerFee;
+            localFees += settleOrderParams[i].order.takerFee;
 
             syntheticBitcoin.safeTransfer(
                 settleOrderParams[i].order.designatedReceiver,
@@ -234,6 +235,8 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
             updatedPayments[i] = updatedPayment;
         }
+
+        accumulatedFees += localFees;
 
         emit PaymentsUpdated(updatedPayments, PaymentUpdateContext.Settled);
         emit OrdersUpdated(updatedOrders, OrderUpdateContext.Settled);

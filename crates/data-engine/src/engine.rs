@@ -1,20 +1,7 @@
 use alloy::{
-    network::Ethereum,
     primitives::{Address, FixedBytes},
-    providers::{
-        ext::{DebugApi, TraceApi},
-        DynProvider, Provider, ProviderBuilder,
-    },
-    rpc::types::{
-        trace::{
-            geth::{
-                GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingOptions,
-                GethDefaultTracingOptions,
-            },
-            parity::Action,
-        },
-        BlockNumberOrTag, Filter, Log,
-    },
+    providers::{ext::TraceApi, DynProvider, Provider},
+    rpc::types::{trace::parity::Action, BlockNumberOrTag, Filter, Log},
     sol_types::{SolCall, SolEvent},
 };
 use bitcoin_light_client_core::{
@@ -27,17 +14,15 @@ use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
 use sol_bindings::{
     submitPaymentProofs_1Call, updateLightClientCall, BitcoinLightClientUpdated, Order,
-    OrdersUpdated, PaymentsUpdated, RiftExchangeHarnessCalls,
+    OrdersUpdated, PaymentsUpdated,
 };
-use tokio_util::task::{task_tracker, TaskTracker};
 
-use core::panic;
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use tokio::{
-    sync::{broadcast, Mutex, RwLock},
+    sync::{broadcast, RwLock},
     task::JoinSet,
 };
-use tracing::{info, info_span, instrument, warn, Instrument};
+use tracing::{info, info_span, warn, Instrument};
 
 // Added for idempotency tracking.
 use std::sync::atomic::{AtomicBool, Ordering};
