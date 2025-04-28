@@ -1,0 +1,7 @@
+{
+  "p2pkh_validate": "861",
+  "p2sh_validate": "614",
+  "p2tr_validate": "639",
+  "p2wpkh_validate": "470",
+  "p2wsh_validate": "607"
+}

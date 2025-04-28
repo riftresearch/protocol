@@ -12,7 +12,6 @@ use bitcoin::{
     transaction, Address, Amount, CompressedPublicKey, Network, OutPoint, PrivateKey, Script,
     ScriptBuf, Sequence, TxOut, Txid,
 };
-use rift_core::payments::remove_script_pubkey_contract_padding;
 use rift_core::vaults::SolidityHash;
 
 use crate::errors::{Result, RiftSdkError};
@@ -167,9 +166,6 @@ pub fn build_rift_payment_transaction(
     // Add liquidity provider outputs
     let amount = deposit_vault.expectedSats;
     let script_pubkey = &deposit_vault.bitcoinScriptPubKey.0;
-
-    // remove padding
-    let script_pubkey = remove_script_pubkey_contract_padding(script_pubkey).unwrap();
 
     let script = Script::from_bytes(script_pubkey);
     tx_outs.push(TxOut {

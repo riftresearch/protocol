@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 
+/**
+ * @title MMRProofLib
+ * @notice Library for verifying MMR proofs
+ */
 library MMRProofLib {
     /**
      * @notice Verifies a block is included in the current MMR tree.

@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {Ownable} from "solady/src/auth/Ownable.sol";
 
 import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
+/**
+ * @title MappingWhitelist
+ * @notice A simple whitelist implementation that uses a mapping to store whitelisted addresses
+ */
 contract MappingWhitelist is IRiftWhitelist, Ownable {
     event WhitelistUpdated(address indexed account, bool isWhitelisted);
     mapping(address => bool) public whitelist;

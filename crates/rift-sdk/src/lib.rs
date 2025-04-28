@@ -101,13 +101,6 @@ impl PubSubConnect for RetryWsConnect {
     }
 }
 
-pub fn right_pad_to_25_bytes(input: &[u8]) -> [u8; 25] {
-    let mut padded = [0u8; 25];
-    let copy_len = input.len().min(25);
-    padded[..copy_len].copy_from_slice(&input[..copy_len]);
-    padded
-}
-
 /// Creates a type erased websocket provider
 pub async fn create_websocket_provider(evm_rpc_websocket_url: &str) -> errors::Result<DynProvider> {
     let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));

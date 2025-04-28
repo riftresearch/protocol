@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 import {BlockLeaf} from "../../src/interfaces/IBitcoinLightClient.sol";
 
@@ -23,10 +23,12 @@ interface HelperTypes {
         BlockLeaf tipBlockLeaf;
     }
 
-    function expose() external view returns (
-        MMRProof memory mmrProof,
-        ReleaseMMRProof memory releaseMmrProof,
-        DeploymentParams memory deploymentParams
-    );
-
+    function expose()
+        external
+        view
+        returns (
+            MMRProof memory mmrProof,
+            ReleaseMMRProof memory releaseMmrProof,
+            DeploymentParams memory deploymentParams
+        );
 }

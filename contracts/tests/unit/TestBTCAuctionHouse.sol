@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/src/Vm.sol";
@@ -49,7 +49,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
 
         auctionHouse = new BTCDutchAuctionHouse({
             _mmrRoot: initialProof.mmrRoot,
-            _depositToken: address(syntheticBTC),
+            _syntheticBitcoin: address(syntheticBTC),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),

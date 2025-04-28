@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
+/**
+ * @title PeriodLib
+ * @notice Library for calculating various periods
+ */
 library PeriodLib {
     // TODO: What is the security parameter for 2 hours per confirmation?
     uint32 public constant DEPOSIT_LOCKUP_PERIOD_SCALAR = 2 hours; // 2 hours per confirmation block

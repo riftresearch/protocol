@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.20;
 
 import "forge-std/src/Script.sol";
@@ -7,7 +7,6 @@ import "../src/RiftExchange.sol";
 import {HelperTypes} from "../tests/utils/HelperTypes.sol";
 
 contract DeployRiftExchange is Script {
-
     function stringToUint(string memory s) internal pure returns (uint256) {
         bytes memory b = bytes(s);
         uint256 result = 0;

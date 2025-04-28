@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.4;
 import "../../src/interfaces/IRiftExchange.sol";
 
@@ -15,8 +15,10 @@ import {HashLib} from "../../src/libraries/HashLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {SyntheticBTC} from "./SyntheticBTC.sol";
+
 contract RiftExchangeHarness is RiftExchange {
     using SafeTransferLib for address;
+
     constructor(
         bytes32 _mmrRoot,
         address _depositToken,
@@ -25,12 +27,21 @@ contract RiftExchangeHarness is RiftExchange {
         address _feeRouter,
         uint16 _takerFeeBips,
         BlockLeaf memory _tipBlockLeaf
-    ) RiftExchange(_mmrRoot, _depositToken, _circuitVerificationKey, _verifier, _feeRouter, _takerFeeBips, _tipBlockLeaf) {}
+    )
+        RiftExchange(
+            _mmrRoot,
+            _depositToken,
+            _circuitVerificationKey,
+            _verifier,
+            _feeRouter,
+            _takerFeeBips,
+            _tipBlockLeaf
+        )
+    {}
 
-    function createOrder(CreateOrderParams memory params) external returns (bytes32) {
-        bytes32 hash = super._createOrder(params);
+    function createOrder(CreateOrderParams memory params) external {
+        super._createOrder(params);
         syntheticBitcoin.safeTransferFrom(msg.sender, address(this), params.depositAmount);
-        return hash;
     }
 }
 
@@ -112,7 +123,10 @@ contract RiftTest is Test, PRNG {
             height,
             confirmations
         );
-        HelperTypes.ReleaseMMRProof memory releaseProof = abi.decode(combinedEncodedProofs, (HelperTypes.ReleaseMMRProof));
+        HelperTypes.ReleaseMMRProof memory releaseProof = abi.decode(
+            combinedEncodedProofs,
+            (HelperTypes.ReleaseMMRProof)
+        );
         return (releaseProof.proof, releaseProof.tipProof);
     }
 
@@ -128,8 +142,8 @@ contract RiftTest is Test, PRNG {
         return (proof, compressedBlockLeaves);
     }
 
-    function _generateBtcPayoutScriptPubKey() internal returns (bytes22) {
-        return bytes22(bytes.concat(bytes2(0x0014), keccak256(abi.encode(_random()))));
+    function _generateBtcPayoutScriptPubKey() internal returns (bytes memory) {
+        return bytes.concat(bytes2(0x0014), bytes20(keccak256(abi.encode(_random()))));
     }
 
     function _extractSingleOrderFromLogs(Vm.Log[] memory logs) internal pure returns (Order memory) {
@@ -160,7 +174,7 @@ contract RiftTest is Test, PRNG {
         syntheticBTC.approve(address(exchange), depositAmount);
 
         // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
-        bytes22 btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
+        bytes memory btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
 
         bytes32 depositSalt = bytes32(keccak256(abi.encode(_random())));
 

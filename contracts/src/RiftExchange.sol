@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 pragma solidity =0.8.28;
 
@@ -20,6 +20,11 @@ import {MMRProofLib} from "./libraries/MMRProof.sol";
 import {BitcoinScriptLib} from "./libraries/BitcoinScriptLib.sol";
 import {OrderValidationLib} from "./libraries/OrderValidationLib.sol";
 
+/**
+ * @title Rift Exchange
+ * @notice A trustless exchange for cross-chain Bitcoin<>Synthetic Bitcoin swaps
+ * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
+ */
 abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightClient {
     using SafeTransferLib for address;
     using HashLib for Order;
@@ -28,25 +33,16 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     using DataIntegrityLib for Payment;
     using OrderValidationLib for CreateOrderParams;
 
-    // -----------------------------------------------------------------------
-    //                                IMMUTABLES
-    // -----------------------------------------------------------------------
     address public immutable syntheticBitcoin;
     bytes32 public immutable circuitVerificationKey;
     address public immutable verifier;
 
-    // -----------------------------------------------------------------------
-    //                                 STATE
-    // -----------------------------------------------------------------------
     bytes32[] public orderHashes;
     bytes32[] public paymentHashes;
     uint256 public accumulatedFees;
     address public feeRouter;
     uint16 public takerFeeBips;
 
-    // -----------------------------------------------------------------------
-    //                              CONSTRUCTOR
-    // -----------------------------------------------------------------------
     constructor(
         bytes32 _mmrRoot,
         address _depositToken,
@@ -57,9 +53,9 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         BlockLeaf memory _tipBlockLeaf
     ) BitcoinLightClient(_mmrRoot, _tipBlockLeaf) {
         _initializeOwner(msg.sender);
-        /// @dev Deposit token checks within the contract assume that the token has 8 decimals
+        /// @dev Checks within the contract assume that the token has 8 decimals
         uint8 depositTokenDecimals = ERC20(_depositToken).decimals();
-        if (depositTokenDecimals != 8) revert InvalidDepositTokenDecimals(depositTokenDecimals, 8);
+        if (depositTokenDecimals != 8) revert InvalidDecimals(depositTokenDecimals, 8);
         syntheticBitcoin = _depositToken;
         circuitVerificationKey = _circuitVerificationKey;
         verifier = _verifier;
@@ -67,37 +63,34 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         takerFeeBips = _takerFeeBips;
     }
 
-    /// @dev Returns the domain name and version of the contract, used for EIP712 domain separator
+    /// @notice Returns the domain name and version of the contract, used for EIP712 domain separator
     function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
         name = "RiftExchange";
         version = "0.0.1";
     }
 
-    // -----------------------------------------------------------------------
-    //                             EXTERNAL FUNCTIONS
-    // -----------------------------------------------------------------------
-
-    /// @notice Sends accumulated protocol fees to the fee router contract
-    /// @dev Reverts if there are no fees to pay or if the transfer fails
-    function withdrawFees() external {
-        uint256 feeBalance = accumulatedFees;
-        if (feeBalance == 0) revert NoFeeToPay();
-        accumulatedFees = 0;
-        syntheticBitcoin.safeTransfer(feeRouter, feeBalance);
-    }
-
+    /// @inheritdoc IRiftExchange
     function adminSetFeeRouter(address _feeRouter) external onlyOwner {
         feeRouter = _feeRouter;
     }
 
+    /// @inheritdoc IRiftExchange
     function adminSetTakerFeeBips(uint16 _takerFeeBips) external onlyOwner {
         takerFeeBips = _takerFeeBips;
     }
 
+    /// @inheritdoc IRiftExchange
+    function withdrawFees() external {
+        uint256 feeBalance = accumulatedFees;
+        if (feeBalance == 0) revert NoFeeToWithdraw();
+        accumulatedFees = 0;
+        syntheticBitcoin.safeTransfer(feeRouter, feeBalance);
+    }
+
     /// @notice Creates a new order for Bitcoin<>Tokenized Bitcoin swap
-    /// @return The hash of the new order
     /// @dev This function requires that the child contract handles token accounting
-    function _createOrder(CreateOrderParams memory params) internal returns (bytes32) {
+    /// @param params The parameters for the order
+    function _createOrder(CreateOrderParams memory params) internal {
         // Determine order index
         uint256 orderIndex = orderHashes.length;
 
@@ -111,17 +104,14 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         Order[] memory updatedOrders = new Order[](1);
         updatedOrders[0] = order;
         emit OrdersUpdated(updatedOrders, OrderUpdateContext.Created);
-
-        return orderHash;
     }
 
-    /// @notice Refunds an order after the unlock period if no valid payment was made
-    /// @dev Anyone can call, reverts if order doesn't exist, is empty, or still in unlock period
+    /// @inheritdoc IRiftExchange
     function refundOrder(Order calldata order) external {
         order.checkIntegrity(orderHashes);
-        if (order.amount == 0) revert EmptyDepositVault();
+        if (order.amount == 0) revert OrderNotLive();
         if (block.timestamp < order.unlockTimestamp) {
-            revert DepositStillLocked();
+            revert OrderStillActive();
         }
 
         Order memory updatedOrder = order;
@@ -138,18 +128,14 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         emit OrdersUpdated(updatedOrders, OrderUpdateContext.Refunded);
     }
 
-    /// @notice Submits a batch of payment proofs with light client update
+    /// @inheritdoc IRiftExchange
     function submitPaymentProofs(
         SubmitPaymentProofParams[] calldata paymentParams,
         BlockProofParams calldata blockProofParams,
         bytes calldata proof
     ) external {
         // optimistically update root, needed b/c we validate current inclusion in the chain for each payment
-        _updateRoot(
-            blockProofParams.priorMmrRoot,
-            blockProofParams.newMmrRoot,
-            blockProofParams.tipBlockLeaf
-        );
+        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
 
         uint32 proposedLightClientHeight = blockProofParams.tipBlockLeaf.height;
 
@@ -176,11 +162,8 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         emit PaymentsUpdated(payments, PaymentUpdateContext.Created);
     }
 
-    /// @notice Submits a batch of payment proofs without updating the light client
-    function submitPaymentProofs(
-        SubmitPaymentProofParams[] calldata paymentParams,
-        bytes calldata proof
-    ) external {
+    /// @inheritdoc IRiftExchange
+    function submitPaymentProofs(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external {
         uint32 currentLightClientHeight = lightClientHeight();
         (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) = _validatePayments(
             currentLightClientHeight,
@@ -204,19 +187,20 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         emit PaymentsUpdated(payments, PaymentUpdateContext.Created);
     }
 
-    /// @notice Settles orders by processing verified payments
+    /// @inheritdoc IRiftExchange
     function settleOrders(SettleOrderParams[] calldata settleOrderParams) external {
         Payment[] memory updatedPayments = new Payment[](settleOrderParams.length);
         Order[] memory updatedOrders = new Order[](settleOrderParams.length);
 
         for (uint256 i = 0; i < settleOrderParams.length; i++) {
             settleOrderParams[i].payment.checkIntegrity(paymentHashes);
-            if (settleOrderParams[i].payment.state != PaymentState.Proved) revert SwapNotProved();
-            if (block.timestamp < settleOrderParams[i].payment.challengeExpiryTimestamp) revert StillInChallengePeriod();
+            if (settleOrderParams[i].payment.state != PaymentState.Proved) revert PaymentNotProved();
+            if (block.timestamp < settleOrderParams[i].payment.challengeExpiryTimestamp)
+                revert StillInChallengePeriod();
 
             bytes32 orderHash = settleOrderParams[i].order.checkIntegrity(orderHashes);
             if (orderHash != settleOrderParams[i].payment.orderHash) {
-                revert InvalidVaultHash(settleOrderParams[i].payment.orderHash, orderHash);
+                revert InvalidOrderHash(settleOrderParams[i].payment.orderHash, orderHash);
             }
 
             BlockLeaf memory paymentBlockLeaf = settleOrderParams[i].payment.paymentBitcoinBlockLeaf;
@@ -243,7 +227,10 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
             accumulatedFees += settleOrderParams[i].order.takerFee;
 
-            syntheticBitcoin.safeTransfer(settleOrderParams[i].order.designatedReceiver, settleOrderParams[i].order.amount);
+            syntheticBitcoin.safeTransfer(
+                settleOrderParams[i].order.designatedReceiver,
+                settleOrderParams[i].order.amount
+            );
 
             updatedPayments[i] = updatedPayment;
         }
@@ -252,12 +239,9 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         emit OrdersUpdated(updatedOrders, OrderUpdateContext.Settled);
     }
 
+    /// @inheritdoc IRiftExchange
     function updateLightClient(BlockProofParams calldata blockProofParams, bytes calldata proof) external {
-        _updateRoot(
-            blockProofParams.priorMmrRoot,
-            blockProofParams.newMmrRoot,
-            blockProofParams.tipBlockLeaf
-        );
+        _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
 
         bytes32 compressedLeavesHash = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);
         verifyProof(
@@ -273,6 +257,11 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             }),
             proof
         );
+    }
+
+    /// @inheritdoc IRiftExchange
+    function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
+        ISP1Verifier(verifier).verifyProof(circuitVerificationKey, abi.encode(proofPublicInput), proof);
     }
 
     // -----------------------------------------------------------------------
@@ -317,7 +306,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         uint32 proposedLightClientHeight,
         SubmitPaymentProofParams[] calldata paymentParams
     ) internal returns (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) {
-        if (paymentParams.length == 0) revert NoSwapsToSubmit();
+        if (paymentParams.length == 0) revert NoPaymentsToSubmit();
         paymentPublicInputs = new PaymentPublicInput[](paymentParams.length);
         payments = new Payment[](paymentParams.length);
 
@@ -361,26 +350,20 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         }
     }
 
-    // Convenience function to verify a rift proof via eth_call
-    function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
-        ISP1Verifier(verifier).verifyProof(circuitVerificationKey, abi.encode(proofPublicInput), proof);
-    }
-
     // -----------------------------------------------------------------------
     //                              READ FUNCTIONS
     // -----------------------------------------------------------------------
-
+    /// @inheritdoc IRiftExchange
     function getTotalOrders() external view returns (uint256) {
         return orderHashes.length;
     }
 
+    /// @inheritdoc IRiftExchange
     function getTotalPayments() external view returns (uint256) {
         return paymentHashes.length;
     }
 
-    function serializeLightClientPublicInput(
-        LightClientPublicInput memory input
-    ) external pure returns (bytes memory) {
+    function serializeLightClientPublicInput(LightClientPublicInput memory input) external pure returns (bytes memory) {
         return abi.encode(input);
     }
 }

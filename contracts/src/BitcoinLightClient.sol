@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {IBitcoinLightClient, BlockLeaf, BitcoinCheckpoint} from "./interfaces/IBitcoinLightClient.sol";
@@ -6,10 +6,21 @@ import {IBitcoinLightClient, BlockLeaf, BitcoinCheckpoint} from "./interfaces/IB
 import {MMRProofLib} from "./libraries/MMRProof.sol";
 import {HashLib} from "./libraries/HashLib.sol";
 
+/**
+ * @title Bitcoin Light Client
+ * @notice A Bitcoin light client implementation that maintains a Merkle Mountain Range (MMR)
+ * of Bitcoin blocks for verification purposes
+ *
+ * Each block is stored as a leaf in the MMR containing:
+ * - Block hash
+ * - Block height
+ * - Cumulative chainwork
+ * Updates to the MMR root rely on a proof that the new leaves satisfy the Bitcoin Consensus rules.
+ */
 abstract contract BitcoinLightClient is IBitcoinLightClient {
     using HashLib for BlockLeaf;
 
-    bytes32 public mmrRoot; 
+    bytes32 public mmrRoot;
 
     // Whenever the light client is updated, we store the new tip block leaf and the MMR root immutably here. The reason for this is
     // it guarantees that a light client update proof will always succeed at updating the light client to the new root assuming:
@@ -38,15 +49,11 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
      * @param newMmrRoot The updated mmr root
      * @param tipBlockLeaf The tip of the chain at the `newMmrRoot`
      * @dev Updates the root if and only if:
-     *      1. The prior root is an established checkpoint 
+     *      1. The prior root is an established checkpoint
      *      2. The new root is different from the current root
      *      3. The chainwork of the updated chain is greater than or equal to the chainwork of the current checkpoint
      */
-    function _updateRoot(
-        bytes32 priorMmrRoot,
-        bytes32 newMmrRoot,
-        BlockLeaf memory tipBlockLeaf
-    ) internal {
+    function _updateRoot(bytes32 priorMmrRoot, bytes32 newMmrRoot, BlockLeaf memory tipBlockLeaf) internal {
         // no need to do anything if the chain is already like the caller expected
         if (newMmrRoot == mmrRoot) {
             return;
@@ -69,10 +76,12 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
         emit BitcoinLightClientUpdated(priorMmrRoot, newMmrRoot);
     }
 
+    /// @inheritdoc IBitcoinLightClient
     function lightClientHeight() public view returns (uint32) {
         return checkpoints[mmrRoot].tipBlockLeaf.height;
     }
 
+    /// @inheritdoc IBitcoinLightClient
     function verifyBlockInclusion(
         BlockLeaf memory blockLeaf,
         bytes32[] memory siblings,
@@ -86,12 +95,12 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
     }
 
     /**
-    * @notice Verifies that a block is included in the verified chain (MMR) and that it has the required number of confirmations
-    * @param blockLeaf The block leaf to verify.
-    * @param siblings The sibling nodes of the block leaf in the MMR.
-    * @param peaks The peak nodes of the block leaf in the MMR.
-    * @param expectedConfirmationBlocks The number of blocks that must be built on top of the blockLeaf 
-    */
+     * @notice Verifies that a block is included in the verified chain (MMR) and that it has the required number of confirmations
+     * @param blockLeaf The block leaf to verify.
+     * @param siblings The sibling nodes of the block leaf in the MMR.
+     * @param peaks The peak nodes of the block leaf in the MMR.
+     * @param expectedConfirmationBlocks The number of blocks that must be built on top of the blockLeaf
+     */
     function _verifyBlockInclusionAndConfirmations(
         BlockLeaf memory blockLeaf,
         bytes32[] calldata siblings,

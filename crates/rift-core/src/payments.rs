@@ -7,25 +7,6 @@ use sol_bindings::Order;
 pub const OP_RETURN_CODE: u8 = 0x6a;
 pub const OP_PUSHBYTES_32: u8 = 0x20;
 
-// Remove padding from scriptPubKey based on the script type, this padding is added by the contract
-pub fn remove_script_pubkey_contract_padding(
-    script_pubkey: &[u8; 25],
-) -> Result<&[u8], &'static str> {
-    match script_pubkey[0] {
-        // P2PKH
-        0x76 => Ok(&script_pubkey[0..25]),
-
-        // P2SH
-        0xa9 => Ok(&script_pubkey[0..23]),
-
-        // P2WPKH:
-        0x00 => Ok(&script_pubkey[0..22]),
-
-        // Unknown script type
-        _ => Err("Unrecognized scriptPubKey type"),
-    }
-}
-
 /// Parses a transaction (with segwit data removed), and validates that:
 /// 1. The transaction has at least 2 outputs (LP output and OP_RETURN output)
 /// 2. The first output matches the expected sats and script pubkey
@@ -53,11 +34,8 @@ pub fn validate_bitcoin_payment(
         return Err("Transaction output value doesn't match expected sats");
     }
 
-    // [4] check txn recipient matches on-chain LP wallet
-    let script_pubkey: [u8; 25] = reserved_vault.bitcoinScriptPubKey.into();
-    let script_pubkey_without_padding = remove_script_pubkey_contract_padding(&script_pubkey)?;
-
-    if tx_out.script_pubkey.as_bytes() != script_pubkey_without_padding {
+    // [4] check txn recipient matches order specified wallet
+    if tx_out.script_pubkey.as_bytes() != reserved_vault.bitcoinScriptPubKey.to_vec() {
         return Err("Transaction recipient doesn't match LP wallet");
     }
 

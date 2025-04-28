@@ -1,9 +1,7 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import "./IBitcoinLightClient.sol";
-
-// -- Structs --
 
 struct Order {
     // Where in the order hash array this order is
@@ -16,10 +14,10 @@ struct Order {
     uint256 amount;
     // The taker fee prepaid by the order creator, given to the protocol upon settlement
     uint256 takerFee;
-    // The expected amount of satoshis that MUST be sent to `bitcoinScriptPubKey` before the order can be settled 
+    // The expected amount of satoshis that MUST be sent to `bitcoinScriptPubKey` before the order can be settled
     uint64 expectedSats;
     // The scriptPubKey of the address that will receive the BTC output on the Bitcoin chain
-    bytes25 bitcoinScriptPubKey;
+    bytes bitcoinScriptPubKey;
     // The address that will receive the ERC20 tokens upon settlement
     address designatedReceiver;
     // The address that created the order
@@ -34,7 +32,7 @@ struct Order {
 
 enum PaymentState {
     Proved,
-    Settled 
+    Settled
 }
 
 struct Payment {
@@ -76,7 +74,6 @@ struct LightClientPublicInput {
     BlockLeaf tipBlockLeaf;
 }
 
-
 struct ProofPublicInput {
     // The type of proof being submitted
     ProofType proofType;
@@ -89,7 +86,7 @@ struct ProofPublicInput {
 enum OrderUpdateContext {
     Created,
     Settled,
-    Refunded 
+    Refunded
 }
 
 enum PaymentUpdateContext {
@@ -101,7 +98,7 @@ struct BaseCreateOrderParams {
     // The address that will receive the ERC20 tokens upon settlement
     address owner;
     // The scriptPubKey of the address that will receive the BTC output on the Bitcoin chain
-    bytes25 bitcoinScriptPubKey;
+    bytes bitcoinScriptPubKey;
     // A random number used to seed the order hash, to prevent replays of previous payments
     bytes32 salt;
     // The number of blocks that must be built on top of the block containing the payment before the order can be settled
@@ -117,7 +114,7 @@ struct CreateOrderParams {
     address designatedReceiver;
     // The amount of ERC20 tokens to be transferred to `designatedReceiver` upon settlement
     uint256 depositAmount;
-    // The expected amount of satoshis that MUST be sent to `bitcoinScriptPubKey` before the order can be settled 
+    // The expected amount of satoshis that MUST be sent to `bitcoinScriptPubKey` before the order can be settled
     uint64 expectedSats;
     // The sibling nodes of the Bitcoin block leaf in the MMR considered safe from reorganization by the order creator
     bytes32[] safeBlockSiblings;
@@ -135,7 +132,6 @@ struct BlockProofParams {
     // The Bitcoin block leaf at the tip of the updated MMR
     BlockLeaf tipBlockLeaf;
 }
-
 
 struct SubmitPaymentProofParams {
     // The Bitcoin transaction ID of the payment
@@ -163,70 +159,96 @@ struct SettleOrderParams {
     uint32 tipBlockHeight;
 }
 
-
-// -----------------------------------------------------------------------
-//                                INTERFACE
-// -----------------------------------------------------------------------
-
 /**
- * @title RiftExchange
- * @notice A trustless exchange for cross-chain Bitcoin<>Synthetic Bitcoin swaps
- * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
+ * @title Interface for the Rift Exchange contract
  */
 interface IRiftExchange is IBitcoinLightClient {
-    // --- Errors ---
-
-    error InvalidDepositTokenDecimals(uint8 actual, uint8 expected);
-    error DepositAmountTooLow();
-    error SatOutputTooLow();
-    error InvalidScriptPubKey();
-    error EmptyDepositVault();
-    error DepositStillLocked();
-    error NoFeeToPay();
-    error InvalidVaultHash(bytes32 actual, bytes32 expected);
+    error InvalidDecimals(uint8 actual, uint8 expected);
+    error OrderNotLive();
+    error OrderStillActive();
+    error NoFeeToWithdraw();
+    error InvalidOrderHash(bytes32 actual, bytes32 expected);
     error StillInChallengePeriod();
-    error SwapNotProved();
-    error NotEnoughConfirmationBlocks();
-    error NoSwapsToSubmit();
-
-    // --- Events ---
+    error PaymentNotProved();
+    error NoPaymentsToSubmit();
 
     event OrdersUpdated(Order[] orders, OrderUpdateContext context);
     event PaymentsUpdated(Payment[] payments, PaymentUpdateContext context);
 
-    // --- Immutables ---
+    /// @notice The address of the synthetic Bitcoin token
     function syntheticBitcoin() external view returns (address);
+
+    /// @notice The circuit verification key
     function circuitVerificationKey() external view returns (bytes32);
+
+    /// @notice The zero knowledge proof verifier contract
     function verifier() external view returns (address);
 
-    // --- State Variables ---
+    /// @notice The order hashes
+    /// @param index The index of the order hash
     function orderHashes(uint256 index) external view returns (bytes32);
+
+    /// @notice The payment hashes
+    /// @param index The index of the payment hash
     function paymentHashes(uint256 index) external view returns (bytes32);
+
+    /// @notice The accumulated fees from swaps
     function accumulatedFees() external view returns (uint256);
+
+    /// @notice The address that receives withdrawn fees
     function feeRouter() external view returns (address);
+
+    /// @notice The taker fee in basis points
     function takerFeeBips() external view returns (uint16);
 
-    // --- External Functions ---
+    /// @notice Withdraws accumulated fees
     function withdrawFees() external;
+
+    /// @notice Sets the fee router
+    /// @param _feeRouter The address that receives withdrawn fees
     function adminSetFeeRouter(address _feeRouter) external;
+
+    /// @notice Sets the taker fee
+    /// @param _takerFeeBips The taker fee in basis points
     function adminSetTakerFeeBips(uint16 _takerFeeBips) external;
+
+    /// @notice Refunds an order if not filled during the lockup period
+    /// @param order The order to refund
     function refundOrder(Order calldata order) external;
+
+    /// @notice Verifies payment proofs and starts the challenge period for the payments, additionally updates the light client
+    /// @param paymentParams An array of seperate payments being submitted
+    /// @param blockProofParams The parameters necessary to update the onchain light client
+    /// @param proof The zero knowledge proof of the payments and light client update
     function submitPaymentProofs(
         SubmitPaymentProofParams[] calldata paymentParams,
         BlockProofParams calldata blockProofParams,
         bytes calldata proof
     ) external;
-    function submitPaymentProofs(
-        SubmitPaymentProofParams[] calldata paymentParams,
-        bytes calldata proof
-    ) external;
+
+    /// @notice Verifies payment proofs and starts the challenge period for the payments
+    /// @param paymentParams An array of seperate payments being submitted
+    /// @param proof The zero knowledge proof of the payments
+    function submitPaymentProofs(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external;
+
+    /// @notice Verifies that a payment is still in the longest chain after a challenge period and releases funds
+    /// @param settleOrderParams An array of order and payment pairs to settle
     function settleOrders(SettleOrderParams[] calldata settleOrderParams) external;
+
+    /// @notice Updates the onchain light client
+    /// @param blockProofParams The parameters necessary to update the onchain light client
+    /// @param proof The zero knowledge proof of the light client update
     function updateLightClient(BlockProofParams calldata blockProofParams, bytes calldata proof) external;
 
-    // --- Read Functions ---
+    /// @notice Returns the total number of orders
     function getTotalOrders() external view returns (uint256);
+
+    /// @notice Returns the total number of payments
     function getTotalPayments() external view returns (uint256);
+
+    /// @notice Verifies a zero knowledge proof
     function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) external view;
+
     // TODO: Do we need this? This exists b/c we need the type in circuits
     function serializeLightClientPublicInput(LightClientPublicInput memory input) external pure returns (bytes memory);
-} 
+}

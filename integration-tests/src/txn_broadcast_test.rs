@@ -17,8 +17,8 @@ use hypernode::{
     HypernodeArgs,
 };
 use rift_sdk::{
-    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, right_pad_to_25_bytes,
-    txn_builder, DatabaseLocation,
+    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, txn_builder,
+    DatabaseLocation,
 };
 use sol_bindings::{
     BlockLeaf as ContractBlockLeaf, NotEnoughConfirmationBlocks, Order, RiftExchangeHarnessErrors,

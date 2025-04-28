@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {BaseCreateOrderParams} from "./IRiftExchange.sol";
 
-/// @title IRiftAuctionAdaptor
-/// @notice Interface for the RiftAuctionAdaptor contract.
+/**
+ * @title Interface for the RiftAuctionAdaptor contract
+ */
 interface IRiftAuctionAdaptor {
     /// @notice Returns the address of the synthetic BTC token contract used by the adaptor.
     /// @return address of the syntheticBitcoin token.
@@ -30,5 +31,4 @@ interface IRiftAuctionAdaptor {
         address fillerWhitelistContract,
         BaseCreateOrderParams calldata baseParams
     ) external;
-
-} 
+}

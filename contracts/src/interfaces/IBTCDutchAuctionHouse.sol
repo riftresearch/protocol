@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {IRiftExchange, BaseCreateOrderParams} from "./IRiftExchange.sol";
@@ -28,7 +28,7 @@ struct DutchAuction {
 }
 
 struct DutchAuctionParams {
-    // The starting amount of BTC the auction will sell 
+    // The starting amount of BTC the auction will sell
     uint256 startBtcOut;
     // The ending amount of BTC the auction will sell
     uint256 endBtcOut;
@@ -40,12 +40,10 @@ struct DutchAuctionParams {
     address fillerWhitelistContract;
 }
 
-
-
-/// @title IBTCDutchAuctionHouse
-/// @notice Interface for the BTCDutchAuctionHouse contract.
+/**
+ * @title Interface for the BTCDutchAuctionHouse contract
+ */
 interface IBTCDutchAuctionHouse is IRiftExchange {
-
     event AuctionUpdated(DutchAuction auction);
     error InvalidTickSize();
     error InvalidStartBtcOut();
@@ -67,8 +65,8 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     /// @param baseCreateOrderParams Standard RiftExchange create‑order parameters.
     function startAuction(
         uint256 depositAmount,
-        DutchAuctionParams calldata auctionParams, 
-        BaseCreateOrderParams calldata baseCreateOrderParams 
+        DutchAuctionParams calldata auctionParams,
+        BaseCreateOrderParams calldata baseCreateOrderParams
     ) external;
 
     /// @notice Fills a live Dutch auction at the current price.
@@ -77,7 +75,7 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     /// @param safeBlockSiblings  Merkle siblings proving the "safe" block leaf used in the auction's base params.
     /// @param safeBlockPeaks     Merkle peaks proving the "safe" block path used in the auction's base params.
     function fillAuction(
-        DutchAuction calldata auction, 
+        DutchAuction calldata auction,
         bytes calldata fillerAuthData,
         bytes32[] calldata safeBlockSiblings,
         bytes32[] calldata safeBlockPeaks
@@ -86,4 +84,4 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     /// @notice Refunds the creator's deposit from an un‑filled, expired auction.
     /// @param auction Full auction struct (must match on‑chain hash).
     function refundAuction(DutchAuction calldata auction) external;
-} 
+}

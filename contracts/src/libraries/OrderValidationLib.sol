@@ -1,15 +1,18 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {CreateOrderParams} from "../interfaces/IRiftExchange.sol";
 import {FeeLib} from "./FeeLib.sol";
 import {BitcoinScriptLib} from "./BitcoinScriptLib.sol";
 
+/**
+ * @title OrderValidationLib
+ */
 library OrderValidationLib {
     /// @notice The minimum amount of expectedSats for an Order
     /// @dev This prevents dust errors on btc side
     uint16 constant MIN_OUTPUT_SATS = 1000;
-    /// @notice The minimum threshold for the number of confirmations 
+    /// @notice The minimum threshold for the number of confirmations
     /// @dev Decreases the likelihood a proof will actually have to be challenged
     /// under normal operations.
     uint8 constant MIN_CONFIRMATION_BLOCKS = 2;
@@ -23,7 +26,6 @@ library OrderValidationLib {
         if (params.depositAmount < FeeLib.calculateMinDepositAmount(_takerFeeBips)) revert DepositAmountTooLow();
         if (params.expectedSats < MIN_OUTPUT_SATS) revert SatOutputTooLow();
         if (params.base.confirmationBlocks < MIN_CONFIRMATION_BLOCKS) revert NotEnoughConfirmationBlocks();
-        if (!BitcoinScriptLib.validateScriptPubKey(params.base.bitcoinScriptPubKey))
-            revert InvalidScriptPubKey();
+        if (!BitcoinScriptLib.validateScriptPubKey(params.base.bitcoinScriptPubKey)) revert InvalidScriptPubKey();
     }
 }

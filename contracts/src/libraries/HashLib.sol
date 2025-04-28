@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
@@ -7,7 +7,10 @@ import {Order, Payment} from "../interfaces/IRiftExchange.sol";
 import {BlockLeaf} from "../interfaces/IBitcoinLightClient.sol";
 import {DutchAuction} from "../interfaces/IBTCDutchAuctionHouse.sol";
 
-
+/**
+ * @title HashLib
+ * @notice Library for hashing structs
+ */
 library HashLib {
     function hash(Order memory order) internal pure returns (bytes32) {
         return EfficientHashLib.hash(abi.encode(order));

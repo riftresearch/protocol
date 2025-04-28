@@ -31,8 +31,8 @@ use hypernode::{
     HypernodeArgs,
 };
 use rift_sdk::{
-    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, right_pad_to_25_bytes,
-    txn_builder, DatabaseLocation,
+    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, txn_builder,
+    DatabaseLocation,
 };
 use sol_bindings::{
     BaseCreateOrderParams, BlockLeaf as ContractBlockLeaf, CreateOrderParams, Order,
@@ -187,7 +187,7 @@ pub async fn create_deposit(
 
     let maker_btc_wallet_script_pubkey = maker.bitcoin_wallet.get_p2wpkh_script();
 
-    let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
+    let padded_script = maker_btc_wallet_script_pubkey.to_bytes();
 
     let deposit_params = CreateOrderParams {
         base: BaseCreateOrderParams {

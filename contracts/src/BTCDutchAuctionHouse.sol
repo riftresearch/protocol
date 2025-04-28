@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
 import "./interfaces/IBTCDutchAuctionHouse.sol";
@@ -13,8 +13,10 @@ import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {RiftExchange} from "./RiftExchange.sol";
 import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
-/// @title BTCDutchAuctionHouse
-/// @notice A Dutch auction for ERC20 BTC<>BTC swaps
+/**
+ * @title BTCDutchAuctionHouse
+ * @notice A Dutch auction for Synthetic BTC<>BTC swaps, that utilizes the RiftExchange to create orders
+ */
 contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     using HashLib for DutchAuction;
     using DataIntegrityLib for DutchAuction;
@@ -24,7 +26,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
 
     constructor(
         bytes32 _mmrRoot,
-        address _depositToken,
+        address _syntheticBitcoin,
         bytes32 _circuitVerificationKey,
         address _verifier,
         address _feeRouter,
@@ -33,7 +35,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     )
         RiftExchange(
             _mmrRoot,
-            _depositToken,
+            _syntheticBitcoin,
             _circuitVerificationKey,
             _verifier,
             _feeRouter,
@@ -42,6 +44,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         )
     {}
 
+    /// @inheritdoc IBTCDutchAuctionHouse
     function startAuction(
         uint256 depositAmount,
         DutchAuctionParams memory auctionParams,
@@ -75,8 +78,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         syntheticBitcoin.safeTransferFrom(msg.sender, address(this), depositAmount);
     }
 
-    // 1. validate the auction is live (not already filled/expired)
-    // 2. call depositLiquidity()
+    /// @inheritdoc IBTCDutchAuctionHouse
     function fillAuction(
         DutchAuction memory auction,
         bytes memory fillerAuthData,
@@ -127,8 +129,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         emit AuctionUpdated(auction);
     }
 
-    // 1. validate the auction is expired
-    // 2. Withdraw deposit token to depositOwnerAddress
+    /// @inheritdoc IBTCDutchAuctionHouse
     function refundAuction(DutchAuction memory auction) external {
         auction.checkIntegrity(auctionHashes);
         if (auction.state == DutchAuctionState.Filled) {

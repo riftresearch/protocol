@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/src/Test.sol";
@@ -8,6 +8,7 @@ import {MMRProofLib} from "../../src/libraries/MMRProof.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {BlockLeaf} from "../../src/interfaces/IBitcoinLightClient.sol";
 import {HelperTypes} from "../utils/HelperTypes.sol";
+
 /**
  * @notice Harness contract that exposes MMRProofLib as external functions
  *         so we can call them via normal external calls in our tests.

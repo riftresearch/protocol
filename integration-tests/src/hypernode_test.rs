@@ -17,7 +17,6 @@ use hypernode::{HypernodeArgs, Provider};
 use rift_core::vaults::SolidityHash;
 use rift_sdk::{
     proof_generator::{ProofGeneratorType, RiftProofGenerator},
-    right_pad_to_25_bytes,
     txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
@@ -137,7 +136,7 @@ async fn test_hypernode_simple_swap() {
 
     let maker_btc_wallet_script_pubkey = maker.bitcoin_wallet.get_p2wpkh_script();
 
-    let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
+    let padded_script = maker_btc_wallet_script_pubkey.to_bytes();
 
     let deposit_params = CreateOrderParams {
         base: BaseCreateOrderParams {

@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
+/**
+ * @title FeeLib
+ * @notice Library for calculating fees
+ */
 library FeeLib {
+    /// @notice Calculates the minimum deposit amount for a given taker fee,
+    /// @param takerFeeBips The taker fee in basis points
+    /// @return minDepositAmount The minimum deposit amount
+    /// @dev The minimum deposit amount is set such that the fees for an order will at least be 1 sat
     function calculateMinDepositAmount(uint16 takerFeeBips) internal pure returns (uint256 minDepositAmount) {
         if (takerFeeBips == 0) {
             minDepositAmount = 1;
