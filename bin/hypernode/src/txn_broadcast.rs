@@ -169,7 +169,7 @@ impl TransactionBroadcaster {
             match request.preflight_check {
                 PreflightCheck::Simulate => {
                     let simulation_result = wallet_rpc
-                        .call(&transaction_request)
+                        .call(transaction_request)
                         .block(BlockId::Number(block_height.into()))
                         .await;
 

@@ -30,4 +30,5 @@
         "editor.formatOnSave": true,
         "editor.hover.enabled": true
     },
+    "wake.compiler.solc.remappings": [],
 }

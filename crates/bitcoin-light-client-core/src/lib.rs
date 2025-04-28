@@ -7,7 +7,7 @@ use core::fmt;
 
 use crypto_bigint::U256;
 use serde::{Deserialize, Serialize};
-use sol_bindings::Types::LightClientPublicInput;
+use sol_bindings::LightClientPublicInput;
 
 use crate::hasher::{Digest, Hasher};
 use crate::leaves::create_new_leaves;
@@ -330,9 +330,9 @@ impl ChainTransition {
 
         // [13] return the Public Input to commit to witness
         let public_input = LightClientPublicInput {
-            previousMmrRoot: self.current_mmr_root.into(),
+            priorMmrRoot: self.current_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
-            compressedLeavesCommitment: new_leaves_commitment.into(),
+            compressedLeavesHash: new_leaves_commitment.into(),
             tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
         };
 

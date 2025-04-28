@@ -1,30 +1,26 @@
+[[dependencies]]
+name = "bundler3"
+version = "0.1.0"
+git = "https://github.com/morpho-org/bundler3.git"
+rev = "4887f33299ba6e60b54a51237b16e7392dceeb97"
 
 [[dependencies]]
 name = "forge-std"
-version = "1.9.3"
-source = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_3_30-09-2024_08:27:09_forge-std-1.9.zip"
-checksum = "351b6f9cde3d9476cc07e48c1bca6b7fd93fa16dd9b450e5ad5d169d1dbd5938"
+version = "1.9.6"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_6_01-02-2025_20:49:10_forge-std-1.9.zip"
+checksum = "55f341818321b3f925161a72fd0dcd62e4a0a4b66785a7a932bf2bfaf96fb9d1"
+integrity = "e9ecdc364d152157431e5df5aa041ffddbe9bb1c1ad81634b1e72df9e23814e8"
 
 [[dependencies]]
-name = "@openzeppelin-contracts"
-version = "5.0.2"
-source = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/5_0_2_14-03-2024_06:11:59_contracts.zip"
-checksum = "8bc4f0acc7c187771b878d46f7de4bfad1acad2eb5d096d9d05d34035853f5c3"
+name = "solady"
+version = "0.1.1"
+url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_1_1_27-01-2025_17:46:37_solady.zip"
+checksum = "c0135c293fd2adda7eb330f182fc8c2d5f210be8232086a1bcb7620ef98b36df"
+integrity = "f494b2f1e9356e9664a55c8d6862c58e08aa9fdf4eb6fdef10c0e104bd3d7cfe"
 
 [[dependencies]]
 name = "sp1-contracts"
 version = "4.0.0"
-source = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip"
+url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip"
 checksum = "f44ad2210b56cc2049168f5b3b13471702c4de261bcc557a3a95efc3d4e41055"
-
-[[dependencies]]
-name = "solmate"
-version = "6.7.0"
-source = "https://soldeer-revisions.s3.amazonaws.com/solmate/6_7_0_22-01-2024_13:21:00_solmate.zip"
-checksum = "dd0f08cdaaaad1de0ac45993d4959351ba89c2d9325a0b5df5570357064f2c33"
-
-[[dependencies]]
-name = "solady"
-version = "0.0.259"
-source = "https://soldeer-revisions.s3.amazonaws.com/solady/0_0_259_19-10-2024_10:30:34_solady.zip"
-checksum = "3fab02016eeb3e2d5710455faefc99fb6101d00bb95f5e96110cd301a39e2be7"
+integrity = "8844dfbe5848f01e6a9fdb525f0e3c6bb777b463a8b970caa94eb54ea5f59148"

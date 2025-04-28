@@ -1,8 +1,6 @@
 use alloy::{
-    network::EthereumWallet,
     primitives::{utils::format_units, U256},
     providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
-    signers::local::LocalSigner,
     sol_types::SolEvent,
 };
 use bitcoin::{
@@ -14,14 +12,13 @@ use bitcoincore_rpc_async::RpcApi;
 use data_engine::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
-use rift_core::vaults::hash_deposit_vault;
+use rift_core::vaults::SolidityHash;
 use rift_sdk::{
     proof_generator::{ProofGeneratorType, RiftProofGenerator},
-    right_pad_to_25_bytes,
     txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
-use sol_bindings::{RiftExchange, Types::DepositLiquidityParams};
+use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrdersUpdated};
 use tokio::signal::{self, unix::signal};
 
 use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
@@ -59,7 +56,6 @@ async fn test_hypernode_simple_swap() {
         .unwrap();
 
     let maker_evm_provider = ProviderBuilder::new()
-        .with_recommended_fillers()
         .wallet(maker.ethereum_wallet)
         .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
         .await
@@ -82,8 +78,7 @@ async fn test_hypernode_simple_swap() {
         .decimals()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
 
     println!(
         "Approving {} tokens to maker",
@@ -113,7 +108,7 @@ async fn test_hypernode_simple_swap() {
 
     let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
+    let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 
     println!("Safe leaf tip (data engine): {:?}", safe_leaf);
     println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
@@ -121,11 +116,10 @@ async fn test_hypernode_simple_swap() {
     let light_client_height = devnet
         .ethereum
         .rift_exchange_contract
-        .getLightClientHeight()
+        .lightClientHeight()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
 
     let mmr_root = devnet
         .ethereum
@@ -133,31 +127,33 @@ async fn test_hypernode_simple_swap() {
         .mmrRoot()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
+
     println!("Light client height (queried): {:?}", light_client_height);
     println!("Mmr root (queried): {:?}", mmr_root);
 
     let maker_btc_wallet_script_pubkey = maker.bitcoin_wallet.get_p2wpkh_script();
 
-    let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
+    let padded_script = maker_btc_wallet_script_pubkey.to_bytes();
 
-    let deposit_params = DepositLiquidityParams {
-        depositOwnerAddress: maker.ethereum_address,
-        specifiedPayoutAddress: taker.ethereum_address,
-        depositAmount: deposit_amount,
+    let deposit_params = CreateOrderParams {
+        base: BaseCreateOrderParams {
+            owner: maker.ethereum_address,
+            bitcoinScriptPubKey: padded_script.into(),
+            salt: [0x44; 32].into(), // this can be anything
+            confirmationBlocks: 2,   // require 2 confirmations (1 block to mine + 1 additional)
+            // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
+            safeBlockLeaf: safe_leaf,
+        },
         expectedSats: expected_sats,
-        btcPayoutScriptPubKey: padded_script.into(),
-        depositSalt: [0x44; 32].into(), // this can be anything
-        confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
-        // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: safe_leaf,
+        depositAmount: deposit_amount,
+        designatedReceiver: taker.ethereum_address,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };
     println!("Deposit params: {:?}", deposit_params);
 
-    let deposit_call = rift_exchange.depositLiquidity(deposit_params);
+    let deposit_call = rift_exchange.createOrder(deposit_params);
 
     let deposit_calldata = deposit_call.calldata();
 
@@ -202,22 +198,18 @@ async fn test_hypernode_simple_swap() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+    let orders_updated_log = OrdersUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == OrdersUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
-        false,
     )
     .unwrap();
 
-    let new_vault = &vaults_updated_log.data.vaults[0];
-    let vault_commitment = hash_deposit_vault(&new_vault);
+    let new_order = &orders_updated_log.data.orders[0];
 
-    println!("Vault commitment: {:?}", hex::encode(vault_commitment));
-
-    println!("Created vault: {:?}", new_vault);
+    println!("Created order: {:?}", new_order);
 
     // send double what we need so we have plenty to cover the fee
     let funding_amount = 200_000_000u64;
@@ -263,7 +255,7 @@ async fn test_hypernode_simple_swap() {
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
     let payment_tx = txn_builder::build_rift_payment_transaction(
-        &new_vault,
+        &new_order,
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,
@@ -315,6 +307,7 @@ async fn test_hypernode_simple_swap() {
             rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
             deploy_block_number: 0,
             btc_batch_rpc_size: 100,
+            log_chunk_size: 10000,
             proof_generator: ProofGeneratorType::Execute,
         };
         hypernode::run(hypernode_args)
@@ -329,7 +322,7 @@ async fn test_hypernode_simple_swap() {
     let otc_swap = loop {
         let otc_swap = devnet
             .contract_data_engine
-            .get_otc_swap_by_deposit_id(vault_commitment)
+            .get_otc_swap_by_deposit_id(new_order.hash())
             .await
             .unwrap();
         println!("OTCSwap: {:#?}", otc_swap);
@@ -342,7 +335,13 @@ async fn test_hypernode_simple_swap() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     };
     // Now warp ahead on the eth chain to the timestamp that unlocks the swap
-    let swap_unlock_timestamp = otc_swap.swap_proofs[0].swap.liquidityUnlockTimestamp;
+    let swap_unlock_timestamp = otc_swap
+        .payments
+        .first()
+        .unwrap()
+        .payment
+        .challengeExpiryTimestamp
+        + 1;
     devnet
         .ethereum
         .funded_provider
@@ -353,14 +352,14 @@ async fn test_hypernode_simple_swap() {
     devnet
         .ethereum
         .funded_provider
-        .anvil_mine(Some(U256::from(1)), None)
+        .anvil_mine(Some(1), None)
         .await
         .unwrap();
     // now check again for ever until the swap is completed
     loop {
         let otc_swap = devnet
             .contract_data_engine
-            .get_otc_swap_by_deposit_id(vault_commitment)
+            .get_otc_swap_by_deposit_id(new_order.hash())
             .await
             .unwrap();
         println!("OTCSwap Post Swap: {:#?}", otc_swap);

@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.20;
 
 import "forge-std/src/Script.sol";
 import "forge-std/src/console.sol";
 import "../src/RiftExchange.sol";
+import {HelperTypes} from "../tests/utils/HelperTypes.sol";
 
 contract DeployRiftExchange is Script {
     function stringToUint(string memory s) internal pure returns (uint256) {
@@ -36,7 +37,7 @@ contract DeployRiftExchange is Script {
 
     function getDeploymentParams(
         string memory checkpointFile
-    ) public returns (Types.DeploymentParams memory deploymentParams) {
+    ) public returns (HelperTypes.DeploymentParams memory deploymentParams) {
         // Prepare the curl command with jq
         string[] memory curlInputs = new string[](3);
         curlInputs[0] = "bash";
@@ -45,7 +46,7 @@ contract DeployRiftExchange is Script {
             "../target/release/test-utils get-deployment-params --checkpoint-file ",
             checkpointFile
         );
-        deploymentParams = abi.decode(vm.ffi(curlInputs), (Types.DeploymentParams));
+        deploymentParams = abi.decode(vm.ffi(curlInputs), (HelperTypes.DeploymentParams));
     }
 
     struct ChainSpecificAddresses {
@@ -69,22 +70,16 @@ contract DeployRiftExchange is Script {
 
     function run() external {
         vm.startBroadcast();
-
-        console.log("Deploying RiftExchange on chain with ID:", block.chainid);
+        // TODO: add deployment logic here
         /*
-                bytes32 _mmrRoot,
-        address _depositToken,
-        bytes32 _circuitVerificationKey,
-        address _verifier,
-        address _feeRouter,
-        Types.BlockLeaf memory _tipBlockLeaf
-        */
+        uint16 takerFeeBips = 20;
 
         console.log("Deploying RiftExchange on chain with ID:", block.chainid);
+
         ChainSpecificAddresses memory chainSpecificAddresses = selectAddressesByChainId();
 
         console.log("Building deployment params...");
-        Types.DeploymentParams memory deploymentParams = getDeploymentParams("../bitcoin_checkpoint_885041.zst");
+        HelperTypes.DeploymentParams memory deploymentParams = getDeploymentParams("../bitcoin_checkpoint_885041.zst");
         console.log("Deployment params built...");
 
         RiftExchange riftExchange = new RiftExchange({
@@ -93,10 +88,13 @@ contract DeployRiftExchange is Script {
             _circuitVerificationKey: deploymentParams.circuitVerificationKey,
             _verifier: chainSpecificAddresses.verifierContractAddress,
             _feeRouter: chainSpecificAddresses.feeRouterAddress,
+            _takerFeeBips: takerFeeBips,
             _tipBlockLeaf: deploymentParams.tipBlockLeaf
         });
+        
 
         console.log("RiftExchange deployed at address:", address(riftExchange));
+        */
 
         vm.stopBroadcast();
     }

@@ -25,19 +25,17 @@ use bitcoincore_rpc_async::RpcApi;
 use devnet::RiftDevnet;
 use rift_core::giga::RiftProgramInput;
 use rift_core::spv::generate_bitcoin_txn_merkle_proof;
-use rift_core::vaults::hash_deposit_vault;
 use rift_core::RiftTransaction;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use rift_sdk::indexed_mmr::client_mmr_proof_to_circuit_mmr_proof;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
 use rift_sdk::{
-    create_websocket_provider, get_retarget_height_from_block_height, right_pad_to_25_bytes,
-    DatabaseLocation,
+    create_websocket_provider, get_retarget_height_from_block_height, DatabaseLocation,
 };
-use sol_bindings::Types::{DepositLiquidityParams, ReleaseLiquidityParams, SubmitSwapProofParams};
 use sol_bindings::{
-    RiftExchange, Types::BlockLeaf, Types::BlockProofParams, Types::ProofPublicInput,
+    BaseCreateOrderParams, BlockLeaf, BlockProofParams, CreateOrderParams, OrdersUpdated,
+    PaymentsUpdated, SettleOrderParams, SubmitPaymentProofParams,
 };
 use tokio::signal;
 
@@ -102,7 +100,6 @@ async fn test_simulated_swap_end_to_end() {
         .unwrap();
 
     let maker_evm_provider = ProviderBuilder::new()
-        .with_recommended_fillers()
         .wallet(maker_evm_wallet)
         .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
         .await
@@ -125,8 +122,7 @@ async fn test_simulated_swap_end_to_end() {
         .decimals()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
 
     println!(
         "Approving {} tokens to maker",
@@ -156,7 +152,7 @@ async fn test_simulated_swap_end_to_end() {
 
     let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    let safe_leaf: sol_bindings::Types::BlockLeaf = safe_leaf.into();
+    let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 
     println!("Safe leaf tip (data engine): {:?}", safe_leaf);
     println!("Mmr root (data engine): {:?}", hex::encode(mmr_root));
@@ -164,11 +160,10 @@ async fn test_simulated_swap_end_to_end() {
     let light_client_height = devnet
         .ethereum
         .rift_exchange_contract
-        .getLightClientHeight()
+        .lightClientHeight()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
 
     let mmr_root = devnet
         .ethereum
@@ -176,31 +171,32 @@ async fn test_simulated_swap_end_to_end() {
         .mmrRoot()
         .call()
         .await
-        .unwrap()
-        ._0;
+        .unwrap();
+
     println!("Light client height (queried): {:?}", light_client_height);
     println!("Mmr root (queried): {:?}", mmr_root);
 
     let maker_btc_wallet_script_pubkey = maker_btc_wallet.get_p2wpkh_script();
 
-    let padded_script = right_pad_to_25_bytes(maker_btc_wallet_script_pubkey.as_bytes());
+    let padded_script = maker_btc_wallet_script_pubkey.to_bytes();
 
-    let deposit_params = DepositLiquidityParams {
-        depositOwnerAddress: maker_evm_address,
-        specifiedPayoutAddress: taker_evm_address,
-        depositAmount: deposit_amount,
+    let deposit_params = CreateOrderParams {
+        base: BaseCreateOrderParams {
+            owner: maker_evm_address,
+            bitcoinScriptPubKey: padded_script.into(),
+            salt: [0x44; 32].into(), // this can be anything
+            confirmationBlocks: 2,
+            safeBlockLeaf: safe_leaf,
+        },
         expectedSats: expected_sats,
-        btcPayoutScriptPubKey: padded_script.into(),
-        depositSalt: [0x44; 32].into(), // this can be anything
-        confirmationBlocks: 2,          // require 2 confirmations (1 block to mine + 1 additional)
-        // TODO: This is hellacious, remove the 3 different types for BlockLeaf somehow
-        safeBlockLeaf: safe_leaf,
+        depositAmount: deposit_amount,
+        designatedReceiver: taker_evm_address,
         safeBlockSiblings: safe_siblings.iter().map(From::from).collect(),
         safeBlockPeaks: safe_peaks.iter().map(From::from).collect(),
     };
     println!("Deposit params: {:?}", deposit_params);
 
-    let deposit_call = rift_exchange.depositLiquidity(deposit_params);
+    let deposit_call = rift_exchange.createOrder(deposit_params);
 
     let deposit_calldata = deposit_call.calldata();
 
@@ -245,22 +241,18 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+    let orders_updated_log = OrdersUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == OrdersUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
-        false,
     )
     .unwrap();
 
-    let new_vault = &vaults_updated_log.data.vaults[0];
-    let vault_commitment = hash_deposit_vault(&new_vault);
+    let new_order = &orders_updated_log.data.orders[0];
 
-    println!("Vault commitment: {:?}", hex::encode(vault_commitment));
-
-    println!("Created vault: {:?}", new_vault);
+    println!("Order: {:?}", new_order);
 
     // send double what we need so we have plenty to cover the fee
     let funding_amount = 200_000_000u64;
@@ -306,7 +298,7 @@ async fn test_simulated_swap_end_to_end() {
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
     let payment_tx = txn_builder::build_rift_payment_transaction(
-        &new_vault,
+        &new_order,
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,
@@ -361,7 +353,7 @@ async fn test_simulated_swap_end_to_end() {
     // or just `submitBatchSwapProof(...)` if the chain is already updated. We'll do
     // the simpler route: no real chain update => use submitBatchSwapProof.
 
-    // We'll craft the needed "ProposedSwap" data.
+    // We'll craft the needed "Payment" data.
     // See the contract's `SubmitSwapProofParams`.
 
     // Now we build the Light client update and swap proof
@@ -380,13 +372,12 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let vaults_updated_log = RiftExchange::VaultsUpdated::decode_log(
+    let orders_updated_log = OrdersUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::VaultsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == OrdersUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
-        false,
     )
     .unwrap();
 
@@ -588,7 +579,7 @@ async fn test_simulated_swap_end_to_end() {
         // no segwit data serialized bitcoin transaction
         pub txn: Vec<u8>,
         // the vaults reserved for this transaction
-        pub reserved_vault: DepositVault,
+        pub reserved_vault: Order,
         // block header where the txn is included
         pub block_header: Header,
         // merkle proof of the txn hash in the block
@@ -632,7 +623,7 @@ async fn test_simulated_swap_end_to_end() {
 
     let rift_transaction_input = RiftTransaction {
         txn: serialize_no_segwit(&payment_tx).unwrap(),
-        reserved_vault: new_vault.clone(),
+        reserved_vault: new_order.clone(),
         block_header: swap_block_header,
         txn_merkle_proof,
     };
@@ -662,17 +653,15 @@ async fn test_simulated_swap_end_to_end() {
         .await
         .unwrap();
 
-    let swap_leaf: sol_bindings::Types::BlockLeaf = swap_leaf.into();
+    let swap_leaf: sol_bindings::BlockLeaf = swap_leaf.into();
 
     // We'll do a single-swap array:
-    let swap_params = vec![SubmitSwapProofParams {
-        swapBitcoinTxid: bitcoin_txid.into(),
-        vault: new_vault.clone(),
-        storageStrategy: 0, // Append
-        localOverwriteIndex: 0,
-        swapBitcoinBlockLeaf: swap_leaf.clone(),
-        swapBitcoinBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
-        swapBitcoinBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
+    let swap_params = vec![SubmitPaymentProofParams {
+        paymentBitcoinTxid: bitcoin_txid.into(),
+        order: new_order.clone(),
+        paymentBitcoinBlockLeaf: swap_leaf.clone(),
+        paymentBitcoinBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
+        paymentBitcoinBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
     }];
 
     // just call verify not in the proof
@@ -680,29 +669,16 @@ async fn test_simulated_swap_end_to_end() {
         rift_program_input.get_auxiliary_light_client_data();
 
     let block_proof_params = BlockProofParams {
-        priorMmrRoot: public_values_simulated.previousMmrRoot,
+        priorMmrRoot: public_values_simulated.priorMmrRoot,
         newMmrRoot: public_values_simulated.newMmrRoot,
         tipBlockLeaf: public_values_simulated.tipBlockLeaf,
         compressedBlockLeaves: auxiliary_data.compressed_leaves.into(),
     };
 
-    // We also pass an empty "overwriteSwaps"
-    let overwrite_swaps = vec![];
-
-    // The contract function is:
-    // Types.SubmitSwapProofParams[] calldata swapParams,
-    // Types.BlockProofParams calldata blockProofParams,
-    // Types.ProposedSwap[] calldata overwriteSwaps,
-    // bytes calldata proof
-    // )
     let mock_proof = vec![];
 
-    let swap_proof_call = rift_exchange.submitBatchSwapProofWithLightClientUpdate(
-        swap_params,
-        block_proof_params,
-        overwrite_swaps,
-        mock_proof.into(),
-    );
+    let swap_proof_call =
+        rift_exchange.submitPaymentProofs_1(swap_params, block_proof_params, mock_proof.into());
     let swap_proof_calldata = swap_proof_call.calldata().clone();
 
     let swap_proof_tx = maker_evm_provider
@@ -744,16 +720,15 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = swap_proof_receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let binding = RiftExchange::SwapsUpdated::decode_log(
+    let binding = PaymentsUpdated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == RiftExchange::SwapsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == PaymentsUpdated::SIGNATURE_HASH)
             .unwrap()
             .inner,
-        false,
     )
     .unwrap();
-    let proposed_swap = binding.data.swaps.first().unwrap();
+    let proposed_swap = binding.data.payments.first().unwrap();
 
     // First, get the MMR proof for the swap block (this proof contains the leaf data, siblings, and peaks)
     let swap_mmr_proof = devnet
@@ -780,19 +755,19 @@ async fn test_simulated_swap_end_to_end() {
     // Now, construct the ReleaseLiquidityParams.
     // The structure (defined in your Types) is as follows:
     //   struct ReleaseLiquidityParams {
-    //       swap: ProposedSwap,
+    //       swap: Payment,
     //       swapBlockChainwork: U256,
     //       swapBlockHeight: u32,
     //       bitcoinSwapBlockSiblings: Vec<Digest>,
     //       bitcoinSwapBlockPeaks: Vec<Digest>,
-    //       utilizedVault: DepositVault,
+    //       utilizedVault: Order,
     //       tipBlockHeight: u32,
     //   }
-    let release_params = ReleaseLiquidityParams {
-        swap: proposed_swap.clone(),
-        bitcoinSwapBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
-        bitcoinSwapBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
-        utilizedVault: new_vault.clone(),
+    let release_params = SettleOrderParams {
+        order: new_order.clone(),
+        payment: proposed_swap.clone(),
+        paymentBitcoinBlockSiblings: swap_mmr_proof.siblings.iter().map(From::from).collect(),
+        paymentBitcoinBlockPeaks: swap_mmr_proof.peaks.iter().map(From::from).collect(),
         tipBlockHeight: (devnet.contract_data_engine.get_leaf_count().await.unwrap() - 1) as u32,
     };
 
@@ -800,12 +775,12 @@ async fn test_simulated_swap_end_to_end() {
     devnet
         .ethereum
         .funded_provider
-        .anvil_set_next_block_timestamp(release_params.swap.liquidityUnlockTimestamp + 1)
+        .anvil_set_next_block_timestamp(release_params.payment.challengeExpiryTimestamp + 1)
         .await
         .unwrap();
 
     // Build the release liquidity call. Assume `release_params_array` is a Vec of ReleaseLiquidityParams.
-    let release_liquidity_call = rift_exchange.releaseLiquidityBatch(vec![release_params]);
+    let release_liquidity_call = rift_exchange.settleOrders(vec![release_params]);
 
     // Extract the calldata for debugging
     let release_liquidity_calldata = release_liquidity_call.calldata().clone();

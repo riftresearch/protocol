@@ -13,7 +13,7 @@ pub use evm_devnet::EthDevnet;
 use evm_devnet::ForkConfig;
 use eyre::Result;
 use log::info;
-use sol_bindings::RiftExchange;
+use sol_bindings::RiftExchangeHarnessInstance;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -23,7 +23,7 @@ use tokio::time::Instant;
 use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 
-use rift_sdk::{get_rift_program_hash, DatabaseLocation, WebsocketWalletProvider};
+use rift_sdk::{create_websocket_wallet_provider, get_rift_program_hash, DatabaseLocation};
 
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::RpcApi;
@@ -35,6 +35,7 @@ const TOKEN_ADDRESS: &str = "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf";
 const TOKEN_SYMBOL: &str = "cbBTC";
 const TOKEN_NAME: &str = "Coinbase Wrapped BTC";
 const TOKEN_DECIMALS: u8 = 8;
+const TAKER_FEE_BIPS: u16 = 10;
 const CONTRACT_DATA_ENGINE_SERVER_PORT: u16 = 50100;
 
 use alloy::sol;
@@ -43,8 +44,8 @@ use alloy::sol;
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
-    MockToken,
-    "../../contracts/artifacts/MockToken.json"
+    SyntheticBTC,
+    "../../contracts/artifacts/SyntheticBTC.json"
 );
 
 /// The SP1 mock verifier
@@ -57,14 +58,12 @@ sol!(
 
 use alloy::network::{Ethereum, EthereumWallet, NetworkWallet};
 use alloy::primitives::{Address as EvmAddress, U256};
-use alloy::providers::{Identity, Provider, RootProvider};
+use alloy::providers::{DynProvider, Identity, Provider, RootProvider};
 use alloy::pubsub::PubSubFrontend;
 
-pub type RiftExchangeWebsocket =
-    RiftExchange::RiftExchangeInstance<PubSubFrontend, Arc<WebsocketWalletProvider>>;
+pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>;
 
-pub type MockTokenWebsocket =
-    MockToken::MockTokenInstance<PubSubFrontend, Arc<WebsocketWalletProvider>>;
+pub type SyntheticBTCWebsocket = SyntheticBTC::SyntheticBTCInstance<DynProvider>;
 
 // ================== Deploy Function ================== //
 
@@ -78,7 +77,11 @@ pub async fn deploy_contracts(
     genesis_mmr_root: [u8; 32],
     tip_block_leaf: BlockLeaf,
     on_fork: bool,
-) -> Result<(Arc<RiftExchangeWebsocket>, Arc<MockTokenWebsocket>, u64)> {
+) -> Result<(
+    Arc<RiftExchangeHarnessWebsocket>,
+    Arc<SyntheticBTCWebsocket>,
+    u64,
+)> {
     use alloy::{
         hex::FromHex,
         primitives::Address,
@@ -93,14 +96,11 @@ pub async fn deploy_contracts(
     let deployer_address = deployer_wallet.default_signer().address();
 
     // Build a provider
-    let provider = Arc::new(
-        ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(deployer_wallet)
-            .on_ws(WsConnect::new(anvil.ws_endpoint_url()))
-            .await
-            .map_err(|e| eyre!("Error connecting to Anvil: {e}"))?,
-    );
+    let provider = create_websocket_wallet_provider(
+        &anvil.ws_endpoint(),
+        deployer_signer.credential().to_bytes().try_into().unwrap(),
+    )
+    .await?;
 
     let verifier_contract = Address::from_str("0xaeE21CeadF7A03b3034DAE4f190bFE5F861b6ebf")?;
     // Insert the SP1MockVerifier bytecode
@@ -112,36 +112,35 @@ pub async fn deploy_contracts(
     // Deploy the mock token, this is dependent on if we're on a fork or not
     let token = if !on_fork {
         // deploy it
-        let mock_token = MockToken::deploy(
-            provider.clone(),
-            TOKEN_NAME.to_string(),
-            TOKEN_SYMBOL.to_string(),
-            TOKEN_DECIMALS,
-        )
-        .await?;
+        let mock_token = SyntheticBTC::deploy(provider.clone()).await?;
         provider
             .anvil_set_code(
                 token_address,
                 provider.get_code_at(*mock_token.address()).await?,
             )
             .await?;
-        MockToken::new(token_address, provider.clone())
+        println!("Deploying MockToken at {}", token_address);
+        SyntheticBTC::new(token_address, provider.clone().erased())
     } else {
-        MockToken::new(token_address, provider.clone())
+        println!("POINTING TO EXISTING MockToken at {}", token_address);
+        SyntheticBTC::new(token_address, provider.clone().erased())
     };
+
+    println!("token decimals: {}", token.decimals().call().await?);
 
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
 
-    let tip_block_leaf_sol: sol_bindings::Types::BlockLeaf = tip_block_leaf.into();
+    let tip_block_leaf_sol: sol_bindings::BlockLeaf = tip_block_leaf.into();
     // Deploy RiftExchange
-    let exchange = RiftExchange::deploy(
-        provider.clone(),
+    let exchange = RiftExchangeHarnessInstance::deploy(
+        provider.clone().erased(),
         genesis_mmr_root.into(),
         *token.address(),
         circuit_verification_key_hash.into(),
         verifier_contract,
         deployer_address, // e.g. owner
+        TAKER_FEE_BIPS as u16,
         tip_block_leaf_sol,
     )
     .await?;
@@ -180,6 +179,7 @@ pub struct RiftDevnetBuilder {
     funded_bitcoin_address: Option<String>,
     fork_config: Option<ForkConfig>,
     data_engine_db_location: DatabaseLocation,
+    log_chunk_size: u64,
 }
 
 impl Default for RiftDevnetBuilder {
@@ -191,6 +191,7 @@ impl Default for RiftDevnetBuilder {
             funded_bitcoin_address: None,
             fork_config: None,
             data_engine_db_location: DatabaseLocation::InMemory,
+            log_chunk_size: 10000,
         }
     }
 }
@@ -254,6 +255,7 @@ impl RiftDevnetBuilder {
             funded_bitcoin_address,
             fork_config,
             data_engine_db_location,
+            log_chunk_size,
         } = self;
 
         let mut join_set = JoinSet::new();
@@ -313,6 +315,7 @@ impl RiftDevnetBuilder {
                 ethereum_devnet.funded_provider.clone(),
                 *ethereum_devnet.rift_exchange_contract.address(),
                 deployment_block_number,
+                log_chunk_size,
                 &mut join_set,
             )
             .await?;
@@ -370,8 +373,7 @@ impl RiftDevnetBuilder {
                 .token_contract
                 .balanceOf(address)
                 .call()
-                .await?
-                ._0;
+                .await?;
             println!("Token Balance of {} => {:?}", addr_str, token_balance);
         }
 

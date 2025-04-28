@@ -72,6 +72,10 @@ pub struct HypernodeArgs {
     #[arg(long, env)]
     pub deploy_block_number: u64,
 
+    /// Log chunk size
+    #[arg(long, env, default_value = "10000")]
+    pub log_chunk_size: u64,
+
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
     pub btc_batch_rpc_size: usize,
@@ -98,7 +102,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
     );
 
     // [1] create rpc providers for both chains
-    let evm_rpc = Arc::new(
+    let evm_rpc_with_wallet = Arc::new(
         create_websocket_wallet_provider(
             &args.evm_ws_rpc,
             hex::decode(&args.private_key)
@@ -108,6 +112,8 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         )
         .await?,
     );
+
+    let evm_rpc = evm_rpc_with_wallet.clone().erased();
 
     let btc_rpc = Arc::new(
         rift_sdk::bitcoin_utils::AsyncBitcoinClient::new(
@@ -136,6 +142,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
             evm_rpc.clone(),
             rift_exchange_address,
             args.deploy_block_number,
+            args.log_chunk_size,
             checkpoint_leaves,
             &mut join_set,
         )
@@ -175,7 +182,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
     };
 
     let transaction_broadcaster = Arc::new(TransactionBroadcaster::new(
-        evm_rpc.clone(),
+        evm_rpc_with_wallet.clone(),
         args.evm_ws_rpc.clone(),
         &mut join_set,
     ));

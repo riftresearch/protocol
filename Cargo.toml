@@ -78,10 +78,11 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tempfile = { version = "3.6.0" }
 serial_test = "3.2.0"
 
-alloy-sol-types = { version = "0.8.0", features = ["json"] }
-alloy-contract = "0.8.0"
-alloy = { version = "0.8.0", features = ["full", "node-bindings", "json", "json-rpc"] }
-alloy-primitives = "0.8.12"
+alloy-sol-types = { version = "1.0.0", features = ["json"] }
+alloy-primitives = "1.0.0"
+alloy-contract = "0.14.0"
+alloy = { version = "0.14.0", features = ["full", "node-bindings", "json", "json-rpc", "provider-debug-api", "provider-trace-api"] }
+
 async-trait = "0.1.86"
 reqwest = { version = "0.12.12", features = ["json"] }
 zstd = "0.13.3"

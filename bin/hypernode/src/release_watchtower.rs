@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, thread::current};
 use alloy::{
     eips::BlockId,
     primitives::Address,
-    providers::Provider,
+    providers::{DynProvider, Provider},
     pubsub::{PubSubFrontend, SubscriptionStream},
     rpc::types::{BlockTransactionsKind, Header},
 };
@@ -17,12 +17,9 @@ use futures::{
 };
 use rift_sdk::{
     bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt},
-    RiftExchangeClient, WebsocketWalletProvider,
+    RiftExchangeHarnessClient,
 };
-use sol_bindings::{
-    RiftExchange::{self, RiftExchangeInstance},
-    Types::ReleaseLiquidityParams,
-};
+use sol_bindings::{RiftExchangeHarnessInstance, SettleOrderParams};
 use tokio::{sync::watch, task::JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{info, info_span, Instrument};
@@ -47,7 +44,7 @@ impl ReleaseWatchtower {
     pub async fn run(
         rift_exchange_address: Address,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
-        evm_rpc: Arc<WebsocketWalletProvider>,
+        evm_rpc: DynProvider,
         contract_data_engine: Arc<ContractDataEngine>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> eyre::Result<Self> {
@@ -76,10 +73,10 @@ impl ReleaseWatchtower {
 }
 
 async fn setup_block_stream(
-    evm_rpc: Arc<WebsocketWalletProvider>,
+    evm_rpc: DynProvider,
 ) -> eyre::Result<Chain<Once<Ready<Header>>, SubscriptionStream<Header>>> {
     let current_block_header = evm_rpc
-        .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
+        .get_block(BlockId::latest())
         .await?
         .ok_or_else(|| eyre::eyre!("Failed to get current block"))?
         .header;
@@ -97,11 +94,11 @@ async fn setup_block_stream(
 async fn search_on_new_evm_blocks(
     rift_exchange_address: Address,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
-    evm_rpc: Arc<WebsocketWalletProvider>,
+    evm_rpc: DynProvider,
     contract_data_engine: Arc<ContractDataEngine>,
     mut rx: watch::Receiver<Option<Header>>,
 ) -> eyre::Result<()> {
-    let rift_exchange = RiftExchange::new(rift_exchange_address, evm_rpc);
+    let rift_exchange = RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
     // Consume blocks from the watch
     while rx.changed().await.is_ok() {
         // Borrow the newest header, clone it, and drop the borrow immediately.
@@ -121,7 +118,7 @@ async fn search_on_new_evm_blocks(
     Ok(())
 }
 async fn search_for_releases(
-    rift_exchange: &RiftExchangeClient,
+    rift_exchange: &RiftExchangeHarnessClient,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
     contract_data_engine: Arc<ContractDataEngine>,
     block_timestamp: u64,
@@ -159,8 +156,12 @@ async fn search_for_releases(
     // Step 2: For each swap, gather the proof. We do repeated short lock scopes so we
     // never hold it over an `.await`.
     for swap_with_deposit in &swaps_ready_to_be_released {
-        let block_leaf = swap_with_deposit.swap.swap.swapBitcoinBlockLeaf.clone();
-        let swap_index = swap_with_deposit.swap.swap.swapIndex;
+        let block_leaf = swap_with_deposit
+            .payment
+            .payment
+            .paymentBitcoinBlockLeaf
+            .clone();
+        let swap_index = swap_with_deposit.payment.payment.index;
 
         // Acquire the lock in a tight scope:
         let proof = {
@@ -182,13 +183,13 @@ async fn search_for_releases(
 
         let bitcoin_swap_block_siblings = proof.siblings.iter().map(From::from).collect();
         let bitcoin_swap_block_peaks = proof.peaks.iter().map(From::from).collect();
-        let utilized_vault = swap_with_deposit.deposit.deposit.clone();
+        let utilized_vault = swap_with_deposit.order.order.clone();
 
-        release_liquidity_params.push(ReleaseLiquidityParams {
-            swap: swap_with_deposit.swap.swap.clone(),
-            bitcoinSwapBlockSiblings: bitcoin_swap_block_siblings,
-            bitcoinSwapBlockPeaks: bitcoin_swap_block_peaks,
-            utilizedVault: utilized_vault,
+        release_liquidity_params.push(SettleOrderParams {
+            payment: swap_with_deposit.payment.payment.clone(),
+            order: swap_with_deposit.order.order.clone(),
+            paymentBitcoinBlockSiblings: bitcoin_swap_block_siblings,
+            paymentBitcoinBlockPeaks: bitcoin_swap_block_peaks,
             tipBlockHeight: tip_block_height,
         });
     }
@@ -199,7 +200,7 @@ async fn search_for_releases(
     }
 
     // Now we can do our EVM transaction.
-    let release_tx = rift_exchange.releaseLiquidityBatch(release_liquidity_params);
+    let release_tx = rift_exchange.settleOrders(release_liquidity_params);
     let calldata = release_tx.calldata().to_owned();
     let transaction_request = release_tx.into_transaction_request();
     let transaction_result = transaction_broadcaster

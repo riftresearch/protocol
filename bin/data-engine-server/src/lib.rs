@@ -1,5 +1,6 @@
 use alloy::hex;
 use alloy::primitives::Address;
+use alloy::providers::ext::TraceApi;
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::Method;
 use axum::response::IntoResponse;
@@ -17,7 +18,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::task::JoinSet;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 #[derive(Clone, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -30,6 +31,8 @@ pub struct ServerConfig {
     pub checkpoint_file: String,
     #[arg(short, long)]
     pub deploy_block_number: u64,
+    #[arg(short, long, default_value = "10000")]
+    pub log_chunk_size: u64,
     #[arg(short, long)]
     pub port: u16,
     #[arg(short, long)]
@@ -99,9 +102,10 @@ impl DataEngineServer {
         let data_engine = Arc::new(
             ContractDataEngine::start(
                 &config.database_location,
-                Arc::new(provider),
+                provider,
                 rift_exchange_address,
                 config.deploy_block_number,
+                config.log_chunk_size,
                 checkpoint_leaves,
                 join_set,
             )

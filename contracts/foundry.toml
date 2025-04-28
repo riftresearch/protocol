@@ -52,7 +52,7 @@ offline = false
 optimizer = true
 optimizer_runs = 200
 verbosity = 0
-ignored_error_codes = [ 1878, 5574,]
+ignored_error_codes = [ 5574 ]
 deny_warnings = false
 sender = "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"
 tx_origin = "0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38"
@@ -85,11 +85,11 @@ base = "${BASE_RPC_URL}"
 base = { key = "${BASE_ETHERSCAN_API_KEY}" }
 
 [dependencies]
-"forge-std" = "1.9.3"
-"@openzeppelin-contracts" = "5.0.2"
-"sp1-contracts" = { version = "4.0.0", url = "https://github.com/succinctlabs/sp1-contracts/archive/refs/tags/v4.0.0.zip" }
-solmate = "6.7.0"
-solady = "0.0.259"
+"sp1-contracts" = { version = "4.0.0", git = "https://github.com/succinctlabs/sp1-contracts", rev = "26651fdb1c1d6513443560d42888dedc3f68bde6" }
+solady = "0.1.1"
+"bundler3" = { version = "0.1.0", git = "https://github.com/morpho-org/bundler3.git", rev = "4887f33299ba6e60b54a51237b16e7392dceeb97" }
+forge-std = "1.9.6"
+
 
 [soldeer]
 # whether Soldeer manages remappings

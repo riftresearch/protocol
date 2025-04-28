@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
-use rift_sdk::{create_websocket_provider, WebsocketWalletProvider};
+use rift_sdk::create_websocket_provider;
 use tokio::time::Instant;
 
 use alloy::{
@@ -17,7 +17,7 @@ use alloy::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
         },
-        Identity, Provider, ProviderBuilder, RootProvider, WsConnect,
+        DynProvider, Identity, Provider, ProviderBuilder, RootProvider, WsConnect,
     },
     pubsub::PubSubFrontend,
     rpc::types::TransactionRequest,
@@ -27,16 +27,16 @@ use alloy::{
 use crate::{
     // bring in the deployment logic/ABIs from lib
     deploy_contracts,
-    MockTokenWebsocket,
-    RiftExchangeWebsocket,
+    RiftExchangeHarnessWebsocket,
+    SyntheticBTCWebsocket,
 };
 
 /// Holds all Ethereum-related devnet state.
 pub struct EthDevnet {
     pub anvil: AnvilInstance,
-    pub token_contract: Arc<MockTokenWebsocket>,
-    pub rift_exchange_contract: Arc<RiftExchangeWebsocket>,
-    pub funded_provider: Arc<WebsocketWalletProvider>,
+    pub token_contract: Arc<SyntheticBTCWebsocket>,
+    pub rift_exchange_contract: Arc<RiftExchangeHarnessWebsocket>,
+    pub funded_provider: DynProvider,
     pub on_fork: bool,
 }
 
@@ -73,17 +73,17 @@ impl EthDevnet {
         let wallet = EthereumWallet::from(signer);
 
         let funded_provider = ProviderBuilder::new()
-            .with_recommended_fillers()
             .wallet(wallet)
             .on_ws(WsConnect::new(anvil.ws_endpoint_url()))
             .await
-            .expect("Failed connecting to anvil's WS");
+            .expect("Failed connecting to anvil's WS")
+            .erased();
 
         let devnet = EthDevnet {
             anvil,
             token_contract,
             rift_exchange_contract: rift_exchange,
-            funded_provider: Arc::new(funded_provider),
+            funded_provider,
             on_fork,
         };
 
@@ -104,7 +104,7 @@ impl EthDevnet {
             .on_http(format!("http://localhost:{}", self.anvil.port()).parse()?);
         if self.on_fork {
             // 1. Get the master minter address
-            let master_minter = self.token_contract.masterMinter().call().await?._0;
+            let master_minter = self.token_contract.masterMinter().call().await?;
 
             // 2. Configure master minter with maximum minting allowance
             let max_allowance = U256::MAX;
