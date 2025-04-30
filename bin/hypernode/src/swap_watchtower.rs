@@ -409,7 +409,7 @@ async fn compute_block_search_range(
         - 1;
 
     let oldest_active_deposit = contract_data_engine
-        .get_oldest_active_deposit(current_evm_timestamp)
+        .get_oldest_active_order(current_evm_timestamp)
         .await?;
 
     let end_search_bitcoin_block_number = current_btc_tip as u32;
@@ -476,7 +476,7 @@ async fn find_new_swaps_in_blocks(
                 let potential_deposit_vault_commitment: [u8; 32] =
                     script_pubkey_bytes[2..34].try_into()?;
                 let chain_aware_deposit = contract_data_engine
-                    .get_deposit_by_id(potential_deposit_vault_commitment)
+                    .get_order_by_hash(potential_deposit_vault_commitment)
                     .await?;
                 if chain_aware_deposit.is_none() {
                     continue;

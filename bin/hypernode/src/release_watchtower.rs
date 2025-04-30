@@ -128,7 +128,7 @@ async fn search_for_releases(
         block_timestamp
     );
     let swaps_ready_to_be_released = contract_data_engine
-        .get_swaps_ready_to_be_released(block_timestamp)
+        .get_payments_ready_to_be_settled(block_timestamp)
         .await?;
 
     if swaps_ready_to_be_released.is_empty() {

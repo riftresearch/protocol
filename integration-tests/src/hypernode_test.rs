@@ -322,7 +322,7 @@ async fn test_hypernode_simple_swap() {
     let otc_swap = loop {
         let otc_swap = devnet
             .contract_data_engine
-            .get_otc_swap_by_deposit_id(new_order.hash())
+            .get_otc_swap_by_order_hash(new_order.hash())
             .await
             .unwrap();
         println!("OTCSwap: {:#?}", otc_swap);
@@ -359,7 +359,7 @@ async fn test_hypernode_simple_swap() {
     loop {
         let otc_swap = devnet
             .contract_data_engine
-            .get_otc_swap_by_deposit_id(new_order.hash())
+            .get_otc_swap_by_order_hash(new_order.hash())
             .await
             .unwrap();
         println!("OTCSwap Post Swap: {:#?}", otc_swap);

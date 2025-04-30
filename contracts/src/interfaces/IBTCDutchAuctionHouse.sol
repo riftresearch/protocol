@@ -44,7 +44,6 @@ struct DutchAuctionParams {
  * @title Interface for the BTCDutchAuctionHouse contract
  */
 interface IBTCDutchAuctionHouse is IRiftExchange {
-    event AuctionUpdated(DutchAuction auction);
     error InvalidTickSize();
     error InvalidStartBtcOut();
     error InvalidDeadline();
@@ -53,6 +52,8 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     error AuctionAlreadyWithdrawn();
     error AuctionNotExpired();
     error FillerNotWhitelisted();
+
+    event AuctionUpdated(DutchAuction auction);
 
     /// @notice Returns the hash of the auction at the specified index.
     /// @param index The index of the auction.

@@ -13,8 +13,8 @@ use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
 use sol_bindings::{
-    submitPaymentProofs_1Call, updateLightClientCall, BitcoinLightClientUpdated, Order,
-    OrdersUpdated, PaymentsUpdated,
+    submitPaymentProofs_1Call, updateLightClientCall, AuctionUpdated, BitcoinLightClientUpdated,
+    Order, OrdersUpdated, PaymentsUpdated,
 };
 
 use std::{path::PathBuf, sync::Arc};
@@ -24,27 +24,24 @@ use tokio::{
 };
 use tracing::{info, info_span, warn, Instrument};
 
-// Added for idempotency tracking.
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     db::{
-        add_deposit, add_proposed_swap, get_deposits_for_recipient, get_otc_swap_by_deposit_id,
-        get_proposed_swap_id, get_swaps_ready_to_be_released, get_virtual_swaps,
-        setup_swaps_database, update_deposit_to_withdrawn, update_proposed_swap_to_released,
-        ChainAwarePaymentWithOrder,
+        add_order, add_payment, get_orders_for_recipient, get_otc_swap_by_order_hash,
+        get_payments_ready_to_be_settled, get_virtual_swaps, setup_swaps_database,
+        update_order_to_refunded, update_payment_to_settled, ChainAwarePaymentWithOrder,
     },
     models::ChainAwareOrder,
 };
 use crate::{
-    db::{get_deposit_by_id, get_oldest_active_deposit},
+    db::{get_oldest_active_order, get_order_by_hash},
     models::OTCSwap,
 };
 
 pub struct ContractDataEngine {
     pub checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
-    // New field to track if the event listener has been started already.
     server_started: Arc<AtomicBool>,
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
@@ -179,12 +176,12 @@ impl ContractDataEngine {
         Ok(())
     }
 
-    pub async fn get_deposits_for_recipient(
+    pub async fn get_orders_for_recipient(
         &self,
         address: Address,
         deposit_block_cutoff: u64,
     ) -> Result<Vec<Order>> {
-        get_deposits_for_recipient(
+        get_orders_for_recipient(
             &self.swap_database_connection,
             address,
             deposit_block_cutoff,
@@ -202,25 +199,25 @@ impl ContractDataEngine {
         get_virtual_swaps(&self.swap_database_connection, address, page, page_size).await
     }
 
-    pub async fn get_oldest_active_deposit(
+    pub async fn get_oldest_active_order(
         &self,
         current_block_timestamp: u64,
     ) -> Result<Option<ChainAwareOrder>> {
-        get_oldest_active_deposit(&self.swap_database_connection, current_block_timestamp).await
+        get_oldest_active_order(&self.swap_database_connection, current_block_timestamp).await
     }
 
-    pub async fn get_otc_swap_by_deposit_id(
+    pub async fn get_otc_swap_by_order_hash(
         &self,
         deposit_id: [u8; 32],
     ) -> Result<Option<OTCSwap>> {
-        get_otc_swap_by_deposit_id(&self.swap_database_connection, deposit_id).await
+        get_otc_swap_by_order_hash(&self.swap_database_connection, deposit_id).await
     }
 
-    pub async fn get_swaps_ready_to_be_released(
+    pub async fn get_payments_ready_to_be_settled(
         &self,
         current_block_timestamp: u64,
     ) -> Result<Vec<ChainAwarePaymentWithOrder>> {
-        get_swaps_ready_to_be_released(&self.swap_database_connection, current_block_timestamp)
+        get_payments_ready_to_be_settled(&self.swap_database_connection, current_block_timestamp)
             .await
     }
 
@@ -270,8 +267,8 @@ impl ContractDataEngine {
             .map_err(|e| eyre::eyre!(e))
     }
 
-    pub async fn get_deposit_by_id(&self, deposit_id: [u8; 32]) -> Result<Option<ChainAwareOrder>> {
-        get_deposit_by_id(&self.swap_database_connection, deposit_id).await
+    pub async fn get_order_by_hash(&self, deposit_id: [u8; 32]) -> Result<Option<ChainAwareOrder>> {
+        get_order_by_hash(&self.swap_database_connection, deposit_id).await
     }
 }
 
@@ -466,7 +463,7 @@ async fn handle_order_updated_event(
     for order in orders {
         match decoded.data.context {
             0 /* OrderUpdateContext::Created */ => {
-                add_deposit(
+                add_order(
                     db_conn,
                     order,
                     log_block_number,
@@ -474,10 +471,10 @@ async fn handle_order_updated_event(
                     log_txid.into(),
                 )
                 .await
-                .map_err(|e| eyre::eyre!("add_deposit failed: {:?}", e))?;
+                .map_err(|e| eyre::eyre!("add_order failed: {:?}", e))?;
             }
             1 /* OrderUpdateContext::Refunded */ => {
-                update_deposit_to_withdrawn(
+                update_order_to_refunded(
                     db_conn,
                     order.salt.into(),
                     log_txid.into(),
@@ -485,7 +482,7 @@ async fn handle_order_updated_event(
                     log_block_hash.into(),
                 )
                 .await
-                .map_err(|e| eyre::eyre!("update_deposit_to_withdrawn failed: {:?}", e))?;
+                .map_err(|e| eyre::eyre!("update_order_to_refunded failed: {:?}", e))?;
             }
             _ => {}
         }
@@ -518,10 +515,10 @@ async fn handle_payment_updated_event(
         0 /* SwapUpdateContext::Created */ => {
             for payment in decoded.data.payments {
                 info!(
-                    "Received PaymentUpdated event: proposed_swap_id = {:?}",
-                    get_proposed_swap_id(&payment)
+                    "Received PaymentUpdated event: payment_index = {:?}",
+                    payment.index.to::<u64>()
                 );
-                add_proposed_swap(
+                add_payment(
                     db_conn,
                     &payment,
                     log_block_number,
@@ -529,20 +526,20 @@ async fn handle_payment_updated_event(
                     log_txid.into(),
                 )
                 .await
-                .map_err(|e| eyre::eyre!("add_proposed_swap failed: {:?}", e))?;
+                .map_err(|e| eyre::eyre!("add_payment failed: {:?}", e))?;
             }
         }
         1 /* SwapUpdateContext::Complete */ => {
             for payment in decoded.data.payments {
-                update_proposed_swap_to_released(
+                update_payment_to_settled(
                     db_conn,
-                    get_proposed_swap_id(&payment),
+                    payment.index.to::<u64>(),
                     log_txid.into(),
                     log_block_number,
                     log_block_hash.into(),
                 )
                 .await
-                .map_err(|e| eyre::eyre!("update_proposed_swap_to_released failed: {:?}", e))?;
+                .map_err(|e| eyre::eyre!("update_payment_to_settled failed: {:?}", e))?;
             }
         }
         _ => {}

@@ -5,6 +5,10 @@ edition = "2021"
 rust-version.workspace = true
 exclude.workspace = true
 
+[[bin]]
+name = "market-maker"
+path = "src/bin/main.rs"
+
 [dependencies]
 rift-sdk = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
