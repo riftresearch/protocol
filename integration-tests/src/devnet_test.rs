@@ -623,7 +623,8 @@ async fn test_simulated_swap_end_to_end() {
 
     let rift_transaction_input = RiftTransaction {
         txn: serialize_no_segwit(&payment_tx).unwrap(),
-        reserved_vault: new_order.clone(),
+        order: new_order.clone(),
+        payment_output_index: 0,
         block_header: swap_block_header,
         txn_merkle_proof,
     };

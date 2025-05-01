@@ -51,6 +51,7 @@ use crate::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 struct PendingPayment {
     chain_aware_order: ChainAwareOrder,
     payment_txid: Txid, //rely on bitcoin core for telling us how many confirmations this has?
+    payment_output_index: usize,
 }
 
 struct ConfirmedPayment {
@@ -461,8 +462,12 @@ async fn find_new_swaps_in_blocks(
     for block in blocks {
         for tx in block.txdata.clone() {
             // check if the tx is a swap
-            let txid = tx.txid();
-            for output in tx.output.clone() {
+            let txid = tx.compute_txid();
+            for (output_index, output) in tx.output.clone().iter().enumerate() {
+                if output_index == 0 {
+                    // OP_RETURN is never the first output in a rift payment bitcoin transaction
+                    continue;
+                }
                 if output.script_pubkey.len() != 34 {
                     continue;
                 }
@@ -485,15 +490,15 @@ async fn find_new_swaps_in_blocks(
 
                 let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&tx);
                 let mut reader = serialized.as_slice();
-                let canon_bitcoin_tx =
-                    bitcoin::Transaction::consensus_decode_from_finite_reader(&mut reader).unwrap();
+                let canon_bitcoin_tx = bitcoin::Transaction::consensus_decode(&mut reader)
+                    .map_err(|e| eyre::eyre!("Failed to deserialize transaction: {}", e))?;
 
                 let tx_data_no_segwit = serialize_no_segwit(&canon_bitcoin_tx)?;
 
                 let payment_validation = validate_bitcoin_payment(
                     &tx_data_no_segwit,
                     &chain_aware_deposit.order,
-                    &potential_deposit_vault_commitment,
+                    output_index - 1, // - 1 b/c output_index is associated with the OP_RETURN output which is + 1 from the payment output index
                 );
                 if payment_validation.is_err() {
                     info!(
@@ -512,6 +517,7 @@ async fn find_new_swaps_in_blocks(
                 pending_swaps.push(PendingPayment {
                     chain_aware_order: chain_aware_deposit,
                     payment_txid: txid,
+                    payment_output_index: output_index - 1,
                 });
             }
         }
@@ -575,7 +581,8 @@ async fn find_pending_swaps_with_sufficient_confirmations(
 
             let rift_transaction_input = RiftTransaction {
                 txn: serialize_no_segwit(&txn).unwrap(),
-                reserved_vault: pending_swap.chain_aware_order.order.clone(),
+                order: pending_swap.chain_aware_order.order.clone(),
+                payment_output_index: pending_swap.payment_output_index,
                 block_header,
                 txn_merkle_proof: merkle_proof,
             };
