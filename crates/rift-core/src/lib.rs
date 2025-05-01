@@ -17,14 +17,14 @@ use sol_bindings::{
     LightClientPublicInput, Order, PaymentPublicInput, ProofPublicInput, ProofType,
 };
 
-use vaults::SolidityHash;
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RiftTransaction {
     // no segwit data serialized bitcoin transaction
     pub txn: Vec<u8>,
+    // the index of the payment output in the transaction
+    pub payment_output_index: usize,
     // the vault reserved for this transaction
-    pub reserved_vault: Order,
+    pub order: Order,
     // block header where the txn is included
     pub block_header: Header,
     // merkle proof of the txn hash in the block
@@ -46,10 +46,9 @@ impl RiftTransaction {
         verify_bitcoin_txn_merkle_proof(block_header_merkle_root, txn_hash, &self.txn_merkle_proof);
 
         // [1] Validate Bitcoin payment given the reserved deposit vault
-
-        let vault_commitment: [u8; 32] = self.reserved_vault.hash();
-        validate_bitcoin_payment(&self.txn, &self.reserved_vault, &vault_commitment)
-            .expect("Failed to validate bitcoin payment");
+        let order_hash =
+            validate_bitcoin_payment(&self.txn, &self.order, self.payment_output_index)
+                .expect("Failed to validate bitcoin payment");
 
         // [2] Construct the public input, bitcoin block hash and txid are reversed to align with network byte order
         let mut block_hash =
@@ -61,7 +60,7 @@ impl RiftTransaction {
         txid.reverse();
 
         PaymentPublicInput {
-            orderHash: vault_commitment.into(),
+            orderHash: order_hash.into(),
             paymentBitcoinBlockHash: block_hash.into(),
             paymentBitcoinTxid: txid.into(),
         }
