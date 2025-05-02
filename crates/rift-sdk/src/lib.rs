@@ -3,6 +3,7 @@ pub mod checkpoint_mmr;
 mod errors;
 pub mod indexed_mmr;
 pub mod proof_generator;
+pub mod txn_broadcast;
 pub mod txn_builder;
 
 use alloy::network::{Ethereum, EthereumWallet};
@@ -132,4 +133,17 @@ pub async fn create_websocket_wallet_provider(
         .on_client(client);
 
     Ok(provider)
+}
+
+pub fn handle_background_thread_result<T>(
+    result: Option<Result<Result<T, eyre::Report>, tokio::task::JoinError>>,
+) -> eyre::Result<()> {
+    match result {
+        Some(Ok(thread_result)) => match thread_result {
+            Ok(_) => Err(eyre::eyre!("Background thread completed unexpectedly")),
+            Err(e) => Err(eyre::eyre!("Background thread panicked: {}", e)),
+        },
+        Some(Err(e)) => Err(eyre::eyre!("Join set failed: {}", e)),
+        None => Err(eyre::eyre!("Join set panicked with no result")),
+    }
 }

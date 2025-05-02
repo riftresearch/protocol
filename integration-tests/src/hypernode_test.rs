@@ -298,7 +298,7 @@ async fn test_hypernode_simple_swap() {
 
     let rpc_url_with_cookie = devnet.bitcoin.rpc_url_with_cookie.clone();
     let hypernode_handle = tokio::spawn(async move {
-        let hypernode_args = HypernodeArgs {
+        let hypernode = HypernodeArgs {
             evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
             btc_rpc: rpc_url_with_cookie.clone(),
             private_key: hex::encode(hypernode_account.secret_bytes),
@@ -310,9 +310,7 @@ async fn test_hypernode_simple_swap() {
             log_chunk_size: 10000,
             proof_generator: ProofGeneratorType::Execute,
         };
-        hypernode::run(hypernode_args)
-            .await
-            .expect("Hypernode crashed");
+        hypernode.run().await.expect("Hypernode crashed");
     });
 
     println!(

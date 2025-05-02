@@ -26,10 +26,10 @@ use alloy::{eips::BlockNumberOrTag, primitives::U256, providers::Provider};
 use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
 use devnet::{RiftDevnet, RiftExchangeHarnessWebsocket};
 use eyre::OptionExt;
-use hypernode::{
-    txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult},
-    HypernodeArgs,
-};
+
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
+
+use hypernode::HypernodeArgs;
 use rift_sdk::{
     create_websocket_wallet_provider, proof_generator::ProofGeneratorType, txn_builder,
     DatabaseLocation,
@@ -119,7 +119,7 @@ pub async fn create_deposit(
         .unwrap(),
     );
 
-    let transaction_broadcaster = hypernode::txn_broadcast::TransactionBroadcaster::new(
+    let transaction_broadcaster = TransactionBroadcaster::new(
         maker_evm_provider.clone(),
         devnet.ethereum.anvil.endpoint().to_string(),
         &mut devnet.join_set,

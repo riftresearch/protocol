@@ -46,7 +46,7 @@ use tokio::{
 use tokio_util::task::TaskTracker;
 use tracing::{info, info_span, instrument, warn, Instrument};
 
-use crate::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 
 struct PendingPayment {
     chain_aware_order: ChainAwareOrder,

@@ -12,10 +12,8 @@ use alloy::{
 use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
 use devnet::RiftDevnet;
 use eyre::OptionExt;
-use hypernode::{
-    txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult},
-    HypernodeArgs,
-};
+use hypernode::HypernodeArgs;
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
 use rift_sdk::{
     create_websocket_wallet_provider, proof_generator::ProofGeneratorType, txn_builder,
     DatabaseLocation,
