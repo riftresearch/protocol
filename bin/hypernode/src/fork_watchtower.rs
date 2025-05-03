@@ -10,7 +10,6 @@ use bitcoin_light_client_core::{hasher::Keccak256Hasher, leaves::BlockLeaf, Chai
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::RpcApi;
 use data_engine::engine::ContractDataEngine;
-use metrics::{counter, gauge, histogram};
 use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
@@ -134,14 +133,7 @@ impl ForkWatchtower {
         bitcoin_concurrency_limit: usize,
         proof_generator: Arc<RiftProofGenerator>,
     ) -> eyre::Result<()> {
-        info!("Starting tip-based fork watchtower");
-
-        counter!("fork_watchtower.started").increment(1);
-        gauge!("fork_watchtower.running").set(1.0);
-
-        defer! {
-            gauge!("fork_watchtower.running").set(0.0);
-        }
+        info!("Starting fork watchtower");
 
         let (event_sender, mut event_receiver) = mpsc::channel::<ForkWatchtowerEvent>(10);
 
@@ -162,7 +154,7 @@ impl ForkWatchtower {
                             .await
                             .is_err()
                         {
-                            error!("Failed to forward tip event, channel closed");
+                            error!("Failed to forward event channel closed");
                             break;
                         }
                         
@@ -171,7 +163,7 @@ impl ForkWatchtower {
                             .await
                             .is_err()
                         {
-                            error!("Failed to send check for fork event, channel closed");
+                            error!("Failed to send check for fork event channel closed");
                             break;
                         }
                     }
@@ -196,13 +188,13 @@ impl ForkWatchtower {
                             .await
                             .is_err()
                         {
-                            error!("Failed to forward transaction status event, channel closed");
+                            error!("Failed to forward transaction status event channel closed");
                             break;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         error!(
-                            "Transaction status subscription lagged, missed {} messages",
+                            "Transaction status subscription lagged missed {} messages",
                             n
                         );
                         tx_status_subscription = tx_broadcaster_clone.subscribe_to_status_updates();
@@ -228,7 +220,7 @@ impl ForkWatchtower {
                             .await
                             .is_err()
                         {
-                            error!("Failed to forward MMR root update event, channel closed");
+                            error!("Failed to forward MMR root update event channel closed");
                             break;
                         }
                         
@@ -237,7 +229,7 @@ impl ForkWatchtower {
                             .await
                             .is_err()
                         {
-                            error!("Failed to send check for fork event, channel closed");
+                            error!("Failed to send check for fork event channel closed");
                             break;
                         }
                     }
@@ -273,9 +265,6 @@ impl ForkWatchtower {
                         {
                             Ok(ForkDetectionResult::ForkDetected(chain_transition)) => {
                                 info!("Fork detected, generating proof");
-                                counter!("fork_watchtower.fork_detected").increment(1);
-                                histogram!("fork_watchtower.detection_time")
-                                    .record(start.elapsed().as_secs_f64());
 
                                 Self::handle_fork_resolution(
                                     chain_transition,
@@ -288,17 +277,14 @@ impl ForkWatchtower {
                             }
                             Ok(ForkDetectionResult::NoFork) => {
                                 info!("No fork detected at tip");
-                                counter!("fork_watchtower.no_fork_detected").increment(1);
                             }
                             Ok(ForkDetectionResult::StaleChain) => {
                                 info!(
-                                    "Light client chain is stale but valid (included in BDE chain)"
+                                    "Light client chain is stale but valid, its included in BDE chain"
                                 );
-                                counter!("fork_watchtower.stale_chain_detected").increment(1);
                             }
                             Err(e) => {
                                 error!("Error detecting fork: {}", e);
-                                counter!("fork_watchtower.fork_detection_error").increment(1);
                             }
                         }
                     }
@@ -306,12 +292,10 @@ impl ForkWatchtower {
 
                 ForkWatchtowerEvent::MmrRootUpdated(root) => {
                     info!("Received MMR root update event: {}", hex::encode(root));
-                    counter!("fork_watchtower.mmr_root_updated").increment(1);
 
                     if let Some(resolution) = &pending_resolution {
                         if resolution.expected_mmr_root == root {
-                            info!("MMR root update confirmed our fork resolution");
-                            counter!("fork_watchtower.resolution_confirmed").increment(1);
+                            info!("MMR root update confirmed the fork resolution");
                             pending_resolution = None;
                         }
                     }
@@ -321,7 +305,7 @@ impl ForkWatchtower {
                     if let Some(resolution) = &mut pending_resolution {
                         if let Some(tx_hash) = &resolution.transaction_hash {
                             if status.tx_hash == *tx_hash {
-                                info!("Received status update for our fork resolution transaction");
+                                info!("Received status update for the fork resolution transaction");
 
                                 match status.result {
                                     TransactionExecutionResult::Success(receipt) => {
@@ -329,8 +313,6 @@ impl ForkWatchtower {
                                             "Fork resolution transaction successful: {:?}",
                                             receipt
                                         );
-                                        counter!("fork_watchtower.transaction_broadcast_success")
-                                            .increment(1);
 
                                     }
                                     TransactionExecutionResult::Revert(revert_info) => {
@@ -346,11 +328,9 @@ impl ForkWatchtower {
                                             resolution.transaction_hash = None;
 
                                             warn!(
-                                                "Transaction reverted with recoverable error, will retry ({}/{})",
+                                                "Transaction reverted with recoverable error, retry ({}/{})",
                                                 resolution.retries, TRANSACTION_BROADCAST_RETRY_MAX
                                             );
-                                            counter!("fork_watchtower.transaction_broadcast_retry")
-                                                .increment(1);
 
                                             Self::handle_fork_resolution(
                                                 resolution.chain_transition.clone(),
@@ -362,16 +342,11 @@ impl ForkWatchtower {
                                             .await;
                                         } else {
                                             error!("Transaction reverted with unrecoverable error: {:?}", revert_info);
-                                            counter!("fork_watchtower.transaction_broadcast_unrecoverable_error").increment(1);
                                             pending_resolution = None;
                                         }
                                     }
                                     TransactionExecutionResult::InvalidRequest(msg) => {
                                         error!("Invalid transaction request: {}", msg);
-                                        counter!(
-                                            "fork_watchtower.transaction_broadcast_invalid_request"
-                                        )
-                                        .increment(1);
                                         pending_resolution = None;
                                     }
                                     TransactionExecutionResult::UnknownError(msg) => {
@@ -380,10 +355,9 @@ impl ForkWatchtower {
                                             resolution.transaction_hash = None;
 
                                             warn!(
-                                                "Transaction failed with unknown error, will retry ({}/{}): {}",
+                                                "Transaction failed with unknown error, retry ({}/{}): {}",
                                                 resolution.retries, TRANSACTION_BROADCAST_RETRY_MAX, msg
                                             );
-                                            counter!("fork_watchtower.transaction_broadcast_unknown_error").increment(1);
 
                                             Self::handle_fork_resolution(
                                                 resolution.chain_transition.clone(),
@@ -395,8 +369,6 @@ impl ForkWatchtower {
                                             .await;
                                         } else {
                                             error!("Max retries reached for transaction broadcast");
-                                            counter!("fork_watchtower.max_retries_reached")
-                                                .increment(1);
                                             pending_resolution = None;
                                         }
                                     }
@@ -453,7 +425,6 @@ impl ForkWatchtower {
                     Some(p) => p.bytes(),
                     None => {
                         warn!("Using mock proof for light client update");
-                        counter!("fork_watchtower.mock_proof_generated").increment(1);
                         Vec::new()
                     }
                 };
@@ -485,13 +456,11 @@ impl ForkWatchtower {
                     }
                     Err(e) => {
                         error!("Failed to send transaction: {}", e);
-                        counter!("fork_watchtower.transaction_send_error").increment(1);
                     }
                 }
             }
             Err(e) => {
                 error!("Failed to generate proof: {}", e);
-                counter!("fork_watchtower.proof_generation_error").increment(1);
             }
         }
     }
@@ -551,7 +520,7 @@ impl ForkWatchtower {
   
       if light_client_tip_leaf.block_hash == bitcoin_tip_leaf.block_hash {
           info!(
-              message = "No fork - tips match exactly",
+              message = "No fork tips match exactly",
               tip_hash = hex::encode(light_client_tip_leaf.block_hash),
           );
           return Ok(ForkDetectionResult::NoFork);
@@ -562,7 +531,7 @@ impl ForkWatchtower {
   
       if light_client_chainwork == bitcoin_chainwork {
           info!(
-              message = "Tips have equal chainwork, following first-seen policy (no fork)",
+              message = "Tips have equal so first seen policy (no fork)",
               chainwork = format!("{:x}", light_client_chainwork),
           );
           return Ok(ForkDetectionResult::NoFork);
@@ -574,7 +543,7 @@ impl ForkWatchtower {
   
       if is_included {
           info!(
-              message = "Light client tip is included in BDE chain, no fork needed",
+              message = "Light client tip is included in BDE chain, no fork",
               light_client_tip = hex::encode(light_client_tip_leaf.block_hash),
           );
           return Ok(ForkDetectionResult::StaleChain);
@@ -582,14 +551,14 @@ impl ForkWatchtower {
 
       if light_client_chainwork > bitcoin_chainwork {
           info!(
-              message = "Fork detected - light client has block not in BDE chain with higher chainwork",
+              message = "Fork detected light client has block not in BDE chain with higher chainwork",
               light_client_tip = hex::encode(light_client_tip_leaf.block_hash),
               light_client_chainwork = format!("{:x}", light_client_chainwork),
               bitcoin_chainwork = format!("{:x}", bitcoin_chainwork),
           );
       } else {
           info!(
-              message = "Fork detected - light client tip not in BDE chain and BDE has more chainwork",
+              message = "Fork detected light client tip not in BDE chain and BDE has more chainwork",
               light_client_tip = hex::encode(light_client_tip_leaf.block_hash),
               light_client_chainwork = format!("{:x}", light_client_chainwork),
               bitcoin_chainwork = format!("{:x}", bitcoin_chainwork),
@@ -669,7 +638,7 @@ impl ForkWatchtower {
 
                         if height_hash_str != block_hash_str {
                             info!(
-                              "Found different block at height {} in main chain. Fork detected! Main chain hash: {}, Block hash: {}",
+                              "Found different block at height {} in main chain Fork detected Main chain hash: {}, Block hash: {}",
                               block_height, height_hash_str, block_hash_str
                           );
                             is_in_main_chain = false;
@@ -725,7 +694,6 @@ impl ForkWatchtower {
                 Ok(proof) => break Ok(proof),
                 Err(e) => {
                     warn!("Proof generation failed, retrying: {}", e);
-                    counter!("fork_watchtower.proof_generation_retry").increment(1);
 
                     if let Some(duration) = backoff.next_backoff() {
                         time::sleep(duration).await;

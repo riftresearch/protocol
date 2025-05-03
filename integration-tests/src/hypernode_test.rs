@@ -420,7 +420,7 @@ mod fork_watchtower_tests {
         // Verify result is NoFork
         match detection_result {
             ForkDetectionResult::NoFork => {
-                println!("Successfully detected no fork");
+                println!("detected no fork");
             }
             other => {
                 panic!("Expected NoFork, got {:?}", other);
@@ -476,7 +476,7 @@ mod fork_watchtower_tests {
         .await;
 
         if blocks_result.is_err() {
-            println!("Warning: Timed out waiting for blocks, continuing with test");
+            println!("Err from blocks_result: Timed out waiting for blocks, continue");
         }
 
         let detection_result =
@@ -487,7 +487,7 @@ mod fork_watchtower_tests {
         // Check we got stale chain
         match detection_result {
             ForkDetectionResult::StaleChain => {
-                println!("Successfully detected stale chain");
+                println!("detected stale chain");
 
                 // Verify the light client tip is still included in the bde chain
                 let light_client_tip_index = contract_data_engine
@@ -556,10 +556,7 @@ mod fork_watchtower_tests {
 
         let should_retry =
             ForkWatchtower::handle_transaction_revert(&already_exists_revert, mmr_root);
-        assert!(
-            !should_retry,
-            "Should not retry when MMR root already exists"
-        );
+        assert!(!should_retry, "Dont retry when MMR root already exists");
 
         // Test with a nonce error
         let nonce_revert = hypernode::txn_broadcast::RevertInfo {
@@ -572,7 +569,7 @@ mod fork_watchtower_tests {
         };
 
         let should_retry = ForkWatchtower::handle_transaction_revert(&nonce_revert, mmr_root);
-        assert!(should_retry, "Should retry when nonce is too low");
+        assert!(should_retry, "retry when nonce is too low");
 
         // Test with a gas price error
         let gas_revert = hypernode::txn_broadcast::RevertInfo {
@@ -585,7 +582,7 @@ mod fork_watchtower_tests {
         };
 
         let should_retry = ForkWatchtower::handle_transaction_revert(&gas_revert, mmr_root);
-        assert!(should_retry, "Should retry when gas price is too low");
+        assert!(should_retry, "retry when gas price is too low");
 
         // Test with a network error
         let network_revert = hypernode::txn_broadcast::RevertInfo {
@@ -598,7 +595,7 @@ mod fork_watchtower_tests {
         };
 
         let should_retry = ForkWatchtower::handle_transaction_revert(&network_revert, mmr_root);
-        assert!(should_retry, "Should retry when network connection fails");
+        assert!(should_retry, "retry when network connection fails");
     }
 
     /// Tests that the fork watchtower correctly detects and resolves a simulated fork
@@ -622,7 +619,7 @@ mod fork_watchtower_tests {
 
         match initial_result {
             ForkDetectionResult::NoFork => {
-                println!("Successfully verified initial state has no fork");
+                println!("verified initial state has no fork");
             }
             other => {
                 panic!("Expected NoFork in initial state, got {:?}", other);
@@ -652,7 +649,7 @@ mod fork_watchtower_tests {
         .await;
 
         if blocks_result.is_err() {
-            println!("Warning: Timed out waiting for all blocks, continuing with test");
+            println!("Err from blocks_result: Timed out waiting for all blocks, continue");
         }
 
         let light_client_tip_index = contract_data_engine
@@ -815,7 +812,7 @@ mod fork_watchtower_tests {
 
         match detection_result {
             ForkDetectionResult::ForkDetected(chain_transition) => {
-                println!("Successfully detected fork");
+                println!("detected fork");
 
                 assert!(
                     chain_transition.new_headers.len() > 0,
@@ -930,9 +927,7 @@ mod fork_watchtower_tests {
                     "Fake block should have been removed from the light client chain"
                 );
 
-                println!(
-                    "Successfully verified fake block has been removed from light client chain"
-                );
+                println!("verified fake block has been removed from light client chain");
             }
             other => {
                 panic!("Expected ForkDetected, got {:?}", other);
@@ -960,7 +955,7 @@ mod fork_watchtower_tests {
 
         match initial_result {
             ForkDetectionResult::NoFork => {
-                println!("Successfully verified initial state has no fork");
+                println!("verified initial state has no fork");
             }
             other => {
                 panic!("Expected NoFork in initial state, got {:?}", other);
@@ -968,12 +963,12 @@ mod fork_watchtower_tests {
         }
 
         // Mine a block in Bitcoin chain and wait for the BDE to catch up so that the real chain is ahead of the light client
-        println!("Mining 3 blocks to advance the Bitcoin chain");
+        println!("Mining 3 blocks");
         devnet
             .bitcoin
             .mine_blocks(3)
             .await
-            .expect("Failed to mine initial blocks");
+            .expect("Failed to mine 3 blocks");
 
         // Wait for BDE to sync
         let mut block_subscription = bitcoin_data_engine.subscribe_to_new_blocks();
@@ -1124,7 +1119,7 @@ mod fork_watchtower_tests {
         // we should have a fork
         match detection_result {
             ForkDetectionResult::ForkDetected(chain_transition) => {
-                println!("Successfully detected fork (light client tip not in BDE chain)");
+                println!("detected fork, light client tip not in BDE chain");
 
                 assert!(
                     chain_transition.new_headers.len() > 0,
@@ -1284,11 +1279,11 @@ mod fork_watchtower_tests {
 
         match detection_result {
             ForkDetectionResult::NoFork => {
-                println!("Successfully applied first-seen policy for equal chainwork");
+                println!("applied first-seen policy for equal chainwork");
             }
             other => {
                 panic!(
-                    "Expected NoFork with equal chainwork (first-seen policy), got {:?}",
+                    "Expected NoFork with equal chainwork, first seen policy, got {:?}",
                     other
                 );
             }
