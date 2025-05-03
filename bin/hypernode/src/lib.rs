@@ -1,7 +1,9 @@
 pub mod release_watchtower;
 pub mod swap_watchtower;
 pub mod txn_broadcast;
+pub mod fork_watchtower;
 
+use alloy::eips::ForkBlock;
 use alloy::primitives::Address;
 pub use alloy::providers::Provider;
 use bitcoin::base58::error;
@@ -10,6 +12,7 @@ use bitcoincore_rpc_async::{Auth, RpcApi};
 use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use eyre::Result;
+use fork_watchtower::ForkWatchtower;
 use release_watchtower::ReleaseWatchtower;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::{create_websocket_provider, create_websocket_wallet_provider, DatabaseLocation};
@@ -198,7 +201,7 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         rift_exchange_address,
         transaction_broadcaster.clone(),
         args.btc_batch_rpc_size,
-        proof_generator,
+        proof_generator.clone(),
         &mut join_set,
     );
 
@@ -210,6 +213,18 @@ pub async fn run(args: HypernodeArgs) -> Result<()> {
         &mut join_set,
     )
     .await?;
+
+    ForkWatchtower::run(
+        contract_data_engine.clone(),
+        bitcoin_data_engine.clone(),
+        btc_rpc.clone(),
+        evm_rpc.clone(),
+        rift_exchange_address,
+        transaction_broadcaster.clone(),
+        args.btc_batch_rpc_size,
+        proof_generator.clone(),
+        &mut join_set,
+    );
 
     // Wait for one of the background threads to complete or fail. (Ideally never happens, but we want to crash the program if it does)
     handle_background_thread_result(join_set.join_next().await)

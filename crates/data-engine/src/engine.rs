@@ -39,12 +39,15 @@ use crate::{
     models::OTCSwap,
 };
 
+#[derive(Debug, Clone)]
 pub struct ContractDataEngine {
     pub checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
     server_started: Arc<AtomicBool>,
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
+    mmr_root_broadcaster: broadcast::Sender<[u8; 32]>,
+    current_mmr_root: Arc<RwLock<[u8; 32]>>,
 }
 
 impl ContractDataEngine {
@@ -67,12 +70,19 @@ impl ContractDataEngine {
 
         Self::conditionally_seed_mmr(&checkpointed_block_tree, checkpoint_leaves).await?;
 
+        // Initialize the MMR root broadcaster and current root
+        let initial_root = checkpointed_block_tree.read().await.get_root().await?;
+        let (mmr_root_broadcaster, _) = broadcast::channel::<[u8; 32]>(16);
+        let current_mmr_root = Arc::new(RwLock::new(initial_root));
+
         Ok(Self {
             checkpointed_block_tree,
             swap_database_connection,
             initial_sync_complete: Arc::new(AtomicBool::new(false)),
             initial_sync_broadcaster: broadcast::channel(1).0,
             server_started: Arc::new(AtomicBool::new(false)),
+            mmr_root_broadcaster,
+            current_mmr_root,
         })
     }
 
@@ -132,6 +142,7 @@ impl ContractDataEngine {
         let initial_sync_complete_clone = self.initial_sync_complete.clone();
         let initial_sync_broadcaster_clone = self.initial_sync_broadcaster.clone();
 
+        let self_clone = Arc::new(self.clone());
         join_set.spawn(
             async move {
                 info!("Starting contract data engine event listener");
@@ -144,6 +155,7 @@ impl ContractDataEngine {
                     initial_sync_complete_clone,
                     initial_sync_broadcaster_clone,
                     chunk_size,
+                    &self_clone,
                 )
                 .await
             }
@@ -251,12 +263,25 @@ impl ContractDataEngine {
             .map_err(|e| eyre::eyre!(e))
     }
 
-    pub async fn get_mmr_root(&self) -> Result<Digest> {
-        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
-        checkpointed_block_tree
-            .get_root()
-            .await
-            .map_err(|e| eyre::eyre!(e))
+    // Subscribe to MMR root updates
+    pub fn subscribe_to_mmr_root_updates(&self) -> broadcast::Receiver<[u8; 32]> {
+        self.mmr_root_broadcaster.subscribe()
+    }
+
+    // Get the current MMR root but w/ cached value
+    pub async fn get_mmr_root(&self) -> Result<[u8; 32]> {
+        Ok(*self.current_mmr_root.read().await)
+    }
+
+    // update MMR root and broadcast changes
+    pub async fn update_mmr_root(&self, new_root: [u8; 32]) -> Result<()> {
+        let mut current_root = self.current_mmr_root.write().await;
+        *current_root = new_root;
+        drop(current_root);
+        // Release the write lock before broadcasting ^
+
+        let _ = self.mmr_root_broadcaster.send(new_root);
+        Ok(())
     }
 
     pub async fn get_mmr_bagged_peak(&self) -> Result<Digest> {
@@ -269,6 +294,18 @@ impl ContractDataEngine {
 
     pub async fn get_order_by_hash(&self, deposit_id: [u8; 32]) -> Result<Option<ChainAwareOrder>> {
         get_order_by_hash(&self.swap_database_connection, deposit_id).await
+    }
+
+    pub async fn reset_mmr_for_testing(&self, bde_leaves: &[BlockLeaf]) -> Result<()> {
+
+        let temp_db_location = DatabaseLocation::InMemory;
+        let mut temp_tree = CheckpointedBlockTree::open(&temp_db_location).await?;
+        let root = temp_tree.create_seed_checkpoint(bde_leaves).await?;
+        
+        *self.checkpointed_block_tree.write().await = temp_tree;
+        self.update_mmr_root(root).await?;
+        
+        Ok(())
     }
 }
 
@@ -301,6 +338,7 @@ pub async fn listen_for_events(
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
     chunk_size: u64,
+    contract_data_engine: &Arc<ContractDataEngine>,
 ) -> Result<()> {
     use std::sync::atomic::Ordering;
     use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -348,6 +386,7 @@ pub async fn listen_for_events(
                 &checkpointed_block_tree,
                 provider.clone(),
                 rift_exchange_address,
+                contract_data_engine,
             )
             .await?;
         }
@@ -364,6 +403,7 @@ pub async fn listen_for_events(
             &checkpointed_block_tree,
             provider.clone(),
             rift_exchange_address,
+            contract_data_engine,
         )
         .await?;
     }
@@ -386,6 +426,7 @@ pub async fn listen_for_events(
             &checkpointed_block_tree,
             provider.clone(),
             rift_exchange_address,
+            contract_data_engine,
         )
         .await?;
     }
@@ -400,6 +441,7 @@ async fn process_log(
     checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     provider: DynProvider,
     rift_exchange_address: Address,
+    contract_data_engine: &Arc<ContractDataEngine>,
 ) -> Result<()> {
     info!("Processing log: {:?}", log);
 
@@ -427,6 +469,7 @@ async fn process_log(
                         provider.clone(),
                         checkpointed_block_tree.clone(),
                         rift_exchange_address,
+                        contract_data_engine,
                     )
                 })
                 .await?;
@@ -552,6 +595,7 @@ async fn handle_bitcoin_light_client_updated_event(
     provider: DynProvider,
     checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: Address,
+    contract_data_engine: &Arc<ContractDataEngine>,
 ) -> Result<()> {
     info!("Received BitcoinLightClientUpdated event");
     let txid = log
@@ -596,6 +640,8 @@ async fn handle_bitcoin_light_client_updated_event(
             new_mmr_root
         ));
     }
+
+    contract_data_engine.update_mmr_root(new_mmr_root).await?;
 
     Ok(())
 }

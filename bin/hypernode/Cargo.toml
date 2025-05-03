@@ -38,3 +38,8 @@ chrono = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+backoff.workspace = true
+metrics = "0.24.2"
+scopeguard = "1.2.0"
+thiserror.workspace = true
+uuid = "1.16.0"
