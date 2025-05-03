@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/src/Script.sol";
 import "forge-std/src/console.sol";
 import "../src/RiftExchange.sol";
-import {HelperTypes} from "../tests/utils/HelperTypes.sol";
+import {HelperTypes} from "../tests/utils/HelperTypes.t.sol";
 
 contract DeployRiftExchange is Script {
     function stringToUint(string memory s) internal pure returns (uint256) {

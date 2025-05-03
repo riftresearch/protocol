@@ -7,7 +7,7 @@ import {BlockLeaf} from "./IBitcoinLightClient.sol";
 enum DutchAuctionState {
     Created,
     Filled,
-    Withdrawn
+    Refunded
 }
 
 struct DutchAuction {
@@ -48,8 +48,7 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     error InvalidStartBtcOut();
     error InvalidDeadline();
     error AuctionExpired();
-    error AuctionAlreadyFilled();
-    error AuctionAlreadyWithdrawn();
+    error AuctionNotLive();
     error AuctionNotExpired();
     error FillerNotWhitelisted();
 
@@ -75,7 +74,7 @@ interface IBTCDutchAuctionHouse is IRiftExchange {
     /// @param fillerAuthData     Optional auth payload checked against a whitelist.
     /// @param safeBlockSiblings  Merkle siblings proving the "safe" block leaf used in the auction's base params.
     /// @param safeBlockPeaks     Merkle peaks proving the "safe" block path used in the auction's base params.
-    function fillAuction(
+    function claimAuction(
         DutchAuction calldata auction,
         bytes calldata fillerAuthData,
         bytes32[] calldata safeBlockSiblings,

@@ -4,10 +4,10 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/src/Vm.sol";
 import "../../src/interfaces/IBTCDutchAuctionHouse.sol";
 import "../../src/interfaces/IRiftExchange.sol";
-import {HelperTypes} from "../utils/HelperTypes.sol";
+import {HelperTypes} from "../utils/HelperTypes.t.sol";
 
 import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
-import {RiftTest} from "../utils/RiftTest.sol";
+import {RiftTest} from "../utils/RiftTest.t.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
 import {OrderValidationLib} from "../../src/libraries/OrderValidationLib.sol";
@@ -18,10 +18,6 @@ import {OrderValidationLib} from "../../src/libraries/OrderValidationLib.sol";
 contract BTCDutchAuctionHouseUnitTest is RiftTest {
     using HashLib for DutchAuction;
 
-    /* ────────────────────────────────────────────────────────────── */
-    /*                          Helpers                              */
-    /* ────────────────────────────────────────────────────────────── */
-
     function _extractSingleAuctionFromLogs(Vm.Log[] memory logs) internal pure returns (DutchAuction memory) {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == IBTCDutchAuctionHouse.AuctionUpdated.selector) {
@@ -31,15 +27,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         revert("Auction not found");
     }
 
-    /* ────────────────────────────────────────────────────────────── */
-    /*                            State                               */
-    /* ────────────────────────────────────────────────────────────── */
-
     BTCDutchAuctionHouse internal auctionHouse;
-
-    /* ────────────────────────────────────────────────────────────── */
-    /*                             SET‑UP                             */
-    /* ────────────────────────────────────────────────────────────── */
 
     function setUp() public virtual override {
         super.setUp(); // deploy SyntheticBTC & verifier helpers from RiftTest
@@ -58,15 +46,6 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         });
     }
 
-    /* ────────────────────────────────────────────────────────────── */
-    /*                           FUZZ TESTS                           */
-    /* ────────────────────────────────────────────────────────────── */
-
-    /// @notice Internal helper to start an auction and perform standard assertions.
-    /// @return auction The created auction struct.
-    /// @return _depositAmount The amount deposited.
-    /// @return baseParams The base deposit parameters used.
-    /// @return mmrProof The MMR proof used for the safe block leaf.
     function _startAuctionWithAssertions(
         uint256 depositAmount,
         uint64 startBtcOut,
@@ -84,25 +63,106 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
             HelperTypes.MMRProof memory mmrProof
         )
     {
-        /* ── Sanitize fuzzed inputs ─────────────────────────────── */
+        /* 1. Normalise / bound all fuzzed inputs, get mintable amount */
+        (
+            depositAmount,
+            startBtcOut,
+            endBtcOut,
+            decayBlocks,
+            deadlineOffset,
+            confirmationBlocks
+        ) = _normaliseAuctionInputs(
+            depositAmount,
+            startBtcOut,
+            endBtcOut,
+            decayBlocks,
+            deadlineOffset,
+            confirmationBlocks
+        );
+
+        /* 2. Give this test contract sBTC and approve the AuctionHouse */
+        _mintAndApproveSyntheticBTC(depositAmount);
+
+        /* 3. Create BaseCreateOrderParams + initial MMR proof in isolation */
+        {
+            (baseParams, mmrProof) = _prepareBaseParamsAndProof(depositAmount, confirmationBlocks);
+
+            DutchAuctionParams memory auctionParams = DutchAuctionParams({
+                startBtcOut: startBtcOut,
+                endBtcOut: endBtcOut,
+                decayBlocks: decayBlocks,
+                deadline: uint64(block.timestamp) + deadlineOffset,
+                fillerWhitelistContract: fillerWhitelistContract
+            });
+
+            /* 4. Call contract & capture emitted Auction */
+            uint256 preBalance = syntheticBTC.balanceOf(address(this));
+            uint256 startBlock = block.number;
+            uint64 startTime = uint64(block.timestamp);
+
+            vm.recordLogs();
+            auctionHouse.startAuction(depositAmount, auctionParams, baseParams);
+            {
+                Vm.Log[] memory logs = vm.getRecordedLogs();
+                auction = _extractSingleAuctionFromLogs(logs);
+            }
+
+            /* 5. Assert all invariants */
+            _assertPostAuctionState(
+                auction,
+                depositAmount,
+                auctionParams,
+                baseParams,
+                preBalance,
+                startBlock,
+                startTime
+            );
+        }
+
+        _depositAmount = depositAmount; // returned
+    }
+
+    /*──────────────────────── helper functions (private) ──────────────────────*/
+
+    /**
+     * Bounds and sanitises every fuzzed parameter so they fall in legal ranges.
+     */
+    function _normaliseAuctionInputs(
+        uint256 depositAmount,
+        uint64 startBtcOut,
+        uint64 endBtcOut,
+        uint64 decayBlocks,
+        uint64 deadlineOffset,
+        uint8 confirmationBlocks
+    ) private view returns (uint256, uint64, uint64, uint64, uint64, uint8) {
         decayBlocks = uint64(bound(decayBlocks, 1, 1_000_000));
         startBtcOut = uint64(bound(startBtcOut, OrderValidationLib.MIN_OUTPUT_SATS + 1, type(uint64).max));
         endBtcOut = uint64(bound(endBtcOut, OrderValidationLib.MIN_OUTPUT_SATS, startBtcOut - 1));
-
         confirmationBlocks = uint8(
             bound(confirmationBlocks, OrderValidationLib.MIN_CONFIRMATION_BLOCKS, type(uint8).max)
         );
-
         deadlineOffset = uint64(bound(deadlineOffset, 1 days, 30 days));
 
         uint256 minDeposit = FeeLib.calculateMinDepositAmount(auctionHouse.takerFeeBips());
         depositAmount = bound(depositAmount, minDeposit, type(uint64).max);
 
-        /* ── Prepare funds ───────────────────────────────────────── */
-        syntheticBTC.mint(address(this), depositAmount);
-        syntheticBTC.approve(address(auctionHouse), depositAmount);
+        return (depositAmount, startBtcOut, endBtcOut, decayBlocks, deadlineOffset, confirmationBlocks);
+    }
 
-        /* ── Prepare params ──────────────────────────────────────── */
+    /** Mints `amount` sBTC to this contract and approves the AuctionHouse. */
+    function _mintAndApproveSyntheticBTC(uint256 amount) private {
+        syntheticBTC.mint(address(this), amount);
+        syntheticBTC.approve(address(auctionHouse), amount);
+    }
+
+    /**
+     * Creates BaseCreateOrderParams and the accompanying (fake) MMR proof.
+     * Keeping them in a dedicated scope reduces live stack variables.
+     */
+    function _prepareBaseParamsAndProof(
+        uint256 depositAmount,
+        uint8 confirmationBlocks
+    ) private returns (BaseCreateOrderParams memory baseParams, HelperTypes.MMRProof memory mmrProof) {
         mmrProof = _generateFakeBlockMMRProofFFI(0);
 
         baseParams = BaseCreateOrderParams({
@@ -112,37 +172,30 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
             confirmationBlocks: confirmationBlocks,
             safeBlockLeaf: mmrProof.blockLeaf
         });
+    }
 
-        DutchAuctionParams memory auctionParams = DutchAuctionParams({
-            startBtcOut: startBtcOut,
-            endBtcOut: endBtcOut,
-            decayBlocks: decayBlocks,
-            deadline: uint64(block.timestamp) + deadlineOffset,
-            fillerWhitelistContract: fillerWhitelistContract
-        });
+    /**
+     * Confirms token flows, hash storage, and emitted event correctness.
+     */
+    function _assertPostAuctionState(
+        DutchAuction memory auction,
+        uint256 depositAmount,
+        DutchAuctionParams memory auctionParams,
+        BaseCreateOrderParams memory baseParams,
+        uint256 preBalance,
+        uint256 startBlock,
+        uint64 startTime
+    ) private view {
+        // [1] token flow
+        assertEq(syntheticBTC.balanceOf(address(this)), 0);
+        assertEq(syntheticBTC.balanceOf(address(auctionHouse)), depositAmount);
 
-        /* ── Snapshot pre‑state ──────────────────────────────────── */
-        uint256 preBalance = syntheticBTC.balanceOf(address(this));
-        uint256 startBlock = block.number;
-        uint64 startTime = uint64(block.timestamp);
-
-        vm.recordLogs();
-        /* ── Act ─────────────────────────────────────────────────── */
-        auctionHouse.startAuction(depositAmount, auctionParams, baseParams);
-
-        /* ── Asserts ─────────────────────────────────────────────── */
-        DutchAuction memory emmittedAuction = _extractSingleAuctionFromLogs(vm.getRecordedLogs());
-
-        // [1] Token transfer
-        assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no tokens left");
-        assertEq(syntheticBTC.balanceOf(address(auctionHouse)), depositAmount, "Contract balance incorrect");
-
-        // [2] Hash appended
+        // [2] hash stored
         bytes32 storedHash = auctionHouse.auctionHashes(0);
-        assertTrue(storedHash != bytes32(0), "Auction hash not stored");
+        assertTrue(storedHash != bytes32(0));
 
-        // [3] Hash correctness
-        DutchAuction memory expectedAuction = DutchAuction({
+        // [3] recompute & compare
+        DutchAuction memory expected = DutchAuction({
             index: 0,
             baseCreateOrderParams: baseParams,
             dutchAuctionParams: auctionParams,
@@ -152,15 +205,11 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
             state: DutchAuctionState.Created
         });
 
-        assertEq(emmittedAuction.hash(), expectedAuction.hash(), "Mismatched auction between emitted and expected");
-        assertEq(storedHash, expectedAuction.hash(), "Mismatched auction hash between storage and expected/emitted");
+        assertEq(auction.hash(), expected.hash(), "emitted vs expected");
+        assertEq(storedHash, expected.hash(), "storage vs expected");
 
-        // [4] Ensure the user actually spent the tokens
-        assertEq(preBalance - depositAmount, syntheticBTC.balanceOf(address(this)), "Balance maths mismatch");
-
-        // Return values
-        auction = emmittedAuction; // Use the emitted auction as it's confirmed on-chain
-        _depositAmount = depositAmount;
+        // [4] spent tokens check
+        assertEq(preBalance - depositAmount, syntheticBTC.balanceOf(address(this)));
     }
 
     /**
@@ -195,12 +244,12 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
     }
 
     /**
-     * Fuzz‑tests `fillAuction` and verifies:
+     * Fuzz‑tests `claimAuction` and verifies:
      *  1. Auction state transitions to Filled.
      *  2. Auction hash is updated correctly in storage.
      *  3. VaultsUpdated event is emitted (indicating internal _depositLiquidity call).
      */
-    function testFuzz_fillAuction(
+    function testFuzz_claimAuction(
         uint256 depositAmount,
         uint64 startBtcOut,
         uint64 endBtcOut,
@@ -241,12 +290,12 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         HelperTypes.MMRProof memory fillProof = _generateFakeBlockMMRProofFFI(startProof.blockLeaf.height);
 
         // Snapshot state before fill
-        uint256 preFillAuctionHouseBalance = syntheticBTC.balanceOf(address(auctionHouse));
+        uint256 preclaimAuctionHouseBalance = syntheticBTC.balanceOf(address(auctionHouse));
         vm.recordLogs();
 
         /* ── Act: Fill Auction ───────────────────────────────────── */
         vm.prank(filler);
-        auctionHouse.fillAuction(auction, "", fillProof.siblings, fillProof.peaks);
+        auctionHouse.claimAuction(auction, "", fillProof.siblings, fillProof.peaks);
 
         /* ── Asserts ─────────────────────────────────────────────── */
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -259,26 +308,14 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         bytes32 storedHash = auctionHouse.auctionHashes(auction.index);
         assertEq(storedHash, filledAuction.hash(), "Stored hash mismatch after fill");
 
-        // [3] Internal _depositLiquidity call check (via VaultsUpdated event)
-        bool foundOrderUpdate = false;
-        for (uint i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == IRiftExchange.OrdersUpdated.selector) {
-                (Order[] memory orders, OrderUpdateContext context) = abi.decode(
-                    logs[i].data,
-                    (Order[], OrderUpdateContext)
-                );
-                assertEq(uint(context), uint(OrderUpdateContext.Created), "Order context should be Created");
-                assertTrue(orders.length > 0, "No orders in OrdersUpdated event");
-                foundOrderUpdate = true;
-                break;
-            }
-        }
-        assertTrue(foundOrderUpdate, "VaultsUpdated event not found after fillAuction");
+        // [3] Internal _createOrder call check (via OrderUpdated event)
+        Order memory order = _extractSingleOrderFromLogs(logs);
+        assertEq(uint8(order.state), uint8(OrderState.Created), "Order should have been created");
 
         // [4] Token balance check (should remain unchanged as tokens are now in a vault)
         assertEq(
             syntheticBTC.balanceOf(address(auctionHouse)),
-            preFillAuctionHouseBalance,
+            preclaimAuctionHouseBalance,
             "Auction house balance changed unexpectedly on fill"
         );
     }

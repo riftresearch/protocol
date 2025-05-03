@@ -2,8 +2,8 @@
 pragma solidity ^0.8.4;
 import "../../src/interfaces/IRiftExchange.sol";
 
-import {HelperTypes} from "../utils/HelperTypes.sol";
-import {PRNG} from "./PRNG.sol";
+import {HelperTypes} from "../utils/HelperTypes.t.sol";
+import {PRNG} from "./PRNG.t.sol";
 import {Test} from "forge-std/src/Test.sol";
 import {SP1MockVerifier} from "sp1-contracts/contracts/src/SP1MockVerifier.sol";
 import {Vm} from "forge-std/src/Vm.sol";
@@ -14,7 +14,7 @@ import "forge-std/src/console.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
-import {SyntheticBTC} from "./SyntheticBTC.sol";
+import {SyntheticBTC} from "./SyntheticBTC.t.sol";
 
 contract RiftExchangeHarness is RiftExchange {
     using SafeTransferLib for address;
@@ -52,6 +52,7 @@ contract RiftTest is Test, PRNG {
     RiftExchangeHarness public exchange;
     SyntheticBTC public syntheticBTC;
     SP1MockVerifier public verifier;
+    event SetupSuccess();
 
     function setUp() public virtual {
         syntheticBTC = new SyntheticBTC();
@@ -70,6 +71,7 @@ contract RiftTest is Test, PRNG {
         });
 
         syntheticBTC = SyntheticBTC(address(exchange.syntheticBitcoin()));
+        emit SetupSuccess();
     }
 
     function _callFFI(string memory cmd) internal returns (bytes memory) {
@@ -148,6 +150,9 @@ contract RiftTest is Test, PRNG {
 
     function _extractSingleOrderFromLogs(Vm.Log[] memory logs) internal pure returns (Order memory) {
         for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == IRiftExchange.OrderUpdated.selector) {
+                return abi.decode(logs[i].data, (Order));
+            }
             if (logs[i].topics[0] == IRiftExchange.OrdersUpdated.selector) {
                 return abi.decode(logs[i].data, (Order[]))[0];
             }
@@ -199,23 +204,25 @@ contract RiftTest is Test, PRNG {
 
         exchange.createOrder(args);
 
-        // [4] grab the logs, find the vault
         Order memory createdOrder = _extractSingleOrderFromLogs(vm.getRecordedLogs());
-        uint256 orderIndex = exchange.getTotalOrders() - 1;
-        bytes32 _hash = exchange.orderHashes(orderIndex);
+        {
+            // [4] grab the logs, find the vault
+            uint256 orderIndex = exchange.getTotalOrders() - 1;
+            bytes32 _hash = exchange.orderHashes(orderIndex);
 
-        // [5] verify "offchain" calculated hash matches stored vault hash
-        bytes32 offchainHash = createdOrder.hash();
-        assertEq(offchainHash, _hash, "Offchain order hash should match");
+            // [5] verify "offchain" calculated hash matches stored vault hash
+            bytes32 offchainHash = createdOrder.hash();
+            assertEq(offchainHash, _hash, "Offchain order hash should match");
 
-        // [6] verify order index
-        assertEq(createdOrder.index, orderIndex, "Order index should match");
+            // [6] verify order index
+            assertEq(createdOrder.index, orderIndex, "Order index should match");
 
-        // [7] verify caller has no balance left
-        assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no balance left");
+            // [7] verify caller has no balance left
+            assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no balance left");
 
-        // [8] verify owner address
-        assertEq(createdOrder.owner, address(this), "Owner address should match");
+            // [8] verify owner address
+            assertEq(createdOrder.owner, address(this), "Owner address should match");
+        }
         return createdOrder;
     }
 }

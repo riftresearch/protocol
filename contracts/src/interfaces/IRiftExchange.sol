@@ -3,6 +3,12 @@ pragma solidity =0.8.28;
 
 import "./IBitcoinLightClient.sol";
 
+enum OrderState {
+    Created,
+    Settled,
+    Refunded
+}
+
 struct Order {
     // Where in the order hash array this order is
     uint256 index;
@@ -28,6 +34,8 @@ struct Order {
     uint8 confirmationBlocks;
     // Historical Bitcoin block height considered safe from reorganization by the order creator
     uint64 safeBitcoinBlockHeight;
+    // The state of the order, either `Created`, `Settled` or `Refunded`
+    OrderState state;
 }
 
 enum PaymentState {
@@ -81,17 +89,6 @@ struct ProofPublicInput {
     PaymentPublicInput[] payments;
     // The light client public input
     LightClientPublicInput lightClient;
-}
-
-enum OrderUpdateContext {
-    Created,
-    Settled,
-    Refunded
-}
-
-enum PaymentUpdateContext {
-    Created,
-    Settled
 }
 
 struct BaseCreateOrderParams {
@@ -172,8 +169,9 @@ interface IRiftExchange is IBitcoinLightClient {
     error PaymentNotProved();
     error NoPaymentsToSubmit();
 
-    event OrdersUpdated(Order[] orders, OrderUpdateContext context);
-    event PaymentsUpdated(Payment[] payments, PaymentUpdateContext context);
+    event OrderUpdated(Order order);
+    event OrdersUpdated(Order[] orders);
+    event PaymentsUpdated(Payment[] payments);
 
     /// @notice The address of the synthetic Bitcoin token
     function syntheticBitcoin() external view returns (address);

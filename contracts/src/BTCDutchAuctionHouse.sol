@@ -73,21 +73,22 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         });
 
         auctionHashes.push(auction.hash());
-        emit AuctionUpdated(auction);
 
         syntheticBitcoin.safeTransferFrom(msg.sender, address(this), depositAmount);
+
+        emit AuctionUpdated(auction);
     }
 
     /// @inheritdoc IBTCDutchAuctionHouse
-    function fillAuction(
+    function claimAuction(
         DutchAuction memory auction,
         bytes memory fillerAuthData,
         bytes32[] calldata safeBlockSiblings,
         bytes32[] calldata safeBlockPeaks
     ) external {
         auction.checkIntegrity(auctionHashes);
-        if (auction.state == DutchAuctionState.Filled) {
-            revert AuctionAlreadyFilled();
+        if (auction.state == DutchAuctionState.Filled || auction.state == DutchAuctionState.Refunded) {
+            revert AuctionNotLive();
         }
         if (auction.dutchAuctionParams.deadline < block.timestamp) {
             revert AuctionExpired();
@@ -120,7 +121,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
             safeBlockPeaks: safeBlockPeaks
         });
 
-        // Note:  _createOrder takes care of accounting for tokens deposited via fillAuction.
+        // Note:  _createOrder takes care of accounting for tokens deposited via claimAuction.
         // so no additional ERC20 transfer is necessary.
         _createOrder(createOrderParams);
 
@@ -132,20 +133,19 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     /// @inheritdoc IBTCDutchAuctionHouse
     function refundAuction(DutchAuction memory auction) external {
         auction.checkIntegrity(auctionHashes);
-        if (auction.state == DutchAuctionState.Filled) {
-            revert AuctionAlreadyFilled();
-        }
-        if (auction.state == DutchAuctionState.Withdrawn) {
-            revert AuctionAlreadyWithdrawn();
+        if (auction.state == DutchAuctionState.Filled || auction.state == DutchAuctionState.Refunded) {
+            revert AuctionNotLive();
         }
         if (auction.dutchAuctionParams.deadline > block.timestamp) {
             revert AuctionNotExpired();
         }
 
-        auction.state = DutchAuctionState.Withdrawn;
+        // Refund auction
+        auction.state = DutchAuctionState.Refunded;
         auctionHashes[auction.index] = auction.hash();
-        emit AuctionUpdated(auction);
 
         syntheticBitcoin.safeTransfer(auction.baseCreateOrderParams.owner, auction.depositAmount);
+
+        emit AuctionUpdated(auction);
     }
 }
