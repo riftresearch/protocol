@@ -148,25 +148,43 @@ contract RiftTest is Test, PRNG {
         return bytes.concat(bytes2(0x0014), bytes20(keccak256(abi.encode(_random()))));
     }
 
-    function _extractSingleOrderFromLogs(Vm.Log[] memory logs) internal pure returns (Order memory) {
+    function _extractSingleOrderFromOrderCreatedLogs(Vm.Log[] memory logs) internal pure returns (Order memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == IRiftExchange.OrderUpdated.selector) {
+            if (logs[i].topics[0] == IRiftExchange.OrderCreated.selector) {
                 return abi.decode(logs[i].data, (Order));
             }
-            if (logs[i].topics[0] == IRiftExchange.OrdersUpdated.selector) {
-                return abi.decode(logs[i].data, (Order[]))[0];
-            }
         }
-        revert("Order not found");
+        revert("Order not found [OrderCreated]");
     }
 
-    function _extractSinglePaymentFromLogs(Vm.Log[] memory logs) internal pure returns (Payment memory) {
+    function _extractSingleOrderFromOrderRefundedLogs(Vm.Log[] memory logs) internal pure returns (Order memory) {
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == IRiftExchange.PaymentsUpdated.selector) {
+            if (logs[i].topics[0] == IRiftExchange.OrderRefunded.selector) {
+                return abi.decode(logs[i].data, (Order));
+            }
+        }
+        revert("Order not found [OrderRefunded]");
+    }
+
+    function _extractSinglePaymentFromPaymentCreatedLogs(Vm.Log[] memory logs) internal pure returns (Payment memory) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == IRiftExchange.PaymentsCreated.selector) {
                 return abi.decode(logs[i].data, (Payment[]))[0];
             }
         }
-        revert("Payment not found");
+        revert("Payment not found [PaymentsCreated]");
+    }
+
+    function _extractSinglePairFromOrdersSettledLogs(
+        Vm.Log[] memory logs
+    ) internal pure returns (Order memory, Payment memory) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == IRiftExchange.OrdersSettled.selector) {
+                (Order[] memory orders, Payment[] memory payments) = abi.decode(logs[i].data, (Order[], Payment[]));
+                return (orders[0], payments[0]);
+            }
+        }
+        revert("Order and Payment pair not found [OrdersSettled]");
     }
 
     function _createOrderWithAssertions(
@@ -204,7 +222,7 @@ contract RiftTest is Test, PRNG {
 
         exchange.createOrder(args);
 
-        Order memory createdOrder = _extractSingleOrderFromLogs(vm.getRecordedLogs());
+        Order memory createdOrder = _extractSingleOrderFromOrderCreatedLogs(vm.getRecordedLogs());
         {
             // [4] grab the logs, find the vault
             uint256 orderIndex = exchange.getTotalOrders() - 1;

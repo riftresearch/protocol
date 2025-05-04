@@ -363,7 +363,7 @@ impl SwapWatchtower {
 
             let (transaction_request, calldata) =
                 if let Some(block_proof_params) = block_proof_params {
-                    let call = rift_exchange.submitPaymentProofs_1(
+                    let call = rift_exchange.submitPaymentProofs_0(
                         swap_params,
                         block_proof_params,
                         proof_bytes.into(),
@@ -372,7 +372,7 @@ impl SwapWatchtower {
                     let transaction_request = call.into_transaction_request();
                     (transaction_request, calldata)
                 } else {
-                    let call = rift_exchange.submitPaymentProofs_0(swap_params, proof_bytes.into());
+                    let call = rift_exchange.submitPaymentProofs_1(swap_params, proof_bytes.into());
                     let calldata = call.calldata().to_owned();
                     let transaction_request = call.into_transaction_request();
                     (transaction_request, calldata)
@@ -481,7 +481,7 @@ async fn find_new_swaps_in_blocks(
                 let potential_deposit_vault_commitment: [u8; 32] =
                     script_pubkey_bytes[2..34].try_into()?;
                 let chain_aware_deposit = contract_data_engine
-                    .get_order_by_hash(potential_deposit_vault_commitment)
+                    .get_order_by_initial_hash(potential_deposit_vault_commitment)
                     .await?;
                 if chain_aware_deposit.is_none() {
                     continue;

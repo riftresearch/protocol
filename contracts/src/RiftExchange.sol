@@ -101,7 +101,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         orderHashes.push(orderHash);
 
         // Finalize order creation
-        emit OrderUpdated(order);
+        emit OrderCreated(order);
     }
 
     /// @inheritdoc IRiftExchange
@@ -120,7 +120,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         // Refund order
         syntheticBitcoin.safeTransfer(order.owner, order.amount + order.takerFee);
 
-        emit OrderUpdated(updatedOrder);
+        emit OrderRefunded(updatedOrder);
     }
 
     /// @inheritdoc IRiftExchange
@@ -154,7 +154,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             proof
         );
 
-        emit PaymentsUpdated(payments);
+        emit PaymentsCreated(payments);
     }
 
     /// @inheritdoc IRiftExchange
@@ -179,7 +179,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             }),
             proof
         );
-        emit PaymentsUpdated(payments);
+        emit PaymentsCreated(payments);
     }
 
     /// @inheritdoc IRiftExchange
@@ -232,8 +232,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
         accumulatedFees += localFees;
 
-        emit PaymentsUpdated(updatedPayments);
-        emit OrdersUpdated(updatedOrders);
+        emit OrdersSettled(updatedOrders, updatedPayments);
     }
 
     /// @inheritdoc IRiftExchange
@@ -330,6 +329,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
             payments[i] = Payment({
                 index: paymentIndex,
+                orderIndex: params.order.index,
                 orderHash: orderHash,
                 paymentBitcoinBlockLeaf: params.paymentBitcoinBlockLeaf,
                 challengeExpiryTimestamp: uint64(

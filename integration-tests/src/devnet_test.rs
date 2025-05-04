@@ -34,8 +34,8 @@ use rift_sdk::{
     create_websocket_provider, get_retarget_height_from_block_height, DatabaseLocation,
 };
 use sol_bindings::{
-    BaseCreateOrderParams, BlockLeaf, BlockProofParams, CreateOrderParams, OrdersUpdated,
-    PaymentsUpdated, SettleOrderParams, SubmitPaymentProofParams,
+    BaseCreateOrderParams, BlockLeaf, BlockProofParams, CreateOrderParams, OrderCreated,
+    PaymentsCreated, SettleOrderParams, SubmitPaymentProofParams,
 };
 use tokio::signal;
 
@@ -241,16 +241,16 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let orders_updated_log = OrdersUpdated::decode_log(
+    let order_created_log = OrderCreated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == OrdersUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == OrderCreated::SIGNATURE_HASH)
             .unwrap()
             .inner,
     )
     .unwrap();
 
-    let new_order = &orders_updated_log.data.orders[0];
+    let new_order = &order_created_log.data.order;
 
     println!("Order: {:?}", new_order);
 
@@ -372,10 +372,10 @@ async fn test_simulated_swap_end_to_end() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let orders_updated_log = OrdersUpdated::decode_log(
+    let orders_updated_log = OrderCreated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == OrdersUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == OrderCreated::SIGNATURE_HASH)
             .unwrap()
             .inner,
     )
@@ -679,7 +679,7 @@ async fn test_simulated_swap_end_to_end() {
     let mock_proof = vec![];
 
     let swap_proof_call =
-        rift_exchange.submitPaymentProofs_1(swap_params, block_proof_params, mock_proof.into());
+        rift_exchange.submitPaymentProofs_0(swap_params, block_proof_params, mock_proof.into());
     let swap_proof_calldata = swap_proof_call.calldata().clone();
 
     let swap_proof_tx = maker_evm_provider
@@ -720,11 +720,10 @@ async fn test_simulated_swap_end_to_end() {
     };
 
     let receipt_logs = swap_proof_receipt.inner.logs();
-    // this will have only a VaultsUpdated log
-    let binding = PaymentsUpdated::decode_log(
+    let binding = PaymentsCreated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == PaymentsUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == PaymentsCreated::SIGNATURE_HASH)
             .unwrap()
             .inner,
     )

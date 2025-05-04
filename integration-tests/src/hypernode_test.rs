@@ -18,7 +18,7 @@ use rift_sdk::{
     txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
     DatabaseLocation,
 };
-use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrdersUpdated};
+use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
 use tokio::signal::{self, unix::signal};
 
 use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
@@ -198,16 +198,16 @@ async fn test_hypernode_simple_swap() {
 
     let receipt_logs = receipt.inner.logs();
     // this will have only a VaultsUpdated log
-    let orders_updated_log = OrdersUpdated::decode_log(
+    let order_created_log = OrderCreated::decode_log(
         &receipt_logs
             .iter()
-            .find(|log| *log.topic0().unwrap() == OrdersUpdated::SIGNATURE_HASH)
+            .find(|log| *log.topic0().unwrap() == OrderCreated::SIGNATURE_HASH)
             .unwrap()
             .inner,
     )
     .unwrap();
 
-    let new_order = &orders_updated_log.data.orders[0];
+    let new_order = &order_created_log.data.order;
 
     println!("Created order: {:?}", new_order);
 
@@ -320,7 +320,7 @@ async fn test_hypernode_simple_swap() {
     let otc_swap = loop {
         let otc_swap = devnet
             .contract_data_engine
-            .get_otc_swap_by_order_hash(new_order.hash())
+            .get_otc_swap_by_order_index(new_order.index.to::<u64>())
             .await
             .unwrap();
         println!("OTCSwap: {:#?}", otc_swap);
@@ -357,7 +357,7 @@ async fn test_hypernode_simple_swap() {
     loop {
         let otc_swap = devnet
             .contract_data_engine
-            .get_otc_swap_by_order_hash(new_order.hash())
+            .get_otc_swap_by_order_index(new_order.index.to::<u64>())
             .await
             .unwrap();
         println!("OTCSwap Post Swap: {:#?}", otc_swap);

@@ -15,14 +15,8 @@ use bitcoin::{
 use rift_core::vaults::SolidityHash;
 
 use crate::errors::{Result, RiftSdkError};
-use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
-use futures::stream::TryStreamExt;
-use futures::{stream, StreamExt};
 use sol_bindings::Order;
-use std::io::Read;
-use std::ops::Deref;
 use std::str::FromStr;
-use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct P2WPKHBitcoinWallet {
@@ -83,7 +77,7 @@ impl P2WPKHBitcoinWallet {
             .map_err(|_| RiftSdkError::InvalidMnemonic)?;
 
         // Determine the appropriate derivation path based on network if not provided
-        let path_str = derivation_path.unwrap_or_else(|| match network {
+        let path_str = derivation_path.unwrap_or(match network {
             Network::Bitcoin => "m/84'/0'/0'/0/0", // BIP84 for mainnet
             _ => "m/84'/1'/0'/0/0",                // BIP84 for testnet/regtest
         });

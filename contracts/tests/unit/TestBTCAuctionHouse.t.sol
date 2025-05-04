@@ -309,7 +309,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         assertEq(storedHash, filledAuction.hash(), "Stored hash mismatch after fill");
 
         // [3] Internal _createOrder call check (via OrderUpdated event)
-        Order memory order = _extractSingleOrderFromLogs(logs);
+        Order memory order = _extractSingleOrderFromOrderCreatedLogs(logs);
         assertEq(uint8(order.state), uint8(OrderState.Created), "Order should have been created");
 
         // [4] Token balance check (should remain unchanged as tokens are now in a vault)

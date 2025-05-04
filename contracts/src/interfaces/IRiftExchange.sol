@@ -46,6 +46,8 @@ enum PaymentState {
 struct Payment {
     // Where in the payment hash array this payment is
     uint256 index;
+    // The index of the order that this payment is for
+    uint256 orderIndex;
     // The hash of the order that this payment is for
     bytes32 orderHash;
     // The Bitcoin block containing the payment
@@ -169,9 +171,14 @@ interface IRiftExchange is IBitcoinLightClient {
     error PaymentNotProved();
     error NoPaymentsToSubmit();
 
-    event OrderUpdated(Order order);
-    event OrdersUpdated(Order[] orders);
-    event PaymentsUpdated(Payment[] payments);
+    event OrderCreated(Order order);
+    event OrderRefunded(Order order);
+    event PaymentsCreated(Payment[] payments);
+
+    /// @notice Emitted when orders are settled by their corresponding payments
+    /// @param orders Array of orders being settled
+    /// @param payments Array of payments settling the orders, where each payment at index i settles the order at index i
+    event OrdersSettled(Order[] orders, Payment[] payments);
 
     /// @notice The address of the synthetic Bitcoin token
     function syntheticBitcoin() external view returns (address);

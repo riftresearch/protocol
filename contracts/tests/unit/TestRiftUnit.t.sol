@@ -122,7 +122,7 @@ contract RiftExchangeUnitTest is RiftTest {
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
         exchange.refundOrder(order);
-        Order memory updatedOrder = _extractSingleOrderFromLogs(vm.getRecordedLogs());
+        Order memory updatedOrder = _extractSingleOrderFromOrderRefundedLogs(vm.getRecordedLogs());
 
         // [4] verify updated vault commitment matches stored commitment
         bytes32 storedCommitment = exchange.orderHashes(order.index);
@@ -186,7 +186,7 @@ contract RiftExchangeUnitTest is RiftTest {
         exchange.submitPaymentProofs(paymentParams, blockProofParams, proof);
 
         // [5] extract payment from logs
-        Payment memory createdPayment = _extractSinglePaymentFromLogs(vm.getRecordedLogs());
+        Payment memory createdPayment = _extractSinglePaymentFromPaymentCreatedLogs(vm.getRecordedLogs());
         uint256 paymentIndex = exchange.getTotalPayments() - 1;
         bytes32 hash = exchange.paymentHashes(paymentIndex);
 
@@ -248,7 +248,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         exchange.submitPaymentProofs(paymentParams, blockProofParams, proof);
 
-        createdPayment = _extractSinglePaymentFromLogs(vm.getRecordedLogs());
+        createdPayment = _extractSinglePaymentFromPaymentCreatedLogs(vm.getRecordedLogs());
         return (order, createdPayment, paymentMmrProof, tipMmrProof);
     }
 
@@ -330,7 +330,10 @@ contract RiftExchangeUnitTest is RiftTest {
         exchange.settleOrders(settleOrderParamsArray);
 
         // Verify swap completion
-        Payment memory updatedPayment = _extractSinglePaymentFromLogs(vm.getRecordedLogs());
+        (Order memory updatedOrder, Payment memory updatedPayment) = _extractSinglePairFromOrdersSettledLogs(
+            vm.getRecordedLogs()
+        );
+        assertEq(uint8(updatedOrder.state), uint8(OrderState.Settled), "Order should be settled");
         assertEq(uint8(updatedPayment.state), uint8(PaymentState.Settled), "Payment should be finalized");
 
         // Verify balances and vaults
