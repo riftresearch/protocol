@@ -47,7 +47,6 @@ pub struct ContractDataEngine {
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
     mmr_root_broadcaster: broadcast::Sender<[u8; 32]>,
-    current_mmr_root: Arc<RwLock<[u8; 32]>>,
 }
 
 impl ContractDataEngine {
@@ -70,10 +69,8 @@ impl ContractDataEngine {
 
         Self::conditionally_seed_mmr(&checkpointed_block_tree, checkpoint_leaves).await?;
 
-        // Initialize the MMR root broadcaster and current root
-        let initial_root = checkpointed_block_tree.read().await.get_root().await?;
+        // Initialize the MMR root broadcaster
         let (mmr_root_broadcaster, _) = broadcast::channel::<[u8; 32]>(16);
-        let current_mmr_root = Arc::new(RwLock::new(initial_root));
 
         Ok(Self {
             checkpointed_block_tree,
@@ -82,7 +79,6 @@ impl ContractDataEngine {
             initial_sync_broadcaster: broadcast::channel(1).0,
             server_started: Arc::new(AtomicBool::new(false)),
             mmr_root_broadcaster,
-            current_mmr_root,
         })
     }
 
@@ -270,16 +266,15 @@ impl ContractDataEngine {
 
     // Get the current MMR root but w/ cached value
     pub async fn get_mmr_root(&self) -> Result<[u8; 32]> {
-        Ok(*self.current_mmr_root.read().await)
+        let checkpointed_block_tree = self.checkpointed_block_tree.read().await;
+        checkpointed_block_tree
+            .get_root()
+            .await
+            .map_err(|e| eyre::eyre!(e))
     }
 
     // update MMR root and broadcast changes
     pub async fn update_mmr_root(&self, new_root: [u8; 32]) -> Result<()> {
-        let mut current_root = self.current_mmr_root.write().await;
-        *current_root = new_root;
-        drop(current_root);
-        // Release the write lock before broadcasting ^
-
         let _ = self.mmr_root_broadcaster.send(new_root);
         Ok(())
     }
@@ -297,14 +292,13 @@ impl ContractDataEngine {
     }
 
     pub async fn reset_mmr_for_testing(&self, bde_leaves: &[BlockLeaf]) -> Result<()> {
-
         let temp_db_location = DatabaseLocation::InMemory;
         let mut temp_tree = CheckpointedBlockTree::open(&temp_db_location).await?;
         let root = temp_tree.create_seed_checkpoint(bde_leaves).await?;
-        
+
         *self.checkpointed_block_tree.write().await = temp_tree;
         self.update_mmr_root(root).await?;
-        
+
         Ok(())
     }
 }

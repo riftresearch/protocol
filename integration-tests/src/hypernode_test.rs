@@ -377,9 +377,11 @@ mod fork_watchtower_tests {
     use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
     use alloy::providers::{DynProvider, ProviderBuilder, WsConnect};
     use alloy::rpc::json_rpc::ErrorPayload;
+    use alloy::sol_types::SolError;
     use bitcoin_light_client_core::hasher::Keccak256Hasher;
     use bitcoin_light_client_core::leaves::BlockLeaf;
     use bitcoincore_rpc_async::RpcApi;
+    use corepc_node::serde_json;
     use crypto_bigint::{CheckedAdd, Encoding};
     use hypernode::fork_watchtower::{ForkDetectionResult, ForkWatchtower};
     use hypernode::{HypernodeArgs, Provider};
@@ -398,6 +400,11 @@ mod fork_watchtower_tests {
     use rift_core::giga::{RiftProgramInput, RustProofType};
     use sol_bindings::{BlockProofParams, RiftExchangeHarnessInstance};
     use tokio::sync::broadcast;
+
+    use serde_json::value::RawValue;
+    use sol_bindings::{
+        BlockNotConfirmed, BlockNotInChain, ChainworkTooLow, CheckpointNotEstablished,
+    };
 
     /// Tests that the fork watchtower correctly identifies when there is no fork
     #[tokio::test]
@@ -534,68 +541,44 @@ mod fork_watchtower_tests {
     async fn test_fork_watchtower_error_handling() {
         setup_test_tracing();
 
-        let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+        let create_raw_value = |hex_data: &[u8]| -> Option<Box<RawValue>> {
+            let hex_string = format!("\"0x{}\"", hex::encode(hex_data));
+            RawValue::from_string(hex_string).ok()
+        };
 
-        let btc_rpc = devnet.bitcoin.rpc_client.clone();
-        let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
-        let contract_data_engine = devnet.contract_data_engine.clone();
-
-        let mmr_root = [0u8; 32];
-
-        // Test with a revert indicating MMR root already exists
-        let already_exists_revert = hypernode::txn_broadcast::RevertInfo {
+        let chainwork_too_low_revert = hypernode::txn_broadcast::RevertInfo {
             error_payload: ErrorPayload {
-                code: 100, //error code for MMR root already exists
-                message: "execution reverted: MMR root already exists"
-                    .to_string()
-                    .into(),
-                data: None,
+                code: 3,
+                message: "execution reverted: ChainworkTooLow".to_string().into(),
+                data: create_raw_value(&ChainworkTooLow::SELECTOR),
             },
             debug_cli_command: "cast...".to_string(),
         };
 
         let should_retry =
-            ForkWatchtower::handle_transaction_revert(&already_exists_revert, mmr_root);
-        assert!(!should_retry, "Dont retry when MMR root already exists");
+            ForkWatchtower::handle_transaction_revert(&chainwork_too_low_revert);
+        assert!(
+            !should_retry,
+            "Dont retry when ChainworkTooLow error occurs"
+        );
 
-        // Test with a nonce error
-        let nonce_revert = hypernode::txn_broadcast::RevertInfo {
+        let checkpoint_not_established_revert = hypernode::txn_broadcast::RevertInfo {
             error_payload: ErrorPayload {
-                code: 200, //nonce error code
-                message: "nonce too low".to_string().into(),
-                data: None,
+                code: 3,
+                message: "execution reverted: CheckpointNotEstablished"
+                    .to_string()
+                    .into(),
+                data: create_raw_value(&CheckpointNotEstablished::SELECTOR),
             },
             debug_cli_command: "cast...".to_string(),
         };
 
-        let should_retry = ForkWatchtower::handle_transaction_revert(&nonce_revert, mmr_root);
-        assert!(should_retry, "retry when nonce is too low");
-
-        // Test with a gas price error
-        let gas_revert = hypernode::txn_broadcast::RevertInfo {
-            error_payload: ErrorPayload {
-                code: 300, //replace with actual error for gas price
-                message: "gas price too low".to_string().into(),
-                data: None,
-            },
-            debug_cli_command: "cast...".to_string(),
-        };
-
-        let should_retry = ForkWatchtower::handle_transaction_revert(&gas_revert, mmr_root);
-        assert!(should_retry, "retry when gas price is too low");
-
-        // Test with a network error
-        let network_revert = hypernode::txn_broadcast::RevertInfo {
-            error_payload: ErrorPayload {
-                code: 400, //network error code
-                message: "network connection failed".to_string().into(),
-                data: None,
-            },
-            debug_cli_command: "cast...".to_string(),
-        };
-
-        let should_retry = ForkWatchtower::handle_transaction_revert(&network_revert, mmr_root);
-        assert!(should_retry, "retry when network connection fails");
+        let should_retry =
+            ForkWatchtower::handle_transaction_revert(&checkpoint_not_established_revert);
+        assert!(
+            !should_retry,
+            "Dont retry when CheckpointNotEstablished error occurs"
+        );
     }
 
     /// Tests that the fork watchtower correctly detects and resolves a simulated fork
