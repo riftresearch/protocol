@@ -360,8 +360,4 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     function getTotalPayments() external view returns (uint256) {
         return paymentHashes.length;
     }
-
-    function serializeLightClientPublicInput(LightClientPublicInput memory input) external pure returns (bytes memory) {
-        return abi.encode(input);
-    }
 }

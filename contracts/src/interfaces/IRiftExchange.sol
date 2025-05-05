@@ -107,7 +107,7 @@ struct BaseCreateOrderParams {
 }
 
 struct CreateOrderParams {
-    // @inheritdoc BaseCreateOrderParams
+    /// @inheritdoc BaseCreateOrderParams
     BaseCreateOrderParams base;
     // The address that will receive the ERC20 tokens upon settlement
     address designatedReceiver;
@@ -253,7 +253,4 @@ interface IRiftExchange is IBitcoinLightClient {
 
     /// @notice Verifies a zero knowledge proof
     function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) external view;
-
-    // TODO: Do we need this? This exists b/c we need the type in circuits
-    function serializeLightClientPublicInput(LightClientPublicInput memory input) external pure returns (bytes memory);
 }

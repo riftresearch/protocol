@@ -15,7 +15,7 @@ import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
 /**
  * @title BTCDutchAuctionHouse
- * @notice A Dutch auction for Synthetic BTC<>BTC swaps, that utilizes the RiftExchange to create orders
+ * @notice A Dutch auction for Synthetic BTC -> BTC swaps, utilizes the RiftExchange to create orders
  */
 contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     using HashLib for DutchAuction;
