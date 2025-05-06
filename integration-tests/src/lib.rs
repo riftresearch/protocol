@@ -5,6 +5,8 @@ mod data_engine_test;
 #[cfg(test)]
 mod devnet_test;
 #[cfg(test)]
+mod fork_watchtower_test;
+#[cfg(test)]
 mod hypernode_test;
 #[cfg(test)]
 mod test_utils;

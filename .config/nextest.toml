@@ -1,0 +1,6 @@
+[test-groups]
+serial = { max-threads = 1 }   # logical mutex
+
+[[profile.default.overrides]]
+filter = 'test(/^fork_watchtower_test::/)'   # anything matching this filter
+test-group = 'serial'
