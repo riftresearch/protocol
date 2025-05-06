@@ -1,6 +1,6 @@
 use alloy::{
     eips::BlockId,
-    primitives::Bytes,
+    primitives::{Bytes, FixedBytes},
     providers::{Provider, WalletProvider},
     rpc::{
         json_rpc::ErrorPayload,
@@ -12,11 +12,12 @@ use rift_sdk::WebsocketWalletProvider;
 use std::sync::Arc;
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        oneshot,
+        broadcast, mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender}, oneshot
     },
     task::JoinSet,
 };
+use tokio::sync::{mpsc};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct RevertInfo {
@@ -73,9 +74,16 @@ struct Request {
     tx: oneshot::Sender<TransactionExecutionResult>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TransactionStatusUpdate {
+    pub tx_hash: FixedBytes<32>,
+    pub result: TransactionExecutionResult,
+}
+
 #[derive(Debug)]
 pub struct TransactionBroadcaster {
     request_sender: UnboundedSender<Request>,
+    status_broadcaster: broadcast::Sender<TransactionStatusUpdate>,
 }
 
 impl TransactionBroadcaster {
@@ -84,15 +92,25 @@ impl TransactionBroadcaster {
         debug_rpc_url: String,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Self {
+
         // Channel is important, here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
         let (request_sender, request_receiver) = unbounded_channel();
-
+        let (status_broadcaster, _) = broadcast::channel::<TransactionStatusUpdate>(100);
+        let status_broadcaster_clone = status_broadcaster.clone();
+        
         // This never exits even if channel is empty, only if channel breaks/closes
         join_set.spawn(async move {
-            Self::broadcast_queue(wallet_rpc, request_receiver, debug_rpc_url).await
+            Self::broadcast_queue(wallet_rpc, request_receiver, debug_rpc_url, status_broadcaster_clone).await
         });
 
-        Self { request_sender }
+        Self { 
+            request_sender,
+            status_broadcaster,
+        }
+    }
+
+    pub fn subscribe_to_status_updates(&self) -> broadcast::Receiver<TransactionStatusUpdate> {
+        self.status_broadcaster.subscribe()
     }
 
     // 1. Create a new transaction request
@@ -144,6 +162,7 @@ impl TransactionBroadcaster {
         wallet_rpc: Arc<WebsocketWalletProvider>,
         mut request_receiver: UnboundedReceiver<Request>,
         debug_rpc_url: String,
+        status_broadcaster: broadcast::Sender<TransactionStatusUpdate>,
     ) -> eyre::Result<()> {
         let signer_address = wallet_rpc.default_signer_address();
         loop {
@@ -209,8 +228,12 @@ impl TransactionBroadcaster {
                 .send_transaction(request.transaction_request)
                 .await;
 
+            let mut tx_hash = FixedBytes::<32>::default();
+
             let txn_result = match txn_result {
                 Ok(tx_broadcast) => {
+                    tx_hash = *tx_broadcast.tx_hash();
+                    
                     let tx_receipt = tx_broadcast.get_receipt().await;
 
                     match tx_receipt {
@@ -226,6 +249,11 @@ impl TransactionBroadcaster {
                 },
             };
 
+            let _ = status_broadcaster.send(TransactionStatusUpdate {
+                tx_hash,
+                result: txn_result.clone(),
+            });
+            
             request
                 .tx
                 .send(txn_result)
