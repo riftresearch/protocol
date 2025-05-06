@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/src/Test.sol";
 import {Vm} from "forge-std/src/Vm.sol";
-import {RiftTest} from "../utils/RiftTest.sol";
+import {RiftTest} from "../utils/RiftTest.t.sol";
 import {BitcoinScriptLib} from "../../src/libraries/BitcoinScriptLib.sol";
 
 contract BitcoinScriptLibUnitTest is RiftTest {

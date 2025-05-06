@@ -15,11 +15,11 @@ use tracing::info;
 pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
     let schema = r#"
         CREATE TABLE IF NOT EXISTS orders (
-            order_hash            BLOB(32) PRIMARY KEY,
-            depositor             TEXT      NOT NULL,
-            recipient             TEXT      NOT NULL,
+            order_index         INTEGER PRIMARY KEY,
+            initial_order_hash  BLOB(32)  NOT NULL,
+            depositor           TEXT      NOT NULL,
+            recipient           TEXT      NOT NULL,
             order_refund_timestamp INTEGER NOT NULL,
-            order_index            INTEGER NOT NULL,
 
             order_json         TEXT      NOT NULL,
             order_block_number  INTEGER   NOT NULL,
@@ -33,7 +33,7 @@ pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
 
         CREATE TABLE IF NOT EXISTS payments (
             payment_index       INTEGER PRIMARY KEY,
-            order_hash          BLOB(32)  NOT NULL,
+            order_index         INTEGER  NOT NULL,
 
             payment_block_number  INTEGER   NOT NULL,
             payment_block_hash    BLOB(32)  NOT NULL,
@@ -45,8 +45,8 @@ pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
             settlement_block_number INTEGER,
             settlement_block_hash   BLOB(32),
 
-            FOREIGN KEY (order_hash)
-                REFERENCES orders(order_hash)
+            FOREIGN KEY (order_index)
+                REFERENCES orders(order_index)
                 ON DELETE CASCADE
         );
 
@@ -136,7 +136,7 @@ pub async fn add_payment(
     payment_txid: [u8; 32],
 ) -> Result<()> {
     let payment_index: u64 = payment.index.to();
-    let order_hash = payment.orderHash.0;
+    let order_index: u64 = payment.orderIndex.to();
     let payment_str = serde_json::to_string(&payment)
         .map_err(|e| eyre::eyre!("Failed to serialize Payment: {:?}", e))?;
     let challenge_period_end_timestamp = payment.challengeExpiryTimestamp;
@@ -146,7 +146,7 @@ pub async fn add_payment(
             r#"
         INSERT INTO payments (
             payment_index,
-            order_hash,
+            order_index,
             payment_block_number,
             payment_block_hash,
             payment_txid,
@@ -156,7 +156,7 @@ pub async fn add_payment(
         "#,
             params![
                 payment_index,
-                order_hash,
+                order_index,
                 payment_block_number as i64,
                 payment_block_hash.to_vec(),
                 payment_txid.to_vec(),
@@ -170,67 +170,100 @@ pub async fn add_payment(
     info!(
         message = "Payment added",
         payment_index = payment_index,
-        order_hash = hex::encode(order_hash),
+        order_index = order_index,
         operation = "add_payment"
     );
     Ok(())
 }
 
-pub async fn update_payment_to_settled(
+pub async fn update_order_and_payment_to_settled(
     conn: &Connection,
-    payment_index: u64,
+    order: Order,
+    payment: Payment,
     settlement_txid: [u8; 32],
     settlement_block_number: u64,
     settlement_block_hash: [u8; 32],
 ) -> Result<()> {
+    let order_json = serde_json::to_string(&order)
+        .map_err(|e| eyre::eyre!("Failed to serialize Order: {:?}", e))?;
+
+    let payment_index = payment.index.to::<u64>();
+    let order_index = order.index.to::<u64>();
+
     conn.call(move |conn| {
-        conn.execute(
+        // Start a transaction
+        let tx = conn.transaction()?;
+
+        // Update the order
+        tx.execute(
             r#"
-        UPDATE payments
-        SET settlement_txid = ?1,
-            settlement_block_number = ?2,
-            settlement_block_hash = ?3
-        WHERE payment_index = ?4
-        "#,
+            UPDATE orders
+            SET order_json = ?1
+            WHERE order_index = ?2
+            "#,
+            params![order_json, order_index],
+        )?;
+
+        // Update the payment
+        tx.execute(
+            r#"
+            UPDATE payments
+            SET settlement_txid = ?1,
+                settlement_block_number = ?2,
+                settlement_block_hash = ?3
+            WHERE payment_index = ?4
+              AND order_index = ?5
+            "#,
             params![
                 settlement_txid.to_vec(),
                 settlement_block_number as i64,
                 settlement_block_hash.to_vec(),
-                payment_index
+                payment_index,
+                order_index,
             ],
         )?;
+
+        // Commit the transaction
+        tx.commit()?;
         Ok(())
     })
     .await?;
+
     info!(
-        message = "Payment settled",
+        message = "Order and payment settled",
+        order_index = order_index,
         payment_index = payment_index,
-        operation = "update_payment_to_settled"
+        operation = "update_order_and_payment_to_settled"
     );
     Ok(())
 }
 
 pub async fn update_order_to_refunded(
     conn: &Connection,
-    order_hash: [u8; 32],
+    order: Order,
     refund_txid: [u8; 32],
     refund_block_number: u64,
     refund_block_hash: [u8; 32],
 ) -> Result<()> {
+    let order_json = serde_json::to_string(&order)
+        .map_err(|e| eyre::eyre!("Failed to serialize Order: {:?}", e))?;
+
     conn.call(move |conn| {
         conn.execute(
             r#"
         UPDATE orders
         SET refund_txid = ?1,
             refund_block_number = ?2,
-            refund_block_hash = ?3
-        WHERE order_hash = ?4
+            refund_block_hash = ?3,
+            order_json = ?4
+        WHERE order_index = ?5
         "#,
             params![
                 refund_txid.to_vec(),
                 refund_block_number as i64,
                 refund_block_hash.to_vec(),
-                order_hash.to_vec()
+                order_json,
+                order.index.to::<u64>(),
             ],
         )?;
         Ok(())
@@ -238,7 +271,8 @@ pub async fn update_order_to_refunded(
     .await?;
     info!(
         message = "Order refunded",
-        order_hash = hex::encode(order_hash)
+        order_index = order.index.to::<u64>(),
+        operation = "update_order_to_refunded"
     );
     Ok(())
 }
@@ -250,21 +284,20 @@ pub async fn add_order(
     order_block_hash: [u8; 32],
     order_txid: [u8; 32],
 ) -> Result<()> {
-    let order_hash = order.hash();
     let order_json = serde_json::to_string(&order)
         .map_err(|e| eyre::eyre!("Failed to serialize Order: {:?}", e))?;
 
-    info!("Adding order: {:?}", hex::encode(order_hash));
+    let initial_order_hash = order.hash();
 
     conn.call(move |conn| {
         conn.execute(
             r#"
         INSERT INTO orders (
-            order_hash,
+            order_index,
+            initial_order_hash,
             depositor,
             recipient,
             order_refund_timestamp,
-            order_index,
             order_json,
             order_block_number,
             order_block_hash,
@@ -272,11 +305,11 @@ pub async fn add_order(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         "#,
             params![
-                order_hash,
+                order.index.to::<u64>(),
+                initial_order_hash,
                 order.owner.to_string(),
                 order.designatedReceiver.to_string(),
                 order.unlockTimestamp,
-                order.index.to::<u64>(),
                 order_json,
                 order_block_number as i64,
                 order_block_hash.to_vec(),
@@ -288,7 +321,7 @@ pub async fn add_order(
     .await?;
     info!(
         message = "Order added",
-        order_hash = hex::encode(order_hash),
+        order_index = order.index.to::<u64>(),
         order = format!("{:?}", order),
         operation = "add_order"
     );
@@ -316,7 +349,7 @@ pub async fn get_virtual_swaps(
             r#"
             SELECT
                 -- columns in the deposits table
-                order_hash,            -- 0
+                order_index,            -- 0
                 depositor,             -- 1
                 recipient,             -- 2
                 order_json,         -- 3 (JSON-serialized Order)
@@ -342,32 +375,31 @@ pub async fn get_virtual_swaps(
             //
             // --- Parse the deposit-level data ---
             //
-            let order_hash_vec: Vec<u8> = row.get(0)?;
-            let order_hash: [u8; 32] = order_hash_vec
-                .try_into()
-                .map_err(|_| tokio_rusqlite::Error::Other("Failed to decode order_hash".into()))?;
+            let order_index: i64 = row.get(0)?;
+            let _depositor: String = row.get(1)?; // we don't need it but keep the index
+            let _recipient: String = row.get(2)?;
+            let _order_refund_timestamp: i64 = row.get(3)?;
 
-            // The deposit_vault column is JSON-serialized `Order`
-            let order_json: String = row.get(3)?;
+            let order_json: String = row.get(4)?;
             let order: Order = serde_json::from_str(&order_json).map_err(|e| {
                 tokio_rusqlite::Error::Other(format!("Failed to deserialize Order: {:?}", e).into())
             })?;
 
-            let order_block_number: i64 = row.get(4)?;
-            let order_block_hash_vec: Vec<u8> = row.get(5)?;
+            let order_block_number: i64 = row.get(5)?;
+            let order_block_hash_vec: Vec<u8> = row.get(6)?;
             let order_block_hash: [u8; 32] = order_block_hash_vec.try_into().map_err(|_| {
                 tokio_rusqlite::Error::Other("Invalid order_block_hash length".into())
             })?;
 
-            let order_txid_vec: Vec<u8> = row.get(6)?;
+            let order_txid_vec: Vec<u8> = row.get(7)?;
             let order_txid: [u8; 32] = order_txid_vec
                 .try_into()
                 .map_err(|_| tokio_rusqlite::Error::Other("Invalid order_txid length".into()))?;
 
             // Withdraw columns are optional
-            let refund_txid_vec: Option<Vec<u8>> = row.get(7)?;
-            let refund_block_number: Option<i64> = row.get(8)?;
-            let refund_block_hash_vec: Option<Vec<u8>> = row.get(9)?;
+            let refund_txid_vec: Option<Vec<u8>> = row.get(8)?;
+            let refund_block_number: Option<i64> = row.get(9)?;
+            let refund_block_hash_vec: Option<Vec<u8>> = row.get(10)?;
 
             // Assemble optional withdraw info
             let withdraw = if let (Some(txid_vec), Some(block_num), Some(block_hash_vec)) =
@@ -400,51 +432,49 @@ pub async fn get_virtual_swaps(
                 r#"
                 SELECT
                     payment_index,            -- 0
-                    order_hash,                  -- 1
-                    payment_block_number,       -- 2
-                    payment_block_hash,         -- 3
-                    payment_txid,               -- 4
-                    payment_json,                  -- 5 (JSON-serialized Payment)
-                    settlement_txid,       -- 6
-                    settlement_block_number, -- 7
-                    settlement_block_hash,  -- 8
-                    challenge_period_end_timestamp        -- 9
+                    payment_block_number,     -- 1
+                    payment_block_hash,       -- 2
+                    payment_txid,             -- 3
+                    payment_json,             -- 4
+                    settlement_txid,          -- 5
+                    settlement_block_number,  -- 6
+                    settlement_block_hash,    -- 7
+                    challenge_period_end_timestamp -- 8
                 FROM payments
-                WHERE order_hash = ?1
+                WHERE order_index = ?1
                 ORDER BY payment_block_number ASC
                 "#,
             )?;
 
-            let mut swap_rows = swap_stmt.query(params![order_hash])?;
+            let mut swap_rows = swap_stmt.query(params![order_index])?;
             let mut payments = Vec::new();
 
             while let Some(swap_row) = swap_rows.next()? {
                 //
                 // --- Parse each Payment row ---
                 //
-                // We'll skip the deposit_id column from row (index=1) since we already know it.
-                let payment_block_number: i64 = swap_row.get(2)?;
-                let payment_block_hash_vec: Vec<u8> = swap_row.get(3)?;
+                let payment_block_number: i64 = swap_row.get(1)?;
+                let payment_block_hash_vec: Vec<u8> = swap_row.get(2)?;
                 let payment_block_hash: [u8; 32] =
                     payment_block_hash_vec.try_into().map_err(|_| {
                         tokio_rusqlite::Error::Other("Invalid payment_block_hash length".into())
                     })?;
 
-                let payment_txid_vec: Vec<u8> = swap_row.get(4)?;
+                let payment_txid_vec: Vec<u8> = swap_row.get(3)?;
                 let payment_txid: [u8; 32] = payment_txid_vec.try_into().map_err(|_| {
                     tokio_rusqlite::Error::Other("Invalid payment_txid length".into())
                 })?;
 
-                let payment_str: String = swap_row.get(5)?;
+                let payment_str: String = swap_row.get(4)?;
                 let payment: Payment = serde_json::from_str(&payment_str).map_err(|e| {
                     tokio_rusqlite::Error::Other(
                         format!("Failed to deserialize Payment: {:?}", e).into(),
                     )
                 })?;
 
-                let settlement_txid_vec: Option<Vec<u8>> = swap_row.get(6)?;
-                let settlement_block_number: Option<i64> = swap_row.get(7)?;
-                let settlement_block_hash_vec: Option<Vec<u8>> = swap_row.get(8)?;
+                let settlement_txid_vec: Option<Vec<u8>> = swap_row.get(5)?;
+                let settlement_block_number: Option<i64> = swap_row.get(6)?;
+                let settlement_block_hash_vec: Option<Vec<u8>> = swap_row.get(7)?;
 
                 let settlement = if let (
                     Some(settlement_txid_vec),
@@ -537,9 +567,9 @@ pub async fn get_orders_for_recipient(
     .map_err(|e| eyre::eyre!(e))
 }
 
-pub async fn get_order_by_hash(
+pub async fn get_order_by_initial_hash(
     conn: &Connection,
-    order_hash: [u8; 32],
+    initial_order_hash: [u8; 32],
 ) -> Result<Option<ChainAwareOrder>> {
     let sql = r#"
         SELECT
@@ -548,12 +578,65 @@ pub async fn get_order_by_hash(
             order_block_hash,
             order_txid
         FROM orders
-        WHERE order_hash = ?
+        WHERE initial_order_hash = ?
     "#;
 
     conn.call(move |conn| {
         let mut stmt = conn.prepare(sql)?;
-        let mut rows = stmt.query(params![order_hash.to_vec()])?;
+        let mut rows = stmt.query(params![initial_order_hash])?;
+
+        if let Some(row) = rows.next()? {
+            // Parse deposit vault
+            let order_str: String = row.get(0)?;
+            let order: Order = serde_json::from_str(&order_str)
+                .map_err(|_| tokio_rusqlite::Error::Other("Failed to deserialize Order".into()))?;
+
+            // Parse block information
+            let order_block_number: i64 = row.get(1)?;
+            let order_block_hash_vec: Vec<u8> = row.get(2)?;
+            let order_block_hash: [u8; 32] =
+                order_block_hash_vec.as_slice().try_into().map_err(|_| {
+                    tokio_rusqlite::Error::Other("Invalid order_block_hash length".into())
+                })?;
+
+            // Parse transaction ID
+            let order_txid_vec: Vec<u8> = row.get(3)?;
+            let order_txid: [u8; 32] = order_txid_vec
+                .as_slice()
+                .try_into()
+                .map_err(|_| tokio_rusqlite::Error::Other("Invalid order_txid length".into()))?;
+
+            Ok(Some(ChainAwareOrder {
+                order,
+                order_block_number: order_block_number as u64,
+                order_block_hash,
+                order_txid,
+            }))
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+pub async fn get_order_by_index(
+    conn: &Connection,
+    order_index: u64,
+) -> Result<Option<ChainAwareOrder>> {
+    let sql = r#"
+        SELECT
+            order_json,
+            order_block_number,
+            order_block_hash,
+            order_txid
+        FROM orders
+        WHERE order_index = ?
+    "#;
+
+    conn.call(move |conn| {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params![order_index as i64])?;
 
         if let Some(row) = rows.next()? {
             // Parse deposit vault
@@ -603,7 +686,6 @@ pub async fn get_payments_ready_to_be_settled(
     let sql = r#"
         SELECT
             ps.payment_index,
-            ps.order_hash,
             ps.payment_block_number,
             ps.payment_block_hash,
             ps.payment_txid,
@@ -618,7 +700,7 @@ pub async fn get_payments_ready_to_be_settled(
             o.order_block_hash,
             o.order_txid
         FROM payments ps
-        JOIN orders o ON ps.order_hash = o.order_hash
+        JOIN orders o ON ps.order_index = o.order_index
         WHERE ps.challenge_period_end_timestamp < ?
           AND ps.settlement_txid IS NULL
     "#;
@@ -634,32 +716,28 @@ pub async fn get_payments_ready_to_be_settled(
                 // --- Payment portion ---
                 //
                 let payment_index: i64 = row.get(0)?;
-                let order_hash_vec: Vec<u8> = row.get(1)?;
-                let order_hash: [u8; 32] = order_hash_vec.as_slice().try_into().map_err(|_| {
-                    tokio_rusqlite::Error::Other("Invalid order_hash length".into())
-                })?;
-                let payment_block_number: i64 = row.get(2)?;
-                let payment_block_hash_vec: Vec<u8> = row.get(3)?;
+                let payment_block_number: i64 = row.get(1)?;
+                let payment_block_hash_vec: Vec<u8> = row.get(2)?;
                 let payment_block_hash: [u8; 32] =
                     payment_block_hash_vec.try_into().map_err(|_| {
                         tokio_rusqlite::Error::Other("Invalid payment_block_hash length".into())
                     })?;
 
-                let payment_txid_vec: Vec<u8> = row.get(4)?;
+                let payment_txid_vec: Vec<u8> = row.get(3)?;
                 let payment_txid: [u8; 32] = payment_txid_vec.try_into().map_err(|_| {
                     tokio_rusqlite::Error::Other("Invalid payment_txid length".into())
                 })?;
 
-                let payment_str: String = row.get(5)?;
+                let payment_str: String = row.get(4)?;
                 let payment: Payment = serde_json::from_str(&payment_str).map_err(|e| {
                     tokio_rusqlite::Error::Other(
                         format!("Failed to deserialize Payment: {:?}", e).into(),
                     )
                 })?;
 
-                let settlement_txid_vec: Option<Vec<u8>> = row.get(6)?;
-                let settlement_block_number: Option<i64> = row.get(7)?;
-                let settlement_block_hash_vec: Option<Vec<u8>> = row.get(8)?;
+                let settlement_txid_vec: Option<Vec<u8>> = row.get(5)?;
+                let settlement_block_number: Option<i64> = row.get(6)?;
+                let settlement_block_hash_vec: Option<Vec<u8>> = row.get(7)?;
 
                 let settlement = if let (Some(txid_vec), Some(block_num), Some(block_hash_vec)) = (
                     settlement_txid_vec,
@@ -682,21 +760,21 @@ pub async fn get_payments_ready_to_be_settled(
                 };
 
                 // This is the extra column. Read it here to avoid the mismatch:
-                let _challenge_period_end_timestamp: i64 = row.get(9)?;
+                let _challenge_period_end_timestamp: i64 = row.get(8)?;
 
                 //
                 // --- Deposit portion ---
                 //
-                let order_str: String = row.get(10)?;
+                let order_str: String = row.get(9)?;
                 let order: Order = serde_json::from_str(&order_str).map_err(|_| {
                     tokio_rusqlite::Error::Other("Failed to deserialize Order".into())
                 })?;
-                let order_block_number: i64 = row.get(11)?;
-                let order_block_hash_vec: Vec<u8> = row.get(12)?;
+                let order_block_number: i64 = row.get(10)?;
+                let order_block_hash_vec: Vec<u8> = row.get(11)?;
                 let order_block_hash: [u8; 32] = order_block_hash_vec.try_into().map_err(|_| {
                     tokio_rusqlite::Error::Other("Invalid order_block_hash length".into())
                 })?;
-                let order_txid_vec: Vec<u8> = row.get(13)?;
+                let order_txid_vec: Vec<u8> = row.get(12)?;
                 let order_txid: [u8; 32] = order_txid_vec.try_into().map_err(|_| {
                     tokio_rusqlite::Error::Other("Invalid order_txid length".into())
                 })?;
@@ -733,9 +811,9 @@ pub async fn get_payments_ready_to_be_settled(
     Ok(payments_with_order)
 }
 
-pub async fn get_otc_swap_by_order_hash(
+pub async fn get_otc_swap_by_order_index(
     conn: &Connection,
-    order_hash: [u8; 32],
+    order_index: u64,
 ) -> Result<Option<OTCSwap>> {
     // We'll do this in a single `conn.call` closure to keep it consistent.
     conn.call(move |conn| {
@@ -752,11 +830,11 @@ pub async fn get_otc_swap_by_order_hash(
                 refund_block_number,
                 refund_block_hash
             FROM orders
-            WHERE order_hash = ?
+            WHERE order_index = ?
             "#,
         )?;
 
-        let mut order_rows = order_stmt.query(params![order_hash.to_vec()])?;
+        let mut order_rows = order_stmt.query(params![order_index as i64])?;
 
         // If there's no row returned for this deposit_id, we return Ok(None).
         let (chain_order, refund) = if let Some(order_row) = order_rows.next()? {
@@ -818,37 +896,35 @@ pub async fn get_otc_swap_by_order_hash(
             r#"
             SELECT
                 payment_index,            -- 0
-                order_hash,                  -- 1
-                payment_block_number,       -- 2
-                payment_block_hash,         -- 3
-                payment_txid,               -- 4
-                payment_json,                  -- 5 (JSON-serialized Payment)
-                settlement_txid,       -- 6
-                settlement_block_number, -- 7
-                settlement_block_hash  -- 8
+                payment_block_number,     -- 1
+                payment_block_hash,       -- 2
+                payment_txid,             -- 3
+                payment_json,             -- 4
+                settlement_txid,          -- 5
+                settlement_block_number,  -- 6
+                settlement_block_hash     -- 7
             FROM payments
-            WHERE order_hash = ?
+            WHERE order_index = ?
             ORDER BY payment_block_number ASC
             "#,
         )?;
 
-        let mut payment_rows = payments_stmt.query(params![order_hash.to_vec()])?;
+        let mut payment_rows = payments_stmt.query(params![order_index as i64])?;
         let mut payments = Vec::new();
 
         while let Some(payment_row) = payment_rows.next()? {
-            // We skip the deposit_id column (index=1) since we already know it
-            let payment_block_number: i64 = payment_row.get(2)?;
-            let payment_block_hash_vec: Vec<u8> = payment_row.get(3)?;
+            let payment_block_number: i64 = payment_row.get(1)?;
+            let payment_block_hash_vec: Vec<u8> = payment_row.get(2)?;
             let payment_block_hash: [u8; 32] = payment_block_hash_vec.try_into().map_err(|_| {
                 tokio_rusqlite::Error::Other("Invalid payment_block_hash length".into())
             })?;
 
-            let payment_txid_vec: Vec<u8> = payment_row.get(4)?;
+            let payment_txid_vec: Vec<u8> = payment_row.get(3)?;
             let payment_txid: [u8; 32] = payment_txid_vec
                 .try_into()
                 .map_err(|_| tokio_rusqlite::Error::Other("Invalid payment_txid length".into()))?;
 
-            let payment_str: String = payment_row.get(5)?;
+            let payment_str: String = payment_row.get(4)?;
             let payment: Payment = serde_json::from_str(&payment_str).map_err(|e| {
                 tokio_rusqlite::Error::Other(
                     format!("Failed to deserialize Payment: {:?}", e).into(),
@@ -856,9 +932,9 @@ pub async fn get_otc_swap_by_order_hash(
             })?;
 
             // Release columns
-            let settlement_txid_vec: Option<Vec<u8>> = payment_row.get(6)?;
-            let settlement_block_number: Option<i64> = payment_row.get(7)?;
-            let settlement_block_hash_vec: Option<Vec<u8>> = payment_row.get(8)?;
+            let settlement_txid_vec: Option<Vec<u8>> = payment_row.get(5)?;
+            let settlement_block_number: Option<i64> = payment_row.get(6)?;
+            let settlement_block_hash_vec: Option<Vec<u8>> = payment_row.get(7)?;
 
             let settlement = if let (Some(txid_vec), Some(block_num), Some(block_hash_vec)) = (
                 settlement_txid_vec,

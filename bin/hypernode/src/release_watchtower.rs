@@ -24,7 +24,7 @@ use tokio::{sync::watch, task::JoinSet};
 use tokio_util::task::TaskTracker;
 use tracing::{info, info_span, Instrument};
 
-use crate::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 
 async fn pump_blocks_into_watch(
     mut block_stream: impl Stream<Item = Header> + Unpin,

@@ -3,6 +3,12 @@ pragma solidity =0.8.28;
 
 import "./IBitcoinLightClient.sol";
 
+enum OrderState {
+    Created,
+    Settled,
+    Refunded
+}
+
 struct Order {
     // Where in the order hash array this order is
     uint256 index;
@@ -28,6 +34,8 @@ struct Order {
     uint8 confirmationBlocks;
     // Historical Bitcoin block height considered safe from reorganization by the order creator
     uint64 safeBitcoinBlockHeight;
+    // The state of the order, either `Created`, `Settled` or `Refunded`
+    OrderState state;
 }
 
 enum PaymentState {
@@ -38,6 +46,8 @@ enum PaymentState {
 struct Payment {
     // Where in the payment hash array this payment is
     uint256 index;
+    // The index of the order that this payment is for
+    uint256 orderIndex;
     // The hash of the order that this payment is for
     bytes32 orderHash;
     // The Bitcoin block containing the payment
@@ -83,17 +93,6 @@ struct ProofPublicInput {
     LightClientPublicInput lightClient;
 }
 
-enum OrderUpdateContext {
-    Created,
-    Settled,
-    Refunded
-}
-
-enum PaymentUpdateContext {
-    Created,
-    Settled
-}
-
 struct BaseCreateOrderParams {
     // The address that will receive the ERC20 tokens upon settlement
     address owner;
@@ -108,7 +107,7 @@ struct BaseCreateOrderParams {
 }
 
 struct CreateOrderParams {
-    // @inheritdoc BaseCreateOrderParams
+    /// @inheritdoc BaseCreateOrderParams
     BaseCreateOrderParams base;
     // The address that will receive the ERC20 tokens upon settlement
     address designatedReceiver;
@@ -172,8 +171,14 @@ interface IRiftExchange is IBitcoinLightClient {
     error PaymentNotProved();
     error NoPaymentsToSubmit();
 
-    event OrdersUpdated(Order[] orders, OrderUpdateContext context);
-    event PaymentsUpdated(Payment[] payments, PaymentUpdateContext context);
+    event OrderCreated(Order order);
+    event OrderRefunded(Order order);
+    event PaymentsCreated(Payment[] payments);
+
+    /// @notice Emitted when orders are settled by their corresponding payments
+    /// @param orders Array of orders being settled
+    /// @param payments Array of payments settling the orders, where each payment at index i settles the order at index i
+    event OrdersSettled(Order[] orders, Payment[] payments);
 
     /// @notice The address of the synthetic Bitcoin token
     function syntheticBitcoin() external view returns (address);
@@ -248,7 +253,4 @@ interface IRiftExchange is IBitcoinLightClient {
 
     /// @notice Verifies a zero knowledge proof
     function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) external view;
-
-    // TODO: Do we need this? This exists b/c we need the type in circuits
-    function serializeLightClientPublicInput(LightClientPublicInput memory input) external pure returns (bytes memory);
 }

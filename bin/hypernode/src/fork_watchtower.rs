@@ -25,7 +25,7 @@ use tokio::time;
 use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::swap_watchtower::build_chain_transition_for_light_client_update;
-use crate::txn_broadcast::{
+use rift_sdk::txn_broadcast::{
     PreflightCheck, RevertInfo, TransactionBroadcaster, TransactionExecutionResult,
 };
 
@@ -352,8 +352,7 @@ impl ForkWatchtower {
                     return;
                 }
                 Ok(TransactionExecutionResult::Revert(revert_info)) => {
-                    let should_retry =
-                        Self::handle_transaction_revert(&revert_info);
+                    let should_retry = Self::handle_transaction_revert(&revert_info);
 
                     if !should_retry || retries >= max_retries {
                         error!(
@@ -645,9 +644,7 @@ impl ForkWatchtower {
         proof_result
     }
 
-    pub fn handle_transaction_revert(
-        revert_info: &RevertInfo,
-    ) -> bool {
+    pub fn handle_transaction_revert(revert_info: &RevertInfo) -> bool {
         info!(
             "Analyzing transaction revert: {:?}, debug command: {}",
             revert_info.error_payload, revert_info.debug_cli_command

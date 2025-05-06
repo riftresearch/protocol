@@ -1,3 +1,4 @@
+use crate::WebsocketWalletProvider;
 use alloy::{
     eips::BlockId,
     primitives::{Bytes, FixedBytes},
@@ -8,7 +9,6 @@ use alloy::{
     },
     transports::RpcError,
 };
-use rift_sdk::WebsocketWalletProvider;
 use std::sync::Arc;
 use tokio::{
     sync::{

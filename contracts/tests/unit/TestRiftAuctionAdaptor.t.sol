@@ -14,9 +14,9 @@ import {FeeLib} from "../../src/libraries/FeeLib.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {DutchAuction} from "../../src/interfaces/IBTCDutchAuctionHouse.sol";
 import {BaseCreateOrderParams} from "../../src/interfaces/IRiftExchange.sol";
-import "../utils/HelperTypes.sol";
+import {HelperTypes} from "../utils/HelperTypes.t.sol";
 
-import {RiftTest} from "../utils/RiftTest.sol";
+import {RiftTest} from "../utils/RiftTest.t.sol";
 import {Vm} from "forge-std/src/Vm.sol";
 
 /*───────────────────────────────────────────────────────────────────────────*

@@ -9,6 +9,6 @@ async fn main() -> eyre::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    let args = hypernode::HypernodeArgs::parse();
-    hypernode::run(args).await
+    let hypernode = hypernode::HypernodeArgs::parse();
+    hypernode.run().await
 }

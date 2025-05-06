@@ -1,4 +1,5 @@
 use alloy::{
+    dyn_abi::SolType,
     primitives::{Address, FixedBytes},
     providers::{ext::TraceApi, DynProvider, Provider},
     rpc::types::{trace::parity::Action, BlockNumberOrTag, Filter, Log},
@@ -13,8 +14,9 @@ use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
 use sol_bindings::{
-    submitPaymentProofs_1Call, updateLightClientCall, AuctionUpdated, BitcoinLightClientUpdated,
-    Order, OrdersUpdated, PaymentsUpdated,
+    submitPaymentProofs_0Call, submitPaymentProofs_1Call, updateLightClientCall, AuctionUpdated,
+    BitcoinLightClientUpdated, Order, OrderCreated, OrderRefunded, OrderState, OrdersSettled,
+    PaymentsCreated,
 };
 
 use std::{path::PathBuf, sync::Arc};
@@ -28,14 +30,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     db::{
-        add_order, add_payment, get_orders_for_recipient, get_otc_swap_by_order_hash,
-        get_payments_ready_to_be_settled, get_virtual_swaps, setup_swaps_database,
-        update_order_to_refunded, update_payment_to_settled, ChainAwarePaymentWithOrder,
+        add_order, add_payment, get_order_by_initial_hash, get_orders_for_recipient,
+        get_otc_swap_by_order_index, get_payments_ready_to_be_settled, get_virtual_swaps,
+        setup_swaps_database, update_order_and_payment_to_settled, update_order_to_refunded,
+        ChainAwarePaymentWithOrder,
     },
     models::ChainAwareOrder,
 };
 use crate::{
-    db::{get_oldest_active_order, get_order_by_hash},
+    db::{get_oldest_active_order, get_order_by_index},
     models::OTCSwap,
 };
 
@@ -214,11 +217,8 @@ impl ContractDataEngine {
         get_oldest_active_order(&self.swap_database_connection, current_block_timestamp).await
     }
 
-    pub async fn get_otc_swap_by_order_hash(
-        &self,
-        deposit_id: [u8; 32],
-    ) -> Result<Option<OTCSwap>> {
-        get_otc_swap_by_order_hash(&self.swap_database_connection, deposit_id).await
+    pub async fn get_otc_swap_by_order_index(&self, order_index: u64) -> Result<Option<OTCSwap>> {
+        get_otc_swap_by_order_index(&self.swap_database_connection, order_index).await
     }
 
     pub async fn get_payments_ready_to_be_settled(
@@ -287,8 +287,15 @@ impl ContractDataEngine {
             .map_err(|e| eyre::eyre!(e))
     }
 
-    pub async fn get_order_by_hash(&self, deposit_id: [u8; 32]) -> Result<Option<ChainAwareOrder>> {
-        get_order_by_hash(&self.swap_database_connection, deposit_id).await
+    pub async fn get_order_by_index(&self, order_index: u64) -> Result<Option<ChainAwareOrder>> {
+        get_order_by_index(&self.swap_database_connection, order_index).await
+    }
+
+    pub async fn get_order_by_initial_hash(
+        &self,
+        initial_order_hash: [u8; 32],
+    ) -> Result<Option<ChainAwareOrder>> {
+        get_order_by_initial_hash(&self.swap_database_connection, initial_order_hash).await
     }
 
     pub async fn reset_mmr_for_testing(&self, bde_leaves: &[BlockLeaf]) -> Result<()> {
@@ -445,14 +452,24 @@ async fn process_log(
         .ok_or_else(|| eyre::eyre!("No topic found in log"))?;
 
     match *topic {
-        OrdersUpdated::SIGNATURE_HASH => {
-            info_span!("handle_order_updated")
-                .in_scope(|| handle_order_updated_event(log, db_conn))
+        OrderCreated::SIGNATURE_HASH => {
+            info_span!("handle_order_created")
+                .in_scope(|| handle_order_created_event(log, db_conn))
                 .await?;
         }
-        PaymentsUpdated::SIGNATURE_HASH => {
-            info_span!("handle_payment_updated")
-                .in_scope(|| handle_payment_updated_event(log, db_conn))
+        OrderRefunded::SIGNATURE_HASH => {
+            info_span!("handle_order_refunded")
+                .in_scope(|| handle_order_refunded_event(log, db_conn))
+                .await?;
+        }
+        PaymentsCreated::SIGNATURE_HASH => {
+            info_span!("handle_payment_created")
+                .in_scope(|| handle_payment_created_event(log, db_conn))
+                .await?;
+        }
+        OrdersSettled::SIGNATURE_HASH => {
+            info_span!("handle_orders_settled")
+                .in_scope(|| handle_orders_settled_event(log, db_conn))
                 .await?;
         }
         BitcoinLightClientUpdated::SIGNATURE_HASH => {
@@ -476,17 +493,51 @@ async fn process_log(
     Ok(())
 }
 
-async fn handle_order_updated_event(
+async fn handle_order_refunded_event(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
 ) -> Result<()> {
-    info!("Received OrderUpdated event...");
+    info!("Received OrderRefunded event...");
 
     // Propagate any decoding error.
-    let decoded = OrdersUpdated::decode_log(&log.inner)
-        .map_err(|e| eyre::eyre!("Failed to decode OrderUpdated event: {:?}", e))?;
+    let decoded = OrderRefunded::decode_log(&log.inner)
+        .map_err(|e| eyre::eyre!("Failed to decode OrderRefunded event: {:?}", e))?;
 
-    let orders = decoded.data.orders;
+    let order = decoded.data.order;
+    let log_txid = log
+        .transaction_hash
+        .ok_or_else(|| eyre::eyre!("Missing txid in OrderRefunded event"))?;
+    let log_block_number = log
+        .block_number
+        .ok_or_else(|| eyre::eyre!("Missing block number in OrderRefunded event"))?;
+    let log_block_hash = log
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("Missing block hash in OrderRefunded event"))?;
+
+    update_order_to_refunded(
+        db_conn,
+        order,
+        log_txid.into(),
+        log_block_number,
+        log_block_hash.into(),
+    )
+    .await
+    .map_err(|e| eyre::eyre!("update_order_to_refunded failed: {:?}", e))?;
+
+    Ok(())
+}
+
+async fn handle_order_created_event(
+    log: &Log,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+) -> Result<()> {
+    info!("Received OrderCreated event...");
+
+    // Propagate any decoding error.
+    let decoded = OrderCreated::decode_log(&log.inner)
+        .map_err(|e| eyre::eyre!("Failed to decode OrderCreated event: {:?}", e))?;
+
+    let order = decoded.data.order;
     let log_txid = log
         .transaction_hash
         .ok_or_else(|| eyre::eyre!("Missing txid in OrderUpdated event"))?;
@@ -497,46 +548,28 @@ async fn handle_order_updated_event(
         .block_hash
         .ok_or_else(|| eyre::eyre!("Missing block hash in OrderUpdated event"))?;
 
-    for order in orders {
-        match decoded.data.context {
-            0 /* OrderUpdateContext::Created */ => {
-                add_order(
-                    db_conn,
-                    order,
-                    log_block_number,
-                    log_block_hash.into(),
-                    log_txid.into(),
-                )
-                .await
-                .map_err(|e| eyre::eyre!("add_order failed: {:?}", e))?;
-            }
-            1 /* OrderUpdateContext::Refunded */ => {
-                update_order_to_refunded(
-                    db_conn,
-                    order.salt.into(),
-                    log_txid.into(),
-                    log_block_number,
-                    log_block_hash.into(),
-                )
-                .await
-                .map_err(|e| eyre::eyre!("update_order_to_refunded failed: {:?}", e))?;
-            }
-            _ => {}
-        }
-    }
+    add_order(
+        db_conn,
+        order,
+        log_block_number,
+        log_block_hash.into(),
+        log_txid.into(),
+    )
+    .await
+    .map_err(|e| eyre::eyre!("add_order failed: {:?}", e))?;
 
     Ok(())
 }
 
-async fn handle_payment_updated_event(
+async fn handle_payment_created_event(
     log: &Log,
     db_conn: &Arc<tokio_rusqlite::Connection>,
 ) -> Result<()> {
-    info!("Received PaymentUpdated event");
+    info!("Received PaymentsCreated event");
 
     // Propagate any decoding error.
-    let decoded = PaymentsUpdated::decode_log(&log.inner)
-        .map_err(|e| eyre::eyre!("Failed to decode PaymentUpdated event: {:?}", e))?;
+    let decoded = PaymentsCreated::decode_log(&log.inner)
+        .map_err(|e| eyre::eyre!("Failed to decode PaymentCreated event: {:?}", e))?;
 
     let log_txid = log
         .transaction_hash
@@ -548,38 +581,59 @@ async fn handle_payment_updated_event(
         .block_hash
         .ok_or_else(|| eyre::eyre!("Missing block hash in SwapUpdated event"))?;
 
-    match decoded.data.context {
-        0 /* SwapUpdateContext::Created */ => {
-            for payment in decoded.data.payments {
-                info!(
-                    "Received PaymentUpdated event: payment_index = {:?}",
-                    payment.index.to::<u64>()
-                );
-                add_payment(
-                    db_conn,
-                    &payment,
-                    log_block_number,
-                    log_block_hash.into(),
-                    log_txid.into(),
-                )
-                .await
-                .map_err(|e| eyre::eyre!("add_payment failed: {:?}", e))?;
-            }
-        }
-        1 /* SwapUpdateContext::Complete */ => {
-            for payment in decoded.data.payments {
-                update_payment_to_settled(
-                    db_conn,
-                    payment.index.to::<u64>(),
-                    log_txid.into(),
-                    log_block_number,
-                    log_block_hash.into(),
-                )
-                .await
-                .map_err(|e| eyre::eyre!("update_payment_to_settled failed: {:?}", e))?;
-            }
-        }
-        _ => {}
+    for payment in decoded.data.payments {
+        info!(
+            "Received PaymentUpdated event: payment_index = {:?}",
+            payment.index.to::<u64>()
+        );
+        add_payment(
+            db_conn,
+            &payment,
+            log_block_number,
+            log_block_hash.into(),
+            log_txid.into(),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("add_payment failed: {:?}", e))?;
+    }
+    Ok(())
+}
+
+async fn handle_orders_settled_event(
+    log: &Log,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+) -> Result<()> {
+    info!("Received OrdersSettled event");
+    let decoded = OrdersSettled::decode_log(&log.inner)
+        .map_err(|e| eyre::eyre!("Failed to decode OrdersSettled event: {:?}", e))?;
+
+    let log_txid = log
+        .transaction_hash
+        .ok_or_else(|| eyre::eyre!("Missing txid in OrdersSettled event"))?;
+    let log_block_number = log
+        .block_number
+        .ok_or_else(|| eyre::eyre!("Missing block number in OrdersSettled event"))?;
+    let log_block_hash = log
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("Missing block hash in OrdersSettled event"))?;
+
+    let orders = &decoded.orders;
+    let payments = &decoded.payments;
+
+    // This should always be true
+    assert_eq!(orders.len(), payments.len());
+
+    for (order, payment) in orders.iter().zip(payments.iter()) {
+        update_order_and_payment_to_settled(
+            db_conn,
+            order.clone(),
+            payment.clone(),
+            log_txid.into(),
+            log_block_number,
+            log_block_hash.into(),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("update_order_to_settled failed: {:?}", e))?;
     }
     Ok(())
 }
@@ -681,15 +735,15 @@ async fn extract_compressed_block_leaves_from_light_client_updating_tx(
                 None
             }
         })
-        // Only calldata that starts with the submitPaymentProofs_1 selector OR the updateLightClient selector
+        // Only calldata that starts with the submitPaymentProofs_0 selector OR the updateLightClient selector
         .filter_map(|calldata| {
             if calldata.len() < 4 {
                 return None;
             }
             let selector: &[u8; 4] = &calldata[0..4].try_into().unwrap();
             match *selector {
-                submitPaymentProofs_1Call::SELECTOR => {
-                    submitPaymentProofs_1Call::abi_decode(&calldata)
+                submitPaymentProofs_0Call::SELECTOR => {
+                    submitPaymentProofs_0Call::abi_decode(&calldata)
                         .map(|decoded| decoded.blockProofParams)
                         .ok()
                 }

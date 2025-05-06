@@ -97,35 +97,30 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         // Create order
         (Order memory order, bytes32 orderHash) = _prepareOrder(params, orderIndex);
 
-        // Add order hash to order hashes
+        // Add order hash to storage
         orderHashes.push(orderHash);
 
         // Finalize order creation
-        Order[] memory updatedOrders = new Order[](1);
-        updatedOrders[0] = order;
-        emit OrdersUpdated(updatedOrders, OrderUpdateContext.Created);
+        emit OrderCreated(order);
     }
 
     /// @inheritdoc IRiftExchange
     function refundOrder(Order calldata order) external {
         order.checkIntegrity(orderHashes);
-        if (order.amount == 0) revert OrderNotLive();
-        if (block.timestamp < order.unlockTimestamp) {
-            revert OrderStillActive();
-        }
+        if (order.state != OrderState.Created) revert OrderNotLive();
+        if (block.timestamp < order.unlockTimestamp) revert OrderStillActive();
 
         Order memory updatedOrder = order;
-        // Mark order as refunded by zeroing out amount
-        updatedOrder.amount = 0;
-        updatedOrder.takerFee = 0;
+        // Mark order as refunded
+        updatedOrder.state = OrderState.Refunded;
 
+        // Update order hash in storage
         orderHashes[updatedOrder.index] = updatedOrder.hash();
 
+        // Refund order
         syntheticBitcoin.safeTransfer(order.owner, order.amount + order.takerFee);
 
-        Order[] memory updatedOrders = new Order[](1);
-        updatedOrders[0] = updatedOrder;
-        emit OrdersUpdated(updatedOrders, OrderUpdateContext.Refunded);
+        emit OrderRefunded(updatedOrder);
     }
 
     /// @inheritdoc IRiftExchange
@@ -159,7 +154,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             proof
         );
 
-        emit PaymentsUpdated(payments, PaymentUpdateContext.Created);
+        emit PaymentsCreated(payments);
     }
 
     /// @inheritdoc IRiftExchange
@@ -184,7 +179,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             }),
             proof
         );
-        emit PaymentsUpdated(payments, PaymentUpdateContext.Created);
+        emit PaymentsCreated(payments);
     }
 
     /// @inheritdoc IRiftExchange
@@ -215,8 +210,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             );
 
             Order memory updatedOrder = settleOrderParams[i].order;
-            updatedOrder.amount = 0;
-            updatedOrder.takerFee = 0;
+            updatedOrder.state = OrderState.Settled;
 
             orderHashes[updatedOrder.index] = updatedOrder.hash();
 
@@ -238,8 +232,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
         accumulatedFees += localFees;
 
-        emit PaymentsUpdated(updatedPayments, PaymentUpdateContext.Settled);
-        emit OrdersUpdated(updatedOrders, OrderUpdateContext.Settled);
+        emit OrdersSettled(updatedOrders, updatedPayments);
     }
 
     /// @inheritdoc IRiftExchange
@@ -298,7 +291,8 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             owner: params.base.owner,
             salt: EfficientHashLib.hash(_domainSeparator(), params.base.salt, bytes32(orderIndex)),
             confirmationBlocks: params.base.confirmationBlocks,
-            safeBitcoinBlockHeight: params.base.safeBlockLeaf.height
+            safeBitcoinBlockHeight: params.base.safeBlockLeaf.height,
+            state: OrderState.Created
         });
 
         return (order, order.hash());
@@ -335,6 +329,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
             payments[i] = Payment({
                 index: paymentIndex,
+                orderIndex: params.order.index,
                 orderHash: orderHash,
                 paymentBitcoinBlockLeaf: params.paymentBitcoinBlockLeaf,
                 challengeExpiryTimestamp: uint64(
@@ -364,9 +359,5 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     /// @inheritdoc IRiftExchange
     function getTotalPayments() external view returns (uint256) {
         return paymentHashes.length;
-    }
-
-    function serializeLightClientPublicInput(LightClientPublicInput memory input) external pure returns (bytes memory) {
-        return abi.encode(input);
     }
 }

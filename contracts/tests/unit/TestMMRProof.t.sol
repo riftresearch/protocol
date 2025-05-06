@@ -2,12 +2,12 @@
 pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/src/Test.sol";
-import {RiftTest} from "../utils/RiftTest.sol";
+import {RiftTest} from "../utils/RiftTest.t.sol";
 
 import {MMRProofLib} from "../../src/libraries/MMRProof.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {BlockLeaf} from "../../src/interfaces/IBitcoinLightClient.sol";
-import {HelperTypes} from "../utils/HelperTypes.sol";
+import {HelperTypes} from "../utils/HelperTypes.t.sol";
 
 /**
  * @notice Harness contract that exposes MMRProofLib as external functions
