@@ -158,7 +158,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     }
 
     /// @inheritdoc IRiftExchange
-    function submitPaymentProofs(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external {
+    function submitPaymentProofsOnly(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external {
         uint32 currentLightClientHeight = lightClientHeight();
         (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) = _validatePayments(
             currentLightClientHeight,

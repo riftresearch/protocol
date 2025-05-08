@@ -361,22 +361,23 @@ impl SwapWatchtower {
                 }
             };
 
-            let (transaction_request, calldata) =
-                if let Some(block_proof_params) = block_proof_params {
-                    let call = rift_exchange.submitPaymentProofs_0(
-                        swap_params,
-                        block_proof_params,
-                        proof_bytes.into(),
-                    );
-                    let calldata = call.calldata().to_owned();
-                    let transaction_request = call.into_transaction_request();
-                    (transaction_request, calldata)
-                } else {
-                    let call = rift_exchange.submitPaymentProofs_1(swap_params, proof_bytes.into());
-                    let calldata = call.calldata().to_owned();
-                    let transaction_request = call.into_transaction_request();
-                    (transaction_request, calldata)
-                };
+            let (transaction_request, calldata) = if let Some(block_proof_params) =
+                block_proof_params
+            {
+                let call = rift_exchange.submitPaymentProofs(
+                    swap_params,
+                    block_proof_params,
+                    proof_bytes.into(),
+                );
+                let calldata = call.calldata().to_owned();
+                let transaction_request = call.into_transaction_request();
+                (transaction_request, calldata)
+            } else {
+                let call = rift_exchange.submitPaymentProofsOnly(swap_params, proof_bytes.into());
+                let calldata = call.calldata().to_owned();
+                let transaction_request = call.into_transaction_request();
+                (transaction_request, calldata)
+            };
 
             let txn = transaction_broadcaster
                 .broadcast_transaction(calldata, transaction_request, PreflightCheck::Simulate)

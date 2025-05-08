@@ -679,7 +679,7 @@ async fn test_simulated_swap_end_to_end() {
     let mock_proof = vec![];
 
     let swap_proof_call =
-        rift_exchange.submitPaymentProofs_0(swap_params, block_proof_params, mock_proof.into());
+        rift_exchange.submitPaymentProofs(swap_params, block_proof_params, mock_proof.into());
     let swap_proof_calldata = swap_proof_call.calldata().clone();
 
     let swap_proof_tx = maker_evm_provider

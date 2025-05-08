@@ -9,30 +9,11 @@ import {HashLib} from "../../src/libraries/HashLib.sol";
 import {BlockLeaf} from "../../src/interfaces/IBitcoinLightClient.sol";
 import {HelperTypes} from "../utils/HelperTypes.t.sol";
 
-/**
- * @notice Harness contract that exposes MMRProofLib as external functions
- *         so we can call them via normal external calls in our tests.
- */
-contract MMRProofLibHarness {
-    function verifyProof(
-        bytes32 blockLeafHash,
-        uint32 leafIndex,
-        bytes32[] calldata siblings,
-        bytes32[] calldata peaks,
-        uint32 leafCount,
-        bytes32 mmrRoot
-    ) external pure returns (bool) {
-        return MMRProofLib.verifyProof(blockLeafHash, leafIndex, siblings, peaks, leafCount, mmrRoot);
-    }
-}
-
 contract MMRProofLibUnitTest is RiftTest {
     using HashLib for BlockLeaf;
-    MMRProofLibHarness internal harness;
 
     function setUp() public override {
         super.setUp();
-        harness = new MMRProofLibHarness();
     }
 
     function testFuzz_blockLeafHasherImplementations(BlockLeaf memory leaf, uint256) public {
@@ -46,7 +27,7 @@ contract MMRProofLibUnitTest is RiftTest {
         blockHeight = uint32(bound(blockHeight, 0, 100)); // no benefit to making this huge, just slower
         HelperTypes.MMRProof memory proof = _generateFakeBlockMMRProofFFI(blockHeight);
 
-        bool verified = harness.verifyProof(
+        bool verified = MMRProofLib.verifyProof(
             proof.blockLeaf.hash(),
             proof.blockLeaf.height,
             proof.siblings,
@@ -54,6 +35,79 @@ contract MMRProofLibUnitTest is RiftTest {
             proof.leafCount,
             proof.mmrRoot
         );
+
+        assertEq(verified, true, "proveBlockInclusion failed");
+    }
+
+    /// forge-config: default.isolate = true
+    function test_verifyMMRProof_2pow3() public {
+        HelperTypes.MMRProof memory proof = _generateFakeBlockMMRProofFFI(2 ** 3 - 1);
+        bool verified;
+        vm.startSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow3");
+        verified = MMRProofLib.verifyProof(
+            proof.blockLeaf.hash(),
+            proof.blockLeaf.height,
+            proof.siblings,
+            proof.peaks,
+            proof.leafCount,
+            proof.mmrRoot
+        );
+        vm.stopSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow3");
+
+        assertEq(verified, true, "proveBlockInclusion failed");
+    }
+
+    /// forge-config: default.isolate = true
+    function test_verifyMMRProof_2pow5() public {
+        // Generate a MMR proof using the sdk
+        HelperTypes.MMRProof memory proof = _generateFakeBlockMMRProofFFI(2 ** 5 - 1);
+
+        bool verified;
+        vm.startSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow5");
+        verified = MMRProofLib.verifyProof(
+            proof.blockLeaf.hash(),
+            proof.blockLeaf.height,
+            proof.siblings,
+            proof.peaks,
+            proof.leafCount,
+            proof.mmrRoot
+        );
+        vm.stopSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow5");
+
+        assertEq(verified, true, "proveBlockInclusion failed");
+    }
+
+    function test_verifyMMRProof_2pow7() public {
+        HelperTypes.MMRProof memory proof = _generateFakeBlockMMRProofFFI(2 ** 7 - 1);
+        bool verified;
+        vm.startSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow7");
+        verified = MMRProofLib.verifyProof(
+            proof.blockLeaf.hash(),
+            proof.blockLeaf.height,
+            proof.siblings,
+            proof.peaks,
+            proof.leafCount,
+            proof.mmrRoot
+        );
+        vm.stopSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow7");
+
+        assertEq(verified, true, "proveBlockInclusion failed");
+    }
+
+    /// forge-config: default.isolate = true
+    function test_verifyMMRProof_2pow9() public {
+        HelperTypes.MMRProof memory proof = _generateFakeBlockMMRProofFFI(2 ** 9 - 1);
+        bool verified;
+        vm.startSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow9");
+        verified = MMRProofLib.verifyProof(
+            proof.blockLeaf.hash(),
+            proof.blockLeaf.height,
+            proof.siblings,
+            proof.peaks,
+            proof.leafCount,
+            proof.mmrRoot
+        );
+        vm.stopSnapshotGas("MMRProofLibTest", "verifyMMRProof_2pow9");
 
         assertEq(verified, true, "proveBlockInclusion failed");
     }

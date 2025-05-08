@@ -14,7 +14,7 @@ use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
 use sol_bindings::{
-    submitPaymentProofs_0Call, submitPaymentProofs_1Call, updateLightClientCall, AuctionUpdated,
+    submitPaymentProofsCall, submitPaymentProofsOnlyCall, updateLightClientCall, AuctionUpdated,
     BitcoinLightClientUpdated, Order, OrderCreated, OrderRefunded, OrderState, OrdersSettled,
     PaymentsCreated,
 };
@@ -742,11 +742,9 @@ async fn extract_compressed_block_leaves_from_light_client_updating_tx(
             }
             let selector: &[u8; 4] = &calldata[0..4].try_into().unwrap();
             match *selector {
-                submitPaymentProofs_0Call::SELECTOR => {
-                    submitPaymentProofs_0Call::abi_decode(&calldata)
-                        .map(|decoded| decoded.blockProofParams)
-                        .ok()
-                }
+                submitPaymentProofsCall::SELECTOR => submitPaymentProofsCall::abi_decode(&calldata)
+                    .map(|decoded| decoded.blockProofParams)
+                    .ok(),
                 updateLightClientCall::SELECTOR => updateLightClientCall::abi_decode(&calldata)
                     .map(|decoded| decoded.blockProofParams)
                     .ok(),

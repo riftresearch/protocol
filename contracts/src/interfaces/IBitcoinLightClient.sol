@@ -10,13 +10,6 @@ struct BlockLeaf {
     uint256 cumulativeChainwork;
 }
 
-struct BitcoinCheckpoint {
-    // Whether the checkpoint has been established
-    bool established;
-    // The tip block leaf associated with the MMR root
-    BlockLeaf tipBlockLeaf;
-}
-
 /**
  * @title Interface for the Bitcoin Light Client contract
  */
@@ -34,9 +27,12 @@ interface IBitcoinLightClient {
 
     /// @notice Retrieves checkpoint information for a given MMR root.
     /// @param _mmrRoot The MMR root to query.
-    /// @return established Whether the checkpoint has been established (ie. _mmrRoot was the `mmrRoot` at one point)
-    /// @return tipBlockLeaf The tip block leaf associated with the root
-    function checkpoints(bytes32 _mmrRoot) external view returns (bool established, BlockLeaf memory tipBlockLeaf);
+    /// @return blockHash The hash of the tip block leaf associated with the root
+    /// @return height The height of the tip block leaf associated with the root
+    /// @return cumulativeChainwork The cumulative chainwork of the tip block leaf associated with the root
+    function checkpoints(
+        bytes32 _mmrRoot
+    ) external view returns (bytes32 blockHash, uint32 height, uint256 cumulativeChainwork);
 
     /// @notice Returns the block height of the current tip of the verified chain.
     /// @return height The height of the highest block verified by the light client.
