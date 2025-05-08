@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.8.28;
 
-import {IBitcoinLightClient, BlockLeaf} from "./interfaces/IBitcoinLightClient.sol";
+import {IBitcoinLightClient, BlockLeaf, Checkpoint} from "./interfaces/IBitcoinLightClient.sol";
 
 import {MMRProofLib} from "./libraries/MMRProof.sol";
 import {HashLib} from "./libraries/HashLib.sol";
@@ -26,8 +26,8 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
     // it guarantees that a light client update proof will always succeed at updating the light client to the new root assuming:
     // - The checkpoint the proof was built from was the real `mmrRoot` at some point in time
     // - The chainwork of the updated chain is greater than or equal to the chainwork of the current checkpoint
-    // mmrRoot => tipBlockLeaf
-    mapping(bytes32 => BlockLeaf) public checkpoints;
+    // mmrRoot => cumulative chainwork
+    mapping(bytes32 => Checkpoint) public checkpoints;
 
     /**
      * @notice Initializes the light client with an MMR root
@@ -38,7 +38,10 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
      */
     constructor(bytes32 _mmrRoot, BlockLeaf memory _tipBlockLeaf) {
         mmrRoot = _mmrRoot;
-        checkpoints[_mmrRoot] = _tipBlockLeaf;
+        checkpoints[_mmrRoot] = Checkpoint({
+            height: _tipBlockLeaf.height,
+            cumulativeChainwork: _tipBlockLeaf.cumulativeChainwork
+        });
     }
 
     /**
@@ -60,7 +63,7 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
         }
 
         // ensure the prior checkpoint is established
-        if (checkpoints[priorMmrRoot].blockHash == bytes32(0)) {
+        if (checkpoints[priorMmrRoot].cumulativeChainwork == 0) {
             revert CheckpointNotEstablished();
         }
 
@@ -70,7 +73,10 @@ abstract contract BitcoinLightClient is IBitcoinLightClient {
         }
 
         // add checkpoint and update mmrRoot
-        checkpoints[newMmrRoot] = tipBlockLeaf;
+        checkpoints[newMmrRoot] = Checkpoint({
+            height: tipBlockLeaf.height,
+            cumulativeChainwork: tipBlockLeaf.cumulativeChainwork
+        });
         mmrRoot = newMmrRoot;
         emit BitcoinLightClientUpdated(priorMmrRoot, newMmrRoot);
     }
