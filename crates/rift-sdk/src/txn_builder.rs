@@ -12,7 +12,8 @@ use bitcoin::{
     transaction, Address, Amount, CompressedPublicKey, Network, OutPoint, PrivateKey, Script,
     ScriptBuf, Sequence, TxOut, Txid,
 };
-use rift_core::vaults::SolidityHash;
+use rift_core::order_hasher::SolidityHash;
+use rift_core::payments::AggregateOrderHasher;
 
 use crate::errors::{Result, RiftSdkError};
 use sol_bindings::Order;
@@ -140,37 +141,44 @@ pub fn serialize_no_segwit(tx: &Transaction) -> eyre::Result<Vec<u8>> {
 }
 
 pub fn build_rift_payment_transaction(
-    deposit_vault: &Order,
+    orders: &[Order],
     in_txid: &Txid,
     transaction: &Transaction,
     in_txvout: u32,
     wallet: &P2WPKHBitcoinWallet,
     fee_sats: u64,
 ) -> Result<Transaction> {
-    let vault_commitment = deposit_vault.hash();
-    let total_lp_sum_btc: u64 = deposit_vault.expectedSats;
+    let order_hashes = orders.iter().map(|order| order.hash()).collect::<Vec<_>>();
+    let aggregate_order_hash = order_hashes.compute_aggregate_hash();
+    let cum_orders_expected_sats: u64 = orders.iter().map(|order| order.expectedSats).sum();
 
     let vin_sats = transaction.output[in_txvout as usize].value.to_sat();
 
-    println!("Total LP Sum BTC: {}", total_lp_sum_btc);
+    println!(
+        "Cumulative Orders Expected Sats: {}",
+        cum_orders_expected_sats
+    );
     println!("Vin sats: {}", vin_sats);
 
-    let mut tx_outs = Vec::new();
+    let mut tx_outs = orders
+        .iter()
+        .map(|order| {
+            // Create order payment output
+            let amount = order.expectedSats;
+            let script_pubkey = &order.bitcoinScriptPubKey.0;
 
-    // Add liquidity provider outputs
-    let amount = deposit_vault.expectedSats;
-    let script_pubkey = &deposit_vault.bitcoinScriptPubKey.0;
-
-    let script = Script::from_bytes(script_pubkey);
-    tx_outs.push(TxOut {
-        value: Amount::from_sat(amount),
-        script_pubkey: script.into(),
-    });
+            let script = Script::from_bytes(script_pubkey);
+            TxOut {
+                value: Amount::from_sat(amount),
+                script_pubkey: script.into(),
+            }
+        })
+        .collect::<Vec<_>>();
 
     // Add OP_RETURN output
     let op_return_script = Builder::new()
         .push_opcode(OP_RETURN)
-        .push_slice(vault_commitment)
+        .push_slice(aggregate_order_hash)
         .into_script();
     tx_outs.push(TxOut {
         value: Amount::ZERO,
@@ -178,7 +186,7 @@ pub fn build_rift_payment_transaction(
     });
 
     // Add change output
-    let change_amount: i64 = vin_sats as i64 - total_lp_sum_btc as i64 - fee_sats as i64;
+    let change_amount: i64 = vin_sats as i64 - cum_orders_expected_sats as i64 - fee_sats as i64;
     if change_amount < 0 {
         return Err(RiftSdkError::InsufficientFunds);
     }

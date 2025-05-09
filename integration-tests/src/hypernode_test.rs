@@ -12,7 +12,7 @@ use bitcoincore_rpc_async::RpcApi;
 use data_engine::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
-use rift_core::vaults::SolidityHash;
+use rift_core::order_hasher::SolidityHash;
 use rift_sdk::{
     proof_generator::{ProofGeneratorType, RiftProofGenerator},
     txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
@@ -255,7 +255,7 @@ async fn test_hypernode_simple_swap() {
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
     let payment_tx = txn_builder::build_rift_payment_transaction(
-        &new_order,
+        &vec![new_order.clone()],
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,

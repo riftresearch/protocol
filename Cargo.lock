@@ -3603,6 +3603,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "itertools 0.14.0",
  "metrics",
  "reqwest 0.12.15",
  "rift-core",

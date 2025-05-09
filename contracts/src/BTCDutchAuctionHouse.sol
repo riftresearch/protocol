@@ -55,7 +55,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         }
 
         if (auctionParams.startBtcOut <= auctionParams.endBtcOut) {
-            revert InvalidStartBtcOut();
+            revert InvalidAuctionRange();
         }
 
         if (auctionParams.deadline < block.timestamp) {
@@ -121,7 +121,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
             safeBlockPeaks: safeBlockPeaks
         });
 
-        // Note:  _createOrder takes care of accounting for tokens deposited via claimAuction.
+        // Note:  _createOrder takes care of accounting for tokens deposited via startAuction.
         // so no additional ERC20 transfer is necessary.
         _createOrder(createOrderParams);
 

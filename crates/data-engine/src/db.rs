@@ -5,11 +5,15 @@ use alloy::{
     sol_types::SolValue,
 };
 use eyre::Result;
-use rift_core::vaults::SolidityHash;
+use rift_core::order_hasher::SolidityHash;
 use sol_bindings::{Order, Payment};
 use std::str::FromStr;
 use tokio_rusqlite::{params, Connection, Error::Rusqlite};
 use tracing::info;
+
+const ORDER_STATUS_LIVE: i64 = 0;
+const ORDER_STATUS_SETTLED: i64 = 1;
+const ORDER_STATUS_REFUNDED: i64 = 2;
 
 /// Run initial table creation / migrations on an existing `tokio_sqlite::Connection`.
 pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
@@ -19,7 +23,10 @@ pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
             initial_order_hash  BLOB(32)  NOT NULL,
             depositor           TEXT      NOT NULL,
             recipient           TEXT      NOT NULL,
+            bitcoin_script_pubkey TEXT      NOT NULL,
+            expected_sats       INTEGER   NOT NULL,
             order_refund_timestamp INTEGER NOT NULL,
+            order_status INTEGER NOT NULL,
 
             order_json         TEXT      NOT NULL,
             order_block_number  INTEGER   NOT NULL,
@@ -76,6 +83,7 @@ pub async fn get_oldest_active_order(
             order_txid
         FROM orders
         WHERE order_refund_timestamp > ?
+          AND order_status = ?
         ORDER BY order_refund_timestamp ASC
         LIMIT 1
     "#;
@@ -85,7 +93,7 @@ pub async fn get_oldest_active_order(
     let deposit = conn
         .call(move |conn| {
             let mut stmt = conn.prepare(sql)?;
-            let mut rows = stmt.query([current_timestamp])?;
+            let mut rows = stmt.query(params![current_timestamp, ORDER_STATUS_LIVE])?;
 
             // We only expect zero or one row because of `LIMIT 1`,
             // so just parse the first if present.
@@ -198,10 +206,11 @@ pub async fn update_order_and_payment_to_settled(
         tx.execute(
             r#"
             UPDATE orders
-            SET order_json = ?1
-            WHERE order_index = ?2
+            SET order_json = ?1,
+                order_status = ?2              -- settled
+            WHERE order_index = ?3
             "#,
-            params![order_json, order_index],
+            params![order_json, ORDER_STATUS_SETTLED, order_index],
         )?;
 
         // Update the payment
@@ -255,14 +264,16 @@ pub async fn update_order_to_refunded(
         SET refund_txid = ?1,
             refund_block_number = ?2,
             refund_block_hash = ?3,
-            order_json = ?4
-        WHERE order_index = ?5
+            order_json = ?4,
+            order_status = ?5                -- refunded
+        WHERE order_index = ?6
         "#,
             params![
                 refund_txid.to_vec(),
                 refund_block_number as i64,
                 refund_block_hash.to_vec(),
                 order_json,
+                ORDER_STATUS_REFUNDED,
                 order.index.to::<u64>(),
             ],
         )?;
@@ -289,6 +300,7 @@ pub async fn add_order(
 
     let initial_order_hash = order.hash();
 
+    let order_clone = order.clone();
     conn.call(move |conn| {
         conn.execute(
             r#"
@@ -297,19 +309,25 @@ pub async fn add_order(
             initial_order_hash,
             depositor,
             recipient,
+            bitcoin_script_pubkey,
+            expected_sats,
             order_refund_timestamp,
+            order_status,
             order_json,
             order_block_number,
             order_block_hash,
             order_txid
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         "#,
             params![
                 order.index.to::<u64>(),
                 initial_order_hash,
                 order.owner.to_string(),
                 order.designatedReceiver.to_string(),
+                hex::encode(order.bitcoinScriptPubKey),
+                order.expectedSats,
                 order.unlockTimestamp,
+                ORDER_STATUS_LIVE,
                 order_json,
                 order_block_number as i64,
                 order_block_hash.to_vec(),
@@ -322,7 +340,7 @@ pub async fn add_order(
     info!(
         message = "Order added",
         order_index = order.index.to::<u64>(),
-        order = format!("{:?}", order),
+        order = format!("{:?}", order_clone),
         operation = "add_order"
     );
 
@@ -809,6 +827,106 @@ pub async fn get_payments_ready_to_be_settled(
         .await?;
 
     Ok(payments_with_order)
+}
+
+/// Fetches one `ChainAwareOrder` for every `(script_pubkey, sats)` pair.
+/// If any tuple is *not* present, the function returns `Ok(None)`
+/// Returns `Vec<Vec<ChainAwareOrder>>` aligned with `pairs`.
+/// Each outer‐slot contains **all** live (status 0) orders whose
+/// `(script_pubkey, expected_sats)` equals the given pair.
+/// If *any pair* has **zero** matches ⇒ `Ok(None)`.
+pub async fn get_live_orders_by_script_and_amounts(
+    conn: &Connection,
+    pairs: &[(&[u8], u64)],
+) -> Result<Option<Vec<Vec<ChainAwareOrder>>>> {
+    if pairs.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+
+    // Own the strings for the async move
+    let owned = pairs
+        .iter()
+        .map(|(spk, sats)| (hex::encode(spk), *sats))
+        .collect::<Vec<_>>();
+
+    // Build VALUES list once
+    let placeholders = owned
+        .iter()
+        .map(|(spk, sats)| format!("('{}', {})", spk, sats))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let sql = format!(
+        r#"
+        SELECT bitcoin_script_pubkey,
+               expected_sats,
+               order_json,
+               order_block_number,
+               order_block_hash,
+               order_txid
+        FROM orders
+        WHERE order_status = {ORDER_STATUS_LIVE}
+          AND (bitcoin_script_pubkey, expected_sats) IN ({})
+        "#,
+        placeholders
+    );
+
+    // ---- One round-trip --------------------------------------------------
+    let rows_per_pair = conn
+        .call(move |conn| {
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = stmt.query([])?;
+            let mut multimap: std::collections::HashMap<(String, u64), Vec<ChainAwareOrder>> =
+                std::collections::HashMap::new();
+
+            while let Some(r) = rows.next()? {
+                let spk: String = r.get(0)?;
+                let sats: u64 = r.get(1)?;
+                let order_json: String = r.get(2)?;
+
+                let order: Order = serde_json::from_str(&order_json).map_err(|e| {
+                    tokio_rusqlite::Error::Other(
+                        format!("Failed to deserialize Order: {:?}", e).into(),
+                    )
+                })?;
+
+                let block_number: i64 = r.get(3)?;
+                let block_hash: [u8; 32] = r
+                    .get::<_, Vec<u8>>(4)?
+                    .try_into()
+                    .map_err(|_| tokio_rusqlite::Error::Other("block_hash length".into()))?;
+                let txid: [u8; 32] = r
+                    .get::<_, Vec<u8>>(5)?
+                    .try_into()
+                    .map_err(|_| tokio_rusqlite::Error::Other("txid length".into()))?;
+
+                multimap
+                    .entry((spk, sats))
+                    .or_default()
+                    .push(ChainAwareOrder {
+                        order,
+                        order_block_number: block_number as u64,
+                        order_block_hash: block_hash,
+                        order_txid: txid,
+                    });
+            }
+
+            Ok(multimap)
+        })
+        .await?;
+
+    // All-or-nothing: every pair must have ≥1 entry
+    if owned.iter().any(|k| !rows_per_pair.contains_key(k)) {
+        return Ok(None);
+    }
+
+    // Re-align order and move ownership out of the map
+    let mut out = Vec::with_capacity(owned.len());
+    for key in owned {
+        out.push(rows_per_pair.get(&key).cloned().unwrap()); // safe: checked above
+    }
+
+    Ok(Some(out))
 }
 
 pub async fn get_otc_swap_by_order_index(
