@@ -1,12 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 
+pub mod order_hasher;
 pub mod payments;
 pub mod spv;
-pub mod vaults;
 
 use crate::spv::{generate_bitcoin_txn_hash, verify_bitcoin_txn_merkle_proof, MerkleProofStep};
 
-use crate::payments::validate_bitcoin_payment;
+use crate::payments::validate_bitcoin_payments;
 
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::Hash;
@@ -18,21 +18,23 @@ use sol_bindings::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RiftTransaction {
+pub struct OrderFillingTransaction {
     // no segwit data serialized bitcoin transaction
     pub txn: Vec<u8>,
-    // the index of the payment output in the transaction
-    pub payment_output_index: usize,
-    // the vault reserved for this transaction
-    pub order: Order,
     // block header where the txn is included
     pub block_header: Header,
     // merkle proof of the txn hash in the block
     pub txn_merkle_proof: Vec<MerkleProofStep>,
+    // the index of the OP_RETURN output in the transaction
+    pub op_return_output_index: usize,
+    // the orders being paid for in this transaction
+    pub paid_orders: Vec<Order>,
+    // The order indices (relative to the paid_orders vector) we want to commit to in this proof
+    pub order_indices: Vec<usize>,
 }
 
-impl RiftTransaction {
-    pub fn verify(&self) -> PaymentPublicInput {
+impl OrderFillingTransaction {
+    pub fn verify(&self) -> Vec<PaymentPublicInput> {
         let block_header = self.block_header.as_bytes();
 
         // [0] Validate Bitcoin merkle proof of the transaction hash
@@ -46,8 +48,8 @@ impl RiftTransaction {
         verify_bitcoin_txn_merkle_proof(block_header_merkle_root, txn_hash, &self.txn_merkle_proof);
 
         // [1] Validate Bitcoin payment given the reserved deposit vault
-        let order_hash =
-            validate_bitcoin_payment(&self.txn, &self.order, self.payment_output_index)
+        let all_order_hashes =
+            validate_bitcoin_payments(&self.txn, &self.paid_orders, self.op_return_output_index)
                 .expect("Failed to validate bitcoin payment");
 
         // [2] Construct the public input, bitcoin block hash and txid are reversed to align with network byte order
@@ -59,11 +61,14 @@ impl RiftTransaction {
         let mut txid = txn_hash;
         txid.reverse();
 
-        PaymentPublicInput {
-            orderHash: order_hash.into(),
-            paymentBitcoinBlockHash: block_hash.into(),
-            paymentBitcoinTxid: txid.into(),
-        }
+        self.order_indices
+            .iter()
+            .map(|index| PaymentPublicInput {
+                orderHash: all_order_hashes[*index].into(),
+                paymentBitcoinBlockHash: block_hash.into(),
+                paymentBitcoinTxid: txid.into(),
+            })
+            .collect()
     }
 }
 
@@ -98,7 +103,7 @@ pub mod giga {
     pub struct RiftProgramInput {
         pub proof_type: RustProofType,
         pub light_client_input: Option<ChainTransition>,
-        pub rift_transaction_input: Option<Vec<RiftTransaction>>,
+        pub order_filling_transaction_input: Option<Vec<OrderFillingTransaction>>,
     }
 
     impl RiftProgramInput {
@@ -111,7 +116,7 @@ pub mod giga {
     pub struct RiftProgramInputBuilder {
         proof_type: Option<RustProofType>,
         light_client_input: Option<bitcoin_light_client_core::ChainTransition>,
-        rift_transaction_input: Option<Vec<RiftTransaction>>,
+        order_filling_transaction_input: Option<Vec<OrderFillingTransaction>>,
     }
 
     impl RiftProgramInputBuilder {
@@ -128,8 +133,11 @@ pub mod giga {
             self
         }
 
-        pub fn rift_transaction_input(mut self, input: Vec<RiftTransaction>) -> Self {
-            self.rift_transaction_input = Some(input);
+        pub fn order_filling_transaction_input(
+            mut self,
+            input: Vec<OrderFillingTransaction>,
+        ) -> Self {
+            self.order_filling_transaction_input = Some(input);
             self
         }
 
@@ -144,30 +152,32 @@ pub mod giga {
                     Ok(RiftProgramInput {
                         proof_type,
                         light_client_input: Some(light_client_input),
-                        rift_transaction_input: None,
+                        order_filling_transaction_input: None,
                     })
                 }
                 RustProofType::SwapOnly => {
-                    let rift_transaction_input = self.rift_transaction_input.ok_or(
-                        "rift_transaction_input is required for RiftTransaction proof type",
-                    )?;
+                    let order_filling_transaction_input = self
+                        .order_filling_transaction_input
+                        .ok_or(
+                            "order_filling_transaction_input is required for RiftTransaction proof type",
+                        )?;
                     Ok(RiftProgramInput {
                         proof_type,
                         light_client_input: None,
-                        rift_transaction_input: Some(rift_transaction_input),
+                        order_filling_transaction_input: Some(order_filling_transaction_input),
                     })
                 }
                 RustProofType::Combined => {
                     let light_client_input = self
                         .light_client_input
                         .ok_or("light_client_input is required for Full proof type")?;
-                    let rift_transaction_input = self
-                        .rift_transaction_input
-                        .ok_or("rift_transaction_input is required for Full proof type")?;
+                    let order_filling_transaction_input = self
+                        .order_filling_transaction_input
+                        .ok_or("order_filling_transaction_input is required for Full proof type")?;
                     Ok(RiftProgramInput {
                         proof_type,
                         light_client_input: Some(light_client_input),
-                        rift_transaction_input: Some(rift_transaction_input),
+                        order_filling_transaction_input: Some(order_filling_transaction_input),
                     })
                 }
             }
@@ -190,10 +200,12 @@ pub mod giga {
             match self.proof_type {
                 RustProofType::SwapOnly => {
                     let payment_public_inputs = self
-                        .rift_transaction_input
-                        .expect("rift_transaction_input is required for SwapOnly proof type")
+                        .order_filling_transaction_input
+                        .expect(
+                            "order_filling_transaction_input is required for SwapOnly proof type",
+                        )
                         .iter()
-                        .map(|rift_transaction| rift_transaction.verify())
+                        .flat_map(|order_filling_transaction| order_filling_transaction.verify())
                         .collect();
 
                     ProofPublicInput {
@@ -221,10 +233,12 @@ pub mod giga {
                         .expect("light_client_input is required for Combined proof type")
                         .verify::<Keccak256Hasher>(false);
                     let payment_public_inputs = self
-                        .rift_transaction_input
-                        .expect("rift_transaction_input is required for Combined proof type")
+                        .order_filling_transaction_input
+                        .expect(
+                            "order_filling_transaction_input is required for Combined proof type",
+                        )
                         .iter()
-                        .map(|rift_transaction| rift_transaction.verify())
+                        .flat_map(|order_filling_transaction| order_filling_transaction.verify())
                         .collect();
 
                     ProofPublicInput {

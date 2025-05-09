@@ -1,4 +1,5 @@
 use accumulators::mmr::map_leaf_index_to_element_index;
+
 use alloy::{
     eips::eip7251::ConsolidationRequest,
     primitives::Address,
@@ -18,11 +19,13 @@ use bitcoincore_rpc_async::{
     RpcApi,
 };
 use data_engine::{engine::ContractDataEngine, models::ChainAwareOrder};
+use itertools::Itertools;
 use rift_core::{
     giga::RiftProgramInput,
-    payments::{validate_bitcoin_payment, OP_PUSHBYTES_32, OP_RETURN_CODE},
+    order_hasher::SolidityHash,
+    payments::{validate_bitcoin_payments, AggregateOrderHasher, OP_PUSHBYTES_32, OP_RETURN_CODE},
     spv::generate_bitcoin_txn_merkle_proof,
-    RiftTransaction,
+    OrderFillingTransaction,
 };
 use rift_sdk::{
     bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt},
@@ -35,7 +38,7 @@ use rift_sdk::{
 use sol_bindings::{
     BlockProofParams, Order, RiftExchangeHarnessInstance, SubmitPaymentProofParams,
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender},
@@ -49,16 +52,19 @@ use tracing::{info, info_span, instrument, warn, Instrument};
 use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 
 struct PendingPayment {
-    chain_aware_order: ChainAwareOrder,
+    paid_orders: Vec<Order>,
+    committed_order_indices: Vec<usize>,
     payment_txid: Txid, //rely on bitcoin core for telling us how many confirmations this has?
-    payment_output_index: usize,
+    op_return_output_index: usize,
+    group_confirmation_blocks: u32,
 }
 
 struct ConfirmedPayment {
-    chain_aware_order: ChainAwareOrder,
+    paid_orders: Vec<Order>,
+    committed_order_indices: Vec<usize>,
     payment_txid: Txid,
     payment_block_leaf: BlockLeaf,
-    rift_transaction_input: RiftTransaction,
+    order_filling_transaction_input: OrderFillingTransaction,
 }
 
 pub struct SwapWatchtower;
@@ -163,7 +169,7 @@ impl SwapWatchtower {
 
         // TODO: We need an eviction strategy for pending swaps
         // Evict any pending swaps that have an expired deposit vault
-        let mut pending_swaps = Vec::new();
+        let mut pending_payments = Vec::new();
 
         loop {
             // Collect all available new blocks from the subscription
@@ -207,19 +213,19 @@ impl SwapWatchtower {
                 .get_blocks_from_leaves(&block_leaves, bitcoin_concurrency_limit)
                 .await?;
 
-            pending_swaps.extend(
+            pending_payments.extend(
                 find_new_swaps_in_blocks(contract_data_engine.clone(), &full_blocks).await?,
             );
 
-            let confirmed_swaps = find_pending_swaps_with_sufficient_confirmations(
+            let confirmed_payments = find_pending_swaps_with_sufficient_confirmations(
                 btc_rpc.clone(),
-                &mut pending_swaps,
+                &mut pending_payments,
             )
             .await?;
 
-            if !confirmed_swaps.is_empty() {
-                info!("Found {} confirmed swaps", confirmed_swaps.len());
-                confirmed_swaps_tx.send(confirmed_swaps)?;
+            if !confirmed_payments.is_empty() {
+                info!("Found {} confirmed payments", confirmed_payments.len());
+                confirmed_swaps_tx.send(confirmed_payments)?;
             } else {
                 info!(
                     message = "No confirmed swaps found",
@@ -308,25 +314,34 @@ impl SwapWatchtower {
                 let proof = bitcoin_mmr
                     .get_circuit_proof(swap.payment_block_leaf.height as usize, None)
                     .await?;
-                swap_params.push(SubmitPaymentProofParams {
-                    paymentBitcoinTxid: swap.payment_txid.as_raw_hash().to_byte_array().into(),
-                    order: swap.chain_aware_order.order.clone(),
-                    paymentBitcoinBlockLeaf: swap.payment_block_leaf.into(),
-                    paymentBitcoinBlockSiblings: proof.siblings.iter().map(From::from).collect(),
-                    paymentBitcoinBlockPeaks: proof.peaks.iter().map(From::from).collect(),
-                });
+
+                for order_index in &swap.committed_order_indices {
+                    let order = swap.paid_orders[*order_index].clone();
+                    swap_params.push(SubmitPaymentProofParams {
+                        paymentBitcoinTxid: swap.payment_txid.as_raw_hash().to_byte_array().into(),
+                        order,
+                        paymentBitcoinBlockLeaf: swap.payment_block_leaf.into(),
+                        paymentBitcoinBlockSiblings: proof
+                            .siblings
+                            .iter()
+                            .map(From::from)
+                            .collect(),
+                        paymentBitcoinBlockPeaks: proof.peaks.iter().map(From::from).collect(),
+                    });
+                }
             }
 
             // free the locks, we no longer need them
             drop(light_client_mmr);
             drop(bitcoin_mmr);
 
-            rift_program_input_builder = rift_program_input_builder.rift_transaction_input(
-                confirmed_swaps
-                    .iter()
-                    .map(|swap| swap.rift_transaction_input.clone())
-                    .collect(),
-            );
+            rift_program_input_builder = rift_program_input_builder
+                .order_filling_transaction_input(
+                    confirmed_swaps
+                        .iter()
+                        .map(|swap| swap.order_filling_transaction_input.clone())
+                        .collect(),
+                );
 
             let rift_program_input = rift_program_input_builder
                 .build()
@@ -361,22 +376,23 @@ impl SwapWatchtower {
                 }
             };
 
-            let (transaction_request, calldata) =
-                if let Some(block_proof_params) = block_proof_params {
-                    let call = rift_exchange.submitPaymentProofs_0(
-                        swap_params,
-                        block_proof_params,
-                        proof_bytes.into(),
-                    );
-                    let calldata = call.calldata().to_owned();
-                    let transaction_request = call.into_transaction_request();
-                    (transaction_request, calldata)
-                } else {
-                    let call = rift_exchange.submitPaymentProofs_1(swap_params, proof_bytes.into());
-                    let calldata = call.calldata().to_owned();
-                    let transaction_request = call.into_transaction_request();
-                    (transaction_request, calldata)
-                };
+            let (transaction_request, calldata) = if let Some(block_proof_params) =
+                block_proof_params
+            {
+                let call = rift_exchange.submitPaymentProofs(
+                    swap_params,
+                    block_proof_params,
+                    proof_bytes.into(),
+                );
+                let calldata = call.calldata().to_owned();
+                let transaction_request = call.into_transaction_request();
+                (transaction_request, calldata)
+            } else {
+                let call = rift_exchange.submitPaymentProofsOnly(swap_params, proof_bytes.into());
+                let calldata = call.calldata().to_owned();
+                let transaction_request = call.into_transaction_request();
+                (transaction_request, calldata)
+            };
 
             let txn = transaction_broadcaster
                 .broadcast_transaction(calldata, transaction_request, PreflightCheck::Simulate)
@@ -440,6 +456,7 @@ async fn compute_block_search_range(
     ))
 }
 
+#[instrument(level = "info", skip(contract_data_engine, blocks))]
 async fn find_new_swaps_in_blocks(
     contract_data_engine: Arc<ContractDataEngine>,
     blocks: &[Block],
@@ -458,13 +475,18 @@ async fn find_new_swaps_in_blocks(
         - if the above is true, store the TXN in a queue waiting
           for sufficient confirmations.
      */
-    let mut pending_swaps = Vec::new();
+    let mut pending_payments = Vec::new();
     for block in blocks {
         for tx in block.txdata.clone() {
             // check if the tx is a swap
             let txid = tx.compute_txid();
-            for (output_index, output) in tx.output.clone().iter().enumerate() {
-                if output_index == 0 {
+            // TODO: Handle each tx as a potentially OrderFillingTransaction
+            let mut potential_payment_outputs = Vec::new();
+            // iterate over the outputs of the tx until we find an OP_RETURN output
+            // then check if the OP_RETURN data is a valid aggregate order hash
+            for (current_output_index, output) in tx.output.clone().iter().enumerate() {
+                potential_payment_outputs.push(output);
+                if current_output_index == 0 {
                     // OP_RETURN is never the first output in a rift payment bitcoin transaction
                     continue;
                 }
@@ -478,15 +500,84 @@ async fn find_new_swaps_in_blocks(
                 if script_pubkey_bytes[1] != OP_PUSHBYTES_32 {
                     continue;
                 }
-                let potential_deposit_vault_commitment: [u8; 32] =
+                let potential_aggregate_order_hash: [u8; 32] =
                     script_pubkey_bytes[2..34].try_into()?;
-                let chain_aware_deposit = contract_data_engine
-                    .get_order_by_initial_hash(potential_deposit_vault_commitment)
+
+                info!(
+                    message = "Found OP_RETURN output",
+                    op_return_output_index = current_output_index,
+                    operation = "find_new_swaps_in_blocks",
+                    aggregate_order_hash = hex::encode(potential_aggregate_order_hash)
+                );
+                // remove the OP_RETURN output from the list of potential payment outputs
+                potential_payment_outputs.pop();
+                /*
+                   At this point, we potentially have a match
+                   we now look up in the DB if there are orders
+                   that match these params.
+                   Note that we MUST break if a check fails beyond this point
+                */
+                info!(
+                    message = "Searching for matching orders",
+                    operation = "find_new_swaps_in_blocks",
+                    payment_outputs = potential_payment_outputs.len(),
+                    aggregate_order_hash = hex::encode(potential_aggregate_order_hash)
+                );
+
+                let script_pub_key_amount_pairs = potential_payment_outputs
+                    .iter()
+                    .map(|output| (output.script_pubkey.as_bytes(), output.value.to_sat()))
+                    .collect::<Vec<_>>();
+
+                let nested_potential_orders = contract_data_engine
+                    .get_live_orders_by_script_and_amounts(&script_pub_key_amount_pairs)
                     .await?;
-                if chain_aware_deposit.is_none() {
-                    continue;
+
+                // Couldn't find live orders that matched all payments
+                if nested_potential_orders.is_none() {
+                    info!(
+                        message = "No matching orders found in the DB",
+                        operation = "find_new_swaps_in_blocks",
+                        script_pub_key_amount_pairs = format!(
+                            "{:?}",
+                            script_pub_key_amount_pairs
+                                .iter()
+                                .map(|(script, amt)| (hex::encode(script), amt))
+                                .collect::<Vec<_>>()
+                        ),
+                        aggregate_order_hash = hex::encode(potential_aggregate_order_hash)
+                    );
+                    break;
                 }
-                let chain_aware_deposit = chain_aware_deposit.unwrap();
+
+                // get rid of the ChainAwareOrder wrapper struct
+                let nested_potential_orders = nested_potential_orders
+                    .unwrap()
+                    .iter()
+                    .map(|chain_orders| {
+                        chain_orders
+                            .iter()
+                            .map(|chain_order| chain_order.order.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+
+                let matched_orders = search_for_matching_aggregate_order_hash(
+                    &nested_potential_orders,
+                    potential_aggregate_order_hash,
+                );
+
+                if matched_orders.is_none() {
+                    info!(
+                        message = "No matching order paths found",
+                        operation = "find_new_swaps_in_blocks",
+                        aggregate_order_hash = hex::encode(potential_aggregate_order_hash)
+                    );
+                    break;
+                }
+
+                // At this point, we have a list of orders that match the aggregate order hash
+                let matched_orders = matched_orders.unwrap();
 
                 let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&tx);
                 let mut reader = serialized.as_slice();
@@ -495,35 +586,116 @@ async fn find_new_swaps_in_blocks(
 
                 let tx_data_no_segwit = serialize_no_segwit(&canon_bitcoin_tx)?;
 
-                let payment_validation = validate_bitcoin_payment(
+                let payment_validation = validate_bitcoin_payments(
                     &tx_data_no_segwit,
-                    &chain_aware_deposit.order,
-                    output_index - 1, // - 1 b/c output_index is associated with the OP_RETURN output which is + 1 from the payment output index
+                    &matched_orders,
+                    current_output_index,
                 );
                 if payment_validation.is_err() {
                     info!(
-                        "Invalid payment for deposit {} with bitcoin txid: {}, skipping...",
-                        hex::encode(potential_deposit_vault_commitment),
+                        "Invalid payment tx for order indices {} with bitcoin txid: {}, skipping...",
+                        matched_orders
+                            .iter()
+                            .map(|order| order.index)
+                            .collect::<Vec<_>>()
+                            .iter().join(","),
                         txid
                     );
                     continue;
                 }
 
                 info!(
-                    "Found a potential fill transaction for deposit {} with bitcoin txid: {}",
-                    hex::encode(potential_deposit_vault_commitment),
+                    "Found a potential fill transaction for order indices {} with bitcoin txid: {}",
+                    matched_orders
+                        .iter()
+                        .map(|order| order.index)
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .join(","),
                     txid
                 );
-                pending_swaps.push(PendingPayment {
-                    chain_aware_order: chain_aware_deposit,
-                    payment_txid: txid,
-                    payment_output_index: output_index - 1,
-                });
+
+                // We can only submit payments for orders that have the same number of confirmations
+                let confirmation_groups = group_by_confirmation_blocks(&matched_orders);
+                for (confirmation_blocks, order_indices) in confirmation_groups {
+                    pending_payments.push(PendingPayment {
+                        paid_orders: matched_orders.clone(),
+                        committed_order_indices: order_indices,
+                        payment_txid: txid,
+                        op_return_output_index: current_output_index,
+                        group_confirmation_blocks: confirmation_blocks,
+                    });
+                }
             }
         }
     }
 
-    Ok(pending_swaps)
+    Ok(pending_payments)
+}
+
+/// Split orders into groups of their indices, bucketed by `confirmation_blocks`.
+///
+/// Example:
+/// ```
+/// let orders = vec![
+///     Order { confirmation_blocks: 1 },
+///     Order { confirmation_blocks: 2 },
+///     Order { confirmation_blocks: 3 },
+///     Order { confirmation_blocks: 2 },
+///     Order { confirmation_blocks: 2 },
+///     Order { confirmation_blocks: 1 },
+/// ];
+/// let groups = split_by_confirmation_blocks(&orders);
+/// // `groups` now contains (in any order): vec![vec![0, 5], vec![1, 3, 4], vec![2]]
+/// ```
+pub fn group_by_confirmation_blocks(orders: &[Order]) -> HashMap<u32, Vec<usize>> {
+    // 1. Fill the buckets in a single pass.
+    let mut buckets: HashMap<u32, Vec<usize>> = HashMap::with_capacity(orders.len());
+    for (idx, order) in orders.iter().enumerate() {
+        buckets
+            .entry(order.confirmationBlocks.into())
+            .or_default()
+            .push(idx);
+    }
+
+    buckets
+}
+
+// CPU heavy function that searches for a matching aggregate order hash
+fn search_for_matching_aggregate_order_hash(
+    nested_orders: &[Vec<Order>],
+    aggregate_order_hash: [u8; 32],
+) -> Option<Vec<Order>> {
+    // Precompute the order hash for each order at each level
+    // Use a hashmap to store the order hash as the key and the order as the value
+    let mut order_hash_to_order = HashMap::new();
+    let mut nested_order_hashes = Vec::new();
+    for order_list in nested_orders {
+        let mut order_hashes = Vec::new();
+        for order in order_list {
+            let order_hash = order.hash();
+            order_hash_to_order.insert(order_hash, order);
+            order_hashes.push(order_hash);
+        }
+        nested_order_hashes.push(order_hashes);
+    }
+    // Compute the cartesian product to determine all the various order hash permutations
+    // and check if any of them match the aggregate order hash
+
+    let matched_hash_list = nested_order_hashes
+        .iter()
+        .map(|x| x.iter())
+        .multi_cartesian_product()
+        .find(|order_hash_permutation| {
+            aggregate_order_hash == order_hash_permutation.compute_aggregate_hash()
+        });
+
+    matched_hash_list.map(|matched_hash_list| {
+        matched_hash_list
+            .iter()
+            .map(|order_hash| order_hash_to_order[*order_hash].clone())
+            .collect::<Vec<_>>()
+    })
 }
 
 #[instrument(level = "info", skip(btc_rpc, pending_swaps))]
@@ -547,7 +719,7 @@ async fn find_pending_swaps_with_sufficient_confirmations(
             .confirmations
             .expect("Confirmations wasn't returned");
 
-        if confirmations >= pending_swaps[i].chain_aware_order.order.confirmationBlocks as u32 {
+        if confirmations >= pending_swaps[i].group_confirmation_blocks {
             let pending_swap = pending_swaps.remove(i);
 
             // (getblock w/ verbosity 1 is light bandwidth wise compared to full block download)
@@ -579,19 +751,21 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                 tx_hash,
             );
 
-            let rift_transaction_input = RiftTransaction {
+            let rift_transaction_input = OrderFillingTransaction {
                 txn: serialize_no_segwit(&txn).unwrap(),
-                order: pending_swap.chain_aware_order.order.clone(),
-                payment_output_index: pending_swap.payment_output_index,
+                paid_orders: pending_swap.paid_orders.clone(),
+                order_indices: pending_swap.committed_order_indices.clone(),
+                op_return_output_index: pending_swap.op_return_output_index,
                 block_header,
                 txn_merkle_proof: merkle_proof,
             };
             // This swap is confirmed, move it to confirmed_swaps
             confirmed_swaps.push(ConfirmedPayment {
-                chain_aware_order: pending_swap.chain_aware_order,
+                paid_orders: pending_swap.paid_orders.clone(),
+                committed_order_indices: pending_swap.committed_order_indices.clone(),
                 payment_txid: pending_swap.payment_txid,
                 payment_block_leaf: block_leaf,
-                rift_transaction_input,
+                order_filling_transaction_input: rift_transaction_input,
             });
             // Don't increment i since we've shifted the vector
         } else {

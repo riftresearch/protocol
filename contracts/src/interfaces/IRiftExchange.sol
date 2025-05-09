@@ -234,7 +234,7 @@ interface IRiftExchange is IBitcoinLightClient {
     /// @notice Verifies payment proofs and starts the challenge period for the payments
     /// @param paymentParams An array of seperate payments being submitted
     /// @param proof The zero knowledge proof of the payments
-    function submitPaymentProofs(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external;
+    function submitPaymentProofsOnly(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external;
 
     /// @notice Verifies that a payment is still in the longest chain after a challenge period and releases funds
     /// @param settleOrderParams An array of order and payment pairs to settle

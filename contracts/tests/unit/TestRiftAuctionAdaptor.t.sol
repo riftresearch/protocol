@@ -159,7 +159,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
 
         BaseCreateOrderParams memory baseParams;
         vm.prank(BUNDLER3);
-        vm.expectRevert(abi.encodeWithSelector(IBTCDutchAuctionHouse.InvalidStartBtcOut.selector));
+        vm.expectRevert(abi.encodeWithSelector(IBTCDutchAuctionHouse.InvalidAuctionRange.selector));
         adaptor.createAuction(
             1e18,
             2e18,

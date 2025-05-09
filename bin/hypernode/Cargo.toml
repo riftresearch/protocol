@@ -41,3 +41,4 @@ tracing-subscriber = { workspace = true }
 backoff.workspace = true
 metrics = "0.24.2"
 thiserror.workspace = true
+itertools = "0.14.0"

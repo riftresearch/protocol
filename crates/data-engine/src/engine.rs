@@ -14,7 +14,7 @@ use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
 use sol_bindings::{
-    submitPaymentProofs_0Call, submitPaymentProofs_1Call, updateLightClientCall, AuctionUpdated,
+    submitPaymentProofsCall, submitPaymentProofsOnlyCall, updateLightClientCall, AuctionUpdated,
     BitcoinLightClientUpdated, Order, OrderCreated, OrderRefunded, OrderState, OrdersSettled,
     PaymentsCreated,
 };
@@ -30,10 +30,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     db::{
-        add_order, add_payment, get_order_by_initial_hash, get_orders_for_recipient,
-        get_otc_swap_by_order_index, get_payments_ready_to_be_settled, get_virtual_swaps,
-        setup_swaps_database, update_order_and_payment_to_settled, update_order_to_refunded,
-        ChainAwarePaymentWithOrder,
+        add_order, add_payment, get_live_orders_by_script_and_amounts, get_order_by_initial_hash,
+        get_orders_for_recipient, get_otc_swap_by_order_index, get_payments_ready_to_be_settled,
+        get_virtual_swaps, setup_swaps_database, update_order_and_payment_to_settled,
+        update_order_to_refunded, ChainAwarePaymentWithOrder,
     },
     models::ChainAwareOrder,
 };
@@ -307,6 +307,17 @@ impl ContractDataEngine {
         self.update_mmr_root(root).await?;
 
         Ok(())
+    }
+
+    pub async fn get_live_orders_by_script_and_amounts(
+        &self,
+        script_pub_key_amount_pairs: &[(&[u8], u64)],
+    ) -> Result<Option<Vec<Vec<ChainAwareOrder>>>> {
+        get_live_orders_by_script_and_amounts(
+            &self.swap_database_connection,
+            script_pub_key_amount_pairs,
+        )
+        .await
     }
 }
 
@@ -742,11 +753,9 @@ async fn extract_compressed_block_leaves_from_light_client_updating_tx(
             }
             let selector: &[u8; 4] = &calldata[0..4].try_into().unwrap();
             match *selector {
-                submitPaymentProofs_0Call::SELECTOR => {
-                    submitPaymentProofs_0Call::abi_decode(&calldata)
-                        .map(|decoded| decoded.blockProofParams)
-                        .ok()
-                }
+                submitPaymentProofsCall::SELECTOR => submitPaymentProofsCall::abi_decode(&calldata)
+                    .map(|decoded| decoded.blockProofParams)
+                    .ok(),
                 updateLightClientCall::SELECTOR => updateLightClientCall::abi_decode(&calldata)
                     .map(|decoded| decoded.blockProofParams)
                     .ok(),

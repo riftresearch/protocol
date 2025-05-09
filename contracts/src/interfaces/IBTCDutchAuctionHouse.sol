@@ -45,7 +45,7 @@ struct DutchAuctionParams {
  */
 interface IBTCDutchAuctionHouse is IRiftExchange {
     error InvalidTickSize();
-    error InvalidStartBtcOut();
+    error InvalidAuctionRange();
     error InvalidDeadline();
     error AuctionExpired();
     error AuctionNotLive();

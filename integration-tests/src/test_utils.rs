@@ -257,7 +257,7 @@ pub async fn send_bitcoin_for_deposit(
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
     let payment_tx = txn_builder::build_rift_payment_transaction(
-        vault,
+        &vec![vault.clone()],
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,

@@ -25,7 +25,7 @@ use bitcoincore_rpc_async::RpcApi;
 use devnet::RiftDevnet;
 use rift_core::giga::RiftProgramInput;
 use rift_core::spv::generate_bitcoin_txn_merkle_proof;
-use rift_core::RiftTransaction;
+use rift_core::OrderFillingTransaction;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use rift_sdk::indexed_mmr::client_mmr_proof_to_circuit_mmr_proof;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
@@ -298,7 +298,7 @@ async fn test_simulated_swap_end_to_end() {
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
     let payment_tx = txn_builder::build_rift_payment_transaction(
-        &new_order,
+        &vec![new_order.clone()],
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,
@@ -621,10 +621,11 @@ async fn test_simulated_swap_end_to_end() {
         bitcoin_txid,
     );
 
-    let rift_transaction_input = RiftTransaction {
+    let order_filling_transaction = OrderFillingTransaction {
         txn: serialize_no_segwit(&payment_tx).unwrap(),
-        order: new_order.clone(),
-        payment_output_index: 0,
+        paid_orders: vec![new_order.clone()],
+        order_indices: vec![0],
+        op_return_output_index: 1,
         block_header: swap_block_header,
         txn_merkle_proof,
     };
@@ -632,7 +633,7 @@ async fn test_simulated_swap_end_to_end() {
     let rift_program_input = RiftProgramInput::builder()
         .proof_type(rift_core::giga::RustProofType::Combined)
         .light_client_input(chain_transition)
-        .rift_transaction_input(vec![rift_transaction_input])
+        .order_filling_transaction_input(vec![order_filling_transaction])
         .build()
         .unwrap();
 
@@ -679,7 +680,7 @@ async fn test_simulated_swap_end_to_end() {
     let mock_proof = vec![];
 
     let swap_proof_call =
-        rift_exchange.submitPaymentProofs_0(swap_params, block_proof_params, mock_proof.into());
+        rift_exchange.submitPaymentProofs(swap_params, block_proof_params, mock_proof.into());
     let swap_proof_calldata = swap_proof_call.calldata().clone();
 
     let swap_proof_tx = maker_evm_provider
