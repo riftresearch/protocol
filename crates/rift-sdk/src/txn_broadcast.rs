@@ -9,15 +9,16 @@ use alloy::{
     },
     transports::RpcError,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::{
     sync::{
-        broadcast, mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender}, oneshot
+        broadcast,
+        mpsc::{channel, Receiver, Sender},
+        oneshot,
     },
     task::JoinSet,
 };
-use tokio::sync::{mpsc};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct RevertInfo {
@@ -82,7 +83,7 @@ pub struct TransactionStatusUpdate {
 
 #[derive(Debug)]
 pub struct TransactionBroadcaster {
-    request_sender: UnboundedSender<Request>,
+    request_sender: Sender<Request>,
     status_broadcaster: broadcast::Sender<TransactionStatusUpdate>,
 }
 
@@ -92,18 +93,23 @@ impl TransactionBroadcaster {
         debug_rpc_url: String,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Self {
-
-        // Channel is important, here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
-        let (request_sender, request_receiver) = unbounded_channel();
+        // single-consumer channel is important here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
+        let (request_sender, request_receiver) = channel(128);
         let (status_broadcaster, _) = broadcast::channel::<TransactionStatusUpdate>(100);
         let status_broadcaster_clone = status_broadcaster.clone();
-        
+
         // This never exits even if channel is empty, only if channel breaks/closes
         join_set.spawn(async move {
-            Self::broadcast_queue(wallet_rpc, request_receiver, debug_rpc_url, status_broadcaster_clone).await
+            Self::broadcast_queue(
+                wallet_rpc,
+                request_receiver,
+                debug_rpc_url,
+                status_broadcaster_clone,
+            )
+            .await
         });
 
-        Self { 
+        Self {
             request_sender,
             status_broadcaster,
         }
@@ -130,9 +136,10 @@ impl TransactionBroadcaster {
             tx,
         };
 
-        // Send the request into the unbounded channel
+        // Send the request into the bounded channel (capacity 128)
         self.request_sender
             .send(request)
+            .await
             .map_err(|_| eyre::eyre!("Failed to enqueue the transaction request"))?;
 
         // If there's an unhandled error, this will just get bubbled
@@ -160,7 +167,7 @@ impl TransactionBroadcaster {
     // Open question, how to type safely return the receipt?
     async fn broadcast_queue(
         wallet_rpc: Arc<WebsocketWalletProvider>,
-        mut request_receiver: UnboundedReceiver<Request>,
+        mut request_receiver: Receiver<Request>,
         debug_rpc_url: String,
         status_broadcaster: broadcast::Sender<TransactionStatusUpdate>,
     ) -> eyre::Result<()> {
@@ -233,7 +240,7 @@ impl TransactionBroadcaster {
             let txn_result = match txn_result {
                 Ok(tx_broadcast) => {
                     tx_hash = *tx_broadcast.tx_hash();
-                    
+
                     let tx_receipt = tx_broadcast.get_receipt().await;
 
                     match tx_receipt {
@@ -253,7 +260,7 @@ impl TransactionBroadcaster {
                 tx_hash,
                 result: txn_result.clone(),
             });
-            
+
             request
                 .tx
                 .send(txn_result)
