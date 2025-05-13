@@ -35,3 +35,9 @@ hex = { workspace = true }
 alloy = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 chrono = { workspace = true }
+dashmap = "6.1.0"
+alloy-primitives = "1.1.0"
+alloy-sol-types = "1.1.0"
+anyhow = "1.0.98"
+log = { workspace = true }
+async-trait = "0.1.88"
