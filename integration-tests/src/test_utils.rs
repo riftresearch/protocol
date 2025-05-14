@@ -295,7 +295,7 @@ static LOGGING: OnceCell<()> = OnceCell::new();
 
 pub fn setup_test_tracing() {
     LOGGING.get_or_init(|| {
-        // Only init tracing if --nocapture is passed
+        // Only init tracing if --nocapture  is passed
         let has_nocapture = std::env::args().any(|arg| arg == "--nocapture");
         if has_nocapture {
             tracing_subscriber::fmt()

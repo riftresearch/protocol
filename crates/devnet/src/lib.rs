@@ -2,6 +2,9 @@
 
 pub mod bitcoin_devnet;
 pub mod evm_devnet;
+pub mod mempool_electrs_rest_client;
+pub mod mempool_electrs_types;
+pub mod mempool_electrsd;
 
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
@@ -119,14 +122,10 @@ pub async fn deploy_contracts(
                 provider.get_code_at(*mock_token.address()).await?,
             )
             .await?;
-        println!("Deploying MockToken at {}", token_address);
         SyntheticBTC::new(token_address, provider.clone().erased())
     } else {
-        println!("POINTING TO EXISTING MockToken at {}", token_address);
         SyntheticBTC::new(token_address, provider.clone().erased())
     };
-
-    println!("token decimals: {}", token.decimals().call().await?);
 
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
@@ -180,6 +179,7 @@ pub struct RiftDevnetBuilder {
     fork_config: Option<ForkConfig>,
     data_engine_db_location: DatabaseLocation,
     log_chunk_size: u64,
+    using_mempool_electrs: bool,
 }
 
 impl Default for RiftDevnetBuilder {
@@ -192,6 +192,7 @@ impl Default for RiftDevnetBuilder {
             fork_config: None,
             data_engine_db_location: DatabaseLocation::InMemory,
             log_chunk_size: 10000,
+            using_mempool_electrs: false,
         }
     }
 }
@@ -241,6 +242,12 @@ impl RiftDevnetBuilder {
         self
     }
 
+    /// Start a mempool electrs REST API server for simple bitcoin block indexing.
+    pub fn using_mempool_electrs(mut self, value: bool) -> Self {
+        self.using_mempool_electrs = value;
+        self
+    }
+
     /// Actually build the `RiftDevnet`, consuming this builder.
     ///
     /// Returns a tuple of:
@@ -256,6 +263,7 @@ impl RiftDevnetBuilder {
             fork_config,
             data_engine_db_location,
             log_chunk_size,
+            using_mempool_electrs,
         } = self;
 
         let mut join_set = JoinSet::new();
@@ -264,6 +272,7 @@ impl RiftDevnetBuilder {
         let (bitcoin_devnet, current_mined_height) = crate::bitcoin_devnet::BitcoinDevnet::setup(
             funded_bitcoin_address,
             using_bitcoin,
+            using_mempool_electrs,
             &mut join_set,
         )
         .await?;
@@ -400,14 +409,26 @@ impl RiftDevnetBuilder {
                 "Bitcoin RPC URL:       {}",
                 bitcoin_devnet.rpc_url_with_cookie
             );
+
+            if using_mempool_electrs {
+                println!(
+                    "Mempool Rest API URL:  {}",
+                    bitcoin_devnet
+                        .mempool_electrs_rest_client
+                        .as_ref()
+                        .unwrap()
+                        .base_url
+                        .as_str()
+                );
+            }
+
             println!(
-                "{} Address:  {}",
+                "{} Address:         {}",
                 crate::TOKEN_SYMBOL,
                 ethereum_devnet.token_contract.address()
             );
             println!(
-                "{} Address:  {}",
-                "Rift Exchange",
+                "Rift Exchange Address: {}",
                 ethereum_devnet.rift_exchange_contract.address()
             );
             println!("---RIFT DEVNET---");

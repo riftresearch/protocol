@@ -32,11 +32,9 @@ Ensure you have the following tools installed:
 
   
 ## Run Devnet
-```sh
-cargo run --release --bin devnet
-```
-Alternatively, the devnet is packaged as a docker image: 
+From source [here](./bin/devnet/README.md)
+
+Alternatively, the devnet is packaged as a Docker image: 
 ```sh
 docker run -it -p 50101:50101 -p 50100:50100 riftresearch/devnet:latest
 ```
-

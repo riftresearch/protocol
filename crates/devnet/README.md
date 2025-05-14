@@ -1,0 +1,36 @@
+# E2E Tests 
+
+## Prerequisites
+- [Rust](https://www.rust-lang.org/tools/install) 
+- [Docker](https://docs.docker.com/get-docker/) 
+- [Foundry](https://getfoundry.sh) 
+
+### Mempool Electrs
+The `electrs` binary from [Mempool](https://github.com/mempool/electrs) is required for Bitcoin transaction indexing. Install it like so:
+```bash
+git clone https://github.com/mempool/electrs && cd electrs
+git checkout v3.2.0
+cargo install  --bin electrs --path .
+electrs --version 
+cd .. && rm -rf electrs
+```
+
+## Running the Devnet
+The devnet provides a local development environment with both Bitcoin and Ethereum networks. To run it:
+
+```bash
+# Basic run with default settings
+cargo run --release --bin devnet
+
+# Run with a funded EVM address (receives initial ETH and tokens)
+cargo run --release --bin devnet -- --addresses 0x82bdA835Ab91D3F38Cb291030A5B0e6Dff086d44
+
+# Run with forking from a specific network
+cargo run --release --bin devnet -- --fork-url <RPC_URL> --fork-block-number <BLOCK_NUMBER>
+```
+
+The devnet will start:
+- A local Bitcoin regtest network
+- An Ethereum network (Anvil)
+- All deployed contracts
+- A data engine server for querying onchain order state 

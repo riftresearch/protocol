@@ -7,6 +7,7 @@ use bitcoincore_rpc_async::json::GetRawTransactionResult;
 use corepc_node::Conf;
 use eyre::{eyre, Result};
 use log::info;
+use reqwest::Url;
 use rift_sdk::DatabaseLocation;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -19,6 +20,8 @@ use corepc_node::{types::GetTransaction, Client as BitcoinClient, Node as Bitcoi
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use tokio_util::task::TaskTracker;
 
+use crate::{mempool_electrs_rest_client, mempool_electrsd};
+
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
     pub data_engine: Arc<BitcoinDataEngine>,
@@ -27,8 +30,10 @@ pub struct BitcoinDevnet {
     pub miner_client: BitcoinClient,
     pub miner_address: BitcoinAddress,
     pub cookie: PathBuf,
+    pub datadir: PathBuf,
     pub rpc_url_with_cookie: String,
-
+    pub mempool_electrsd: Option<Arc<mempool_electrsd::MempoolElectrsD>>,
+    pub mempool_electrs_rest_client: Option<Arc<mempool_electrs_rest_client::ReqwestClient>>,
     /// If you optionally funded a BTC address upon startup,
     /// we keep track of the satoshis here.
     pub funded_sats: u64,
@@ -42,6 +47,7 @@ impl BitcoinDevnet {
     pub async fn setup(
         funded_address: Option<String>,
         using_bitcoin: bool,
+        using_mempool_electrs: bool,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<(Self, u32)> {
         if !using_bitcoin {
@@ -66,10 +72,17 @@ impl BitcoinDevnet {
             .map_err(|e| eyre!(e))?;
         let alice_address = alice.new_address()?;
 
+        let mine_time = Instant::now();
         // Mine 101 blocks to get initial coinbase BTC
         bitcoin_regtest
             .client
             .generate_to_address(if using_bitcoin { 101 } else { 1 }, &alice_address)?;
+
+        info!(
+            "Mined {} blocks in {:?}",
+            if using_bitcoin { 101 } else { 1 },
+            mine_time.elapsed()
+        );
 
         // If user wants to fund a specific BTC address
         let mut funded_sats = 0;
@@ -109,6 +122,36 @@ impl BitcoinDevnet {
             t.elapsed()
         );
 
+        let mempool_electrsd = if using_mempool_electrs {
+            Some(Arc::new(
+                mempool_electrsd::MempoolElectrsD::with_conf(
+                    &mempool_electrsd::Config::default(),
+                    &bitcoin_regtest,
+                    mempool_electrsd::exe_path()
+                        .expect("Failed to get electrs executable path, maybe it's not installed?"),
+                )
+                .expect("Failed to create mempool electrsd instance"),
+            ))
+        } else {
+            None
+        };
+
+        let mempool_electrs_rest_client = if using_mempool_electrs {
+            Some(Arc::new(mempool_electrs_rest_client::ReqwestClient::new(
+                Url::parse(
+                    mempool_electrsd
+                        .as_ref()
+                        .unwrap()
+                        .mempool_http_url
+                        .as_ref()
+                        .unwrap(),
+                )
+                .unwrap(),
+            )))
+        } else {
+            None
+        };
+
         let cookie_str = std::fs::read_to_string(cookie.clone()).unwrap();
         // http://<user>:<password>@<host>:<port>/
         let rpc_url_with_cookie = format!(
@@ -117,6 +160,7 @@ impl BitcoinDevnet {
             bitcoin_regtest.params.rpc_socket.ip(),
             bitcoin_regtest.params.rpc_socket.port()
         );
+        let datadir = bitcoin_regtest.workdir().join("regtest");
         let devnet = BitcoinDevnet {
             data_engine,
             rpc_client: bitcoin_rpc_client,
@@ -126,6 +170,9 @@ impl BitcoinDevnet {
             cookie,
             rpc_url_with_cookie,
             funded_sats,
+            datadir,
+            mempool_electrsd,
+            mempool_electrs_rest_client,
         };
 
         Ok((devnet, if using_bitcoin { 101 } else { 1 }))

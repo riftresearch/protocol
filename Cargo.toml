@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "bin/benchmark-light-client",
-  "bin/devnet",
+  "bin/devnet-server",
   "bin/data-engine-server",
   "bin/hypernode",
   "bin/checkpoint-downloader",
@@ -40,7 +40,7 @@ data-engine = { path = "crates/data-engine" }
 test-data-utils = { path = "test-data" }
 data-engine-server = { path = "bin/data-engine-server" }
 checkpoint-downloader = { path = "bin/checkpoint-downloader" }
-devnet = {path = "bin/devnet"}
+devnet = {path = "crates/devnet"}
 market-maker = {path = "bin/market-maker"}
 hypernode = {path = "bin/hypernode"}
 
@@ -95,11 +95,12 @@ chrono = "0.4.38"
 futures = "0.3.30"
 futures-util = "0.3.30"
 backoff = { version = "0.4.0", features=["tokio"] }
-
+which = "7.0.3"
 
 # TODO: Update this to the version of corepc that supports Arm Macs once it's released
 corepc-node = { git = "https://github.com/rust-bitcoin/corepc", rev = "7949505ebc29a478887852b6c0bc773f6a50baf7", features = ["28_0", "download"] }
 # corepc-node = { version = "0.6.1", features = ["28_0", "download"] }
+
 dotenv = "0.15.0"
 bip39 = "2.1.0"
 
