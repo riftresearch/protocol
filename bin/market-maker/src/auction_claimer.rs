@@ -3,10 +3,12 @@ use alloy::rpc::types::{Filter, Log};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{SolEvent, SolValue};
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
+use data_engine::{engine::ContractDataEngine, models::ChainAwareOrder};
 use eyre::{eyre, Result};
 use log::{debug, error, info, warn};
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::create_websocket_wallet_provider;
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
 use sol_bindings::BTCDutchAuctionHouse::BlockLeaf;
 use sol_bindings::{
     AuctionUpdated, BTCDutchAuctionHouseInstance, BitcoinLightClientInstance, DutchAuction,
@@ -53,16 +55,6 @@ pub struct AuctionClaimerConfig {
     pub eth_gas_fee_sats: u64,
     pub max_batch_size: usize,
     pub evm_ws_rpc: String,
-    pub light_client_address: Option<Address>,
-}
-pub trait BTCDutchAuctionHouseContractTrait {
-    async fn claim_auction(
-        &self,
-        _auction: DutchAuction,
-        _filler_auth_data: Bytes,
-        _safe_block_siblings: Vec<FixedBytes<32>>,
-        _safe_block_peaks: Vec<FixedBytes<32>>,
-    ) -> Result<FixedBytes<32>>;
 }
 
 /// Finds best block to claim an auction for profit
@@ -231,56 +223,27 @@ pub fn extract_auction_from_log(log: &Log) -> Result<DutchAuction> {
     Ok(auction)
 }
 
-pub struct AuctionClaimer {
-    pub evm_ws_rpc: String,
-    pub private_key: String,
-    /// Claimer config
-    config: AuctionClaimerConfig,
-    /// Optional contract data engine for Merkle proofs
-    contract_data_engine: Option<Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>>,
-}
+pub struct AuctionClaimer {}
 
 impl AuctionClaimer {
-    /// Create new AuctionClaimer
-    pub fn new(
-        evm_ws_rpc: String,
-        private_key: String,
-        config: AuctionClaimerConfig,
-        contract_data_engine: Option<Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>>,
-    ) -> Self {
-        Self {
-            evm_ws_rpc,
-            private_key,
-            config,
-            contract_data_engine,
-        }
-    }
-
     /// Start listening for auctions and process them
-    pub async fn run(&self) -> Result<()> {
-        let mut join_set = JoinSet::new();
+    pub async fn run(
+        provider: DynProvider,
+        config: AuctionClaimerConfig,
+        contract_data_engine: Arc<ContractDataEngine>,
+        transaction_broadcaster: Arc<TransactionBroadcaster>,
+        join_set: &mut JoinSet<eyre::Result<()>>,
+    ) -> Result<()> {
         // Setup channel for auction claiming
         let (auction_tx, mut auction_rx) = mpsc::channel(100);
         let pending_auctions = Arc::new(Mutex::new(BinaryHeap::new()));
 
-        let evm_rpc_with_wallet = Arc::new(
-            create_websocket_wallet_provider(
-                &self.evm_ws_rpc,
-                hex::decode(&self.private_key)
-                    .map_err(|e| eyre::eyre!(e))?
-                    .try_into()
-                    .map_err(|_| eyre::eyre!("Invalid private key length"))?,
-            )
-            .await?,
-        );
-
-        let provider = evm_rpc_with_wallet.clone().erased();
-
         let provider_for_listener = provider.clone();
-        let config_for_listener = self.config.clone();
+        let config_for_listener = config.clone();
         let pending_auctions_for_listener = pending_auctions.clone();
         let auction_tx_for_listener = auction_tx.clone();
-        let contract_data_engine = self.contract_data_engine.clone();
+        let contract_data_engine = contract_data_engine.clone();
+        let transaction_broadcaster_for_listener = transaction_broadcaster.clone();
 
         join_set.spawn(async move {
             info!("Starting event listener task");
@@ -288,29 +251,6 @@ impl AuctionClaimer {
             let filter = Filter::new()
                 .address(config_for_listener.auction_house_address)
                 .event(AuctionUpdated::SIGNATURE);
-
-            // Get historical logs
-            match provider_for_listener.get_logs(&filter).await {
-                Ok(logs) => {
-                    info!("Fetched {} historical auction events", logs.len());
-                    for log in logs {
-                        if let Err(e) = Self::process_auction_event(
-                            provider_for_listener.clone(),
-                            pending_auctions_for_listener.clone(),
-                            config_for_listener.clone(),
-                            log,
-                            auction_tx_for_listener.clone(),
-                        )
-                        .await
-                        {
-                            error!("Error processing historical auction event: {:?}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to fetch historical auction events: {:?}", e);
-                }
-            }
 
             // Subscribe to new events
             let mut subscription = match provider_for_listener.subscribe_logs(&filter).await {
@@ -320,7 +260,7 @@ impl AuctionClaimer {
                 }
                 Err(e) => {
                     error!("Failed to subscribe to AuctionUpdated events: {:?}", e);
-                    return "Event listener task failed";
+                    return Err(eyre::eyre!("Event listener task failed: {}", e));
                 }
             };
 
@@ -348,13 +288,13 @@ impl AuctionClaimer {
                 }
             }
 
-            "Event listener task completed"
+            Ok(())
         });
 
         // Block processor task
         let provider_for_processor = provider.clone();
         let pending_auctions_for_processor = pending_auctions.clone();
-        let config_for_processor = self.config.clone();
+        let config_for_processor = config.clone();
         let auction_tx_for_processor = auction_tx.clone();
         join_set.spawn(async move {
             info!("Starting block processor task");
@@ -367,7 +307,10 @@ impl AuctionClaimer {
                 }
                 Err(e) => {
                     error!("Failed to subscribe to new blocks: {:?}", e);
-                    return "Block processor task failed to start subscription";
+                    return Err(eyre::eyre!(
+                        "Block processor task failed to start subscription: {}",
+                        e
+                    ));
                 }
             };
 
@@ -401,19 +344,12 @@ impl AuctionClaimer {
         });
 
         // Claim auctions task
-        let config_for_claimer = self.config.clone();
+        let config_for_claimer = config.clone();
         let provider_for_claimer = provider.clone();
-        let contract_data_engine_for_claimer = contract_data_engine;
+        let contract_data_engine_for_claimer = contract_data_engine.clone();
+        let transaction_broadcaster_for_claimer = transaction_broadcaster.clone();
         join_set.spawn(async move {
             info!("Starting auction claimer task");
-
-            // Create auction claimer reference
-            let auction_claimer = Arc::new(AuctionClaimer::new(
-                config_for_claimer.evm_ws_rpc.clone(),
-                "".to_string(), // TODO: Add private key
-                config_for_claimer.clone(),
-                contract_data_engine_for_claimer,
-            ));
 
             while let Some((auction, claim_block)) = auction_rx.recv().await {
                 info!(
@@ -427,26 +363,12 @@ impl AuctionClaimer {
                 );
 
                 // Check if auction is still valid
-                match Self::verify_auction_state(
-                    provider_for_claimer.clone(),
-                    &config_for_claimer,
-                    &auction,
-                )
-                .await
-                {
-                    Ok(is_valid) => {
-                        if !is_valid {
-                            info!(
-                                "Skipping auction #{} as it's no longer claimable",
-                                auction.index
-                            );
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Error verifying auction #{}: {:?}", auction.index, e);
-                        continue;
-                    }
+                if auction.state != 0 {
+                    info!(
+                        "Skipping auction #{} as it's no longer claimable",
+                        auction.index
+                    );
+                    continue;
                 }
 
                 // Check whitelist requirements
@@ -482,48 +404,72 @@ impl AuctionClaimer {
                 let filler_auth_data = Bytes::new();
 
                 // Get Merkle proof
-                let (siblings, peaks) = match auction_claimer
-                    .get_merkle_proof_for_auction(provider_for_claimer.clone(), &auction)
+                let (leaf, siblings, peaks) = contract_data_engine_for_claimer
+                    .get_tip_proof()
                     .await
-                {
-                    Ok(proof) => proof,
-                    Err(e) => {
-                        error!(
-                            "Error getting Merkle proof for auction #{}: {:?}",
-                            auction.index, e
-                        );
-                        continue;
-                    }
-                };
+                    .unwrap();
 
                 // Claim the auction
-                let claim_result = auction_house_instance
-                    .claimAuction(auction.clone(), filler_auth_data, siblings, peaks)
-                    .call()
+                let claim_call = auction_house_instance.claimAuction(
+                    auction.clone(),
+                    filler_auth_data.clone(),
+                    siblings.into_iter().map(FixedBytes::from).collect(),
+                    peaks.into_iter().map(FixedBytes::from).collect(),
+                );
+
+                let calldata = claim_call.calldata();
+
+                let tx_request = claim_call
+                    .clone()
+                    .from(config_for_claimer.market_maker_address)
+                    .into_transaction_request();
+
+                info!("Attempting to claim auction #{}", auction.index);
+
+                let claim_broadcast_result = transaction_broadcaster_for_claimer
+                    .broadcast_transaction(
+                        calldata.clone(),
+                        tx_request.clone(),
+                        PreflightCheck::Simulate,
+                    )
                     .await;
 
-                match claim_result {
-                    Ok(_) => {
-                        info!("Successfully claimed auction #{}", auction.index);
-                    }
+                match claim_broadcast_result {
+                    Ok(execution_result) => match execution_result {
+                        TransactionExecutionResult::Success(receipt) => {
+                            info!(
+                                "Successfully claimed auction #{}: tx_hash {}",
+                                auction.index, receipt.transaction_hash
+                            );
+                        }
+                        TransactionExecutionResult::Revert(revert_info) => {
+                            error!(
+                                "Claiming auction #{} reverted: {:?} - debug command: {}",
+                                auction.index,
+                                revert_info.error_payload,
+                                revert_info.debug_cli_command
+                            );
+                        }
+                        TransactionExecutionResult::InvalidRequest(msg) => {
+                            error!(
+                                "Invalid request for claiming auction #{}: {}",
+                                auction.index, msg
+                            );
+                        }
+                        TransactionExecutionResult::UnknownError(msg) => {
+                            error!("Unknown error claiming auction #{}: {}", auction.index, msg);
+                        }
+                    },
                     Err(e) => {
-                        error!("Error claiming auction #{}: {:?}", auction.index, e);
+                        error!(
+                            "Error broadcasting claim for auction #{}: {:?}",
+                            auction.index, e
+                        );
                     }
                 }
             }
-            "Auction claimer task completed"
+            Ok(())
         });
-
-        while let Some(res) = join_set.join_next().await {
-            match res {
-                Ok(task_result) => {
-                    info!("Task completed: {}", task_result);
-                }
-                Err(e) => {
-                    error!("Task failed: {:?}", e);
-                }
-            }
-        }
 
         Ok(())
     }
@@ -538,31 +484,6 @@ impl AuctionClaimer {
     ) -> Result<()> {
         match extract_auction_from_log(&log) {
             Ok(auction) => {
-                // Handle state changes (not Created state)
-                if auction.state != 0 {
-                    // Auction claimed or refunded, check if in queue
-                    let mut auctions = pending_auctions.lock().await;
-
-                    // Temp queue for auctions to keep
-                    let mut new_queue = BinaryHeap::new();
-
-                    // Remove matching auctions
-                    while let Some(Reverse(pending)) = auctions.pop() {
-                        if pending.auction.index != auction.index {
-                            new_queue.push(Reverse(pending));
-                        } else {
-                            info!(
-                                "Removing auction #{} from queue as its state changed to {}",
-                                auction.index, auction.state
-                            );
-                        }
-                    }
-
-                    // Update queue
-                    *auctions = new_queue;
-                    return Ok(());
-                }
-
                 // Handle Created state auctions
                 if auction.state == 0 {
                     // Check whitelist if needed
@@ -613,6 +534,11 @@ impl AuctionClaimer {
                     } else {
                         info!("Auction #{} is not profitable, skipping", auction.index);
                     }
+                } else {
+                    info!(
+                        "Auction #{} received with state {}",
+                        auction.index, auction.state
+                    );
                 }
             }
             Err(e) => {
@@ -620,67 +546,6 @@ impl AuctionClaimer {
             }
         }
         Ok(())
-    }
-
-    /// Check if an auction is still claimable
-    pub async fn verify_auction_state(
-        provider: DynProvider,
-        config: &AuctionClaimerConfig,
-        auction: &DutchAuction,
-    ) -> Result<bool> {
-        // Get auction house contract
-        let auction_house_instance =
-            BTCDutchAuctionHouseInstance::new(config.auction_house_address, provider.clone());
-
-        // Get auction hash from contract
-        let auction_hash = match auction_house_instance
-            .auctionHashes(auction.index)
-            .call()
-            .await
-        {
-            Ok(hash) => hash,
-            Err(e) => {
-                error!(
-                    "Failed to get auction hash for auction #{}: {:?}",
-                    auction.index, e
-                );
-                return Ok(false); // Can't verify, assume not claimable
-            }
-        };
-
-        // If hash is zero, auction doesn't exist
-        if auction_hash == [0u8; 32] {
-            debug!(
-                "Auction #{} no longer exists on-chain (hash is zero)",
-                auction.index
-            );
-            return Ok(false);
-        }
-
-        // Check if hash matches what we expect
-        let auction_encoded = auction.abi_encode();
-        let computed_hash = alloy::primitives::keccak256(auction_encoded);
-
-        if auction_hash != computed_hash {
-            // Hash mismatch means auction was updated
-            debug!(
-                "Auction #{} has changed on-chain, hash doesn't match",
-                auction.index
-            );
-            return Ok(false);
-        }
-
-        // Double check state is still Created (0)
-        if auction.state != 0 {
-            debug!(
-                "Auction #{} is no longer in Created state, current state: {}",
-                auction.index, auction.state
-            );
-            return Ok(false);
-        }
-
-        // Auction is valid and claimable
-        Ok(true)
     }
 
     /// Process auctions ready to be claimed
@@ -718,24 +583,14 @@ impl AuctionClaimer {
 
         for pending in auctions_to_verify {
             // Make sure auction is still valid
-            match Self::verify_auction_state(provider.clone(), &config, &pending.auction).await {
-                Ok(is_valid) => {
-                    if is_valid {
-                        auctions_to_claim.push(pending);
-                    } else {
-                        info!(
-                            "Skipping auction #{} - no longer claimable",
-                            pending.auction.index
-                        );
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "Error verifying auction #{}: {:?}",
-                        pending.auction.index, e
-                    );
-                    // Skip this auction
-                }
+            if pending.auction.state != 0 {
+                info!(
+                    "Skipping auction #{} - no longer claimable",
+                    pending.auction.index
+                );
+                continue;
+            } else {
+                auctions_to_claim.push(pending);
             }
         }
 
@@ -755,111 +610,5 @@ impl AuctionClaimer {
         }
 
         Ok(())
-    }
-
-    /// Gets Merkle proof for claiming an auction
-    pub async fn get_merkle_proof_for_auction(
-        &self,
-        provider: DynProvider,
-        auction: &DutchAuction,
-    ) -> Result<(Vec<FixedBytes<32>>, Vec<FixedBytes<32>>)> {
-        // Get safe block leaf
-        let safe_block_leaf = auction.baseCreateOrderParams.safeBlockLeaf.clone();
-
-        // Validate against light client
-        self.validate_block_leaf_with_light_client(provider.clone(), &safe_block_leaf)
-            .await?;
-
-        // Get checkpoint MMR
-        let checkpoint_mmr = if let Some(mmr) = &self.contract_data_engine {
-            mmr.clone()
-        } else {
-            return Err(eyre!("Contract data engine not initialized"));
-        };
-
-        // Get circuit proof
-        let circuit_proof = checkpoint_mmr
-            .read()
-            .await
-            .get_circuit_proof(safe_block_leaf.height as usize, None)
-            .await
-            .map_err(|e| eyre!("Failed to get circuit proof: {:?}", e))?;
-
-        // Convert to FixedBytes format
-        let siblings: Vec<FixedBytes<32>> =
-            circuit_proof.siblings.iter().map(|s| (*s).into()).collect();
-
-        let peaks: Vec<FixedBytes<32>> = circuit_proof.peaks.iter().map(|p| (*p).into()).collect();
-
-        Ok((siblings, peaks))
-    }
-
-    /// Validate block leaf is included in light client
-    async fn validate_block_leaf_with_light_client(
-        &self,
-        provider: DynProvider,
-        block_leaf: &BlockLeaf,
-    ) -> Result<()> {
-        // Get light client address
-        let light_client_address = self.get_light_client_address(provider.clone()).await?;
-
-        // Get light client height
-        if let Some(light_client_height) = self
-            .get_light_client_height(provider, light_client_address)
-            .await?
-        {
-            debug!("Light client height: {}", light_client_height);
-
-            // Validate block leaf height
-            if block_leaf.height > light_client_height {
-                return Err(eyre!(
-                    "Block leaf height {} > light client height {}",
-                    block_leaf.height,
-                    light_client_height
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Get light client address
-    async fn get_light_client_address(&self, _provider: DynProvider) -> Result<Address> {
-        if let Some(address) = self.config.light_client_address {
-            debug!("Using light client address: {}", address);
-
-            // Check not zero
-            if address == Address::ZERO {
-                return Err(eyre!("Light client address is zero address"));
-            }
-
-            return Ok(address);
-        }
-
-        Err(eyre!("No light client address configured"))
-    }
-
-    /// Get light client height
-    async fn get_light_client_height(
-        &self,
-        provider: DynProvider,
-        light_client_address: Address,
-    ) -> Result<Option<u32>> {
-        // Create light client instance
-        let light_client =
-            sol_bindings::BitcoinLightClientInstance::new(light_client_address, provider.clone());
-
-        match light_client.lightClientHeight().call().await {
-            Ok(height) => {
-                debug!("Light client height: {}", height);
-
-                return Ok(Some(height));
-            }
-            Err(e) => {
-                error!("Failed to get light client height: {:?}", e);
-            }
-        }
-
-        Err(eyre!("Failed to get light client height"))
     }
 }

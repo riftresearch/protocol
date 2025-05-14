@@ -5,21 +5,26 @@ use std::{sync::Arc, time::Duration};
 
 use alloy::primitives::Address;
 use alloy::providers::Provider;
+use auction_claimer::AuctionClaimer;
 use bitcoin::Network;
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use bitcoincore_rpc_async::Auth;
+use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
-use log::{error, info};
+use data_engine::engine::ContractDataEngine;
+use eyre::Result;
+use log::error;
 use rift_sdk::{
     bitcoin_utils::{self, AsyncBitcoinClient},
     checkpoint_mmr::CheckpointedBlockTree,
-    create_websocket_wallet_provider,
+    create_websocket_wallet_provider, handle_background_thread_result,
     txn_broadcast::TransactionBroadcaster,
     txn_builder::P2WPKHBitcoinWallet,
     DatabaseLocation,
 };
 use std::str::FromStr;
 use tokio::task::JoinSet;
+use tracing::info;
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -80,13 +85,29 @@ pub struct MakerConfig {
     #[arg(long, env, default_value = "5")]
     pub max_batch_size: usize,
 
-    /// BitcoinLightClient contract address (optional)
+    /// Location of checkpoint file (bitcoin blocks that are committed to at contract deployment)
     #[arg(long, env)]
-    pub light_client_address: Option<String>,
+    pub checkpoint_file: String,
 
-    /// Database location for MMRs (memory or path to a directory)
-    #[arg(long, env, default_value = "memory")]
-    pub database_location: String,
+    /// Database location for MMRs one of "memory" or a path to a directory
+    #[arg(long, env)]
+    pub database_location: DatabaseLocation,
+
+    /// Rift Exchange contract address
+    #[arg(long, env)]
+    pub rift_exchange_address: String,
+
+    /// Block number of the deployment of the Rift Exchange contract
+    #[arg(long, env)]
+    pub deploy_block_number: u64,
+
+    /// Log chunk size
+    #[arg(long, env, default_value = "10000")]
+    pub log_chunk_size: u64,
+
+    /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
+    #[arg(long, env, default_value = "100")]
+    pub btc_batch_rpc_size: usize,
 }
 
 fn parse_network(s: &str) -> Result<Network, String> {
@@ -104,7 +125,7 @@ fn parse_network(s: &str) -> Result<Network, String> {
 }
 
 impl MakerConfig {
-    pub async fn run(&self) -> eyre::Result<()> {
+    pub async fn run(&self) -> Result<()> {
         let mut join_set = JoinSet::new();
         let wallet_provider = Arc::new(
             create_websocket_wallet_provider(
@@ -141,6 +162,14 @@ impl MakerConfig {
             &mut join_set,
         ));
 
+        let rift_exchange_address = Address::from_str(&self.rift_exchange_address)?;
+
+        let checkpoint_leaves = decompress_checkpoint_file(&self.checkpoint_file)?;
+        info!(
+            checkpoint_blocks = checkpoint_leaves.len(),
+            "Loaded bitcoin blocks from checkpoint file"
+        );
+
         /// TODO: Build the market maker logic, spawn the various actors
         // Initialize the auction claimer configuration
         let auction_claimer_config = auction_claimer::AuctionClaimerConfig {
@@ -153,78 +182,42 @@ impl MakerConfig {
             eth_gas_fee_sats: self.eth_gas_fee_sats,
             max_batch_size: self.max_batch_size,
             evm_ws_rpc: self.evm_ws_rpc.clone(),
-            light_client_address: match &self.light_client_address {
-                Some(addr) => Some(
-                    Address::from_str(addr)
-                        .map_err(|e| eyre::eyre!("Invalid light client address: {}", e))?,
-                ),
-                None => None,
-            },
         };
 
         // Initialize contract data engine if light client address is provided
-        let contract_data_engine = if self.light_client_address.is_some() {
-            // Parse database location
-            let db_location = if self.database_location.to_lowercase() == "memory" {
-                DatabaseLocation::InMemory
-            } else {
-                DatabaseLocation::Directory(self.database_location.clone())
-            };
-
-            // Create a checkpoint tree using the open() method
-            info!("Initializing CheckpointedBlockTree for Merkle proofs");
-            match CheckpointedBlockTree::<Keccak256Hasher>::open(&db_location).await {
-                Ok(tree) => {
-                    let checkpoint_tree = Arc::new(tokio::sync::RwLock::new(tree));
-                    Some(checkpoint_tree)
+        let contract_data_engine = {
+            info!("Starting contract data engine initialization");
+            let engine = data_engine::engine::ContractDataEngine::start(
+                &self.database_location,
+                evm_rpc.clone(),
+                rift_exchange_address,
+                self.deploy_block_number,
+                self.log_chunk_size,
+                checkpoint_leaves,
+                &mut join_set,
+            )
+            .await?;
+            // Handle the contract data engine background thread crashing before the initial sync completes
+            tokio::select! {
+                _ = engine.wait_for_initial_sync() => {
+                    info!("Contract data engine initialization complete");
                 }
-                Err(e) => {
-                    error!("Failed to initialize CheckpointedBlockTree: {:?}", e);
-                    None
+                result = join_set.join_next() => {
+                    handle_background_thread_result(result)?;
                 }
             }
-        } else {
-            None
+            Arc::new(engine)
         };
 
-        // Create the auction claimer
-        let auction_claimer = auction_claimer::AuctionClaimer::new(
-            self.evm_ws_rpc.clone(),
-            self.evm_private_key.clone(),
+        AuctionClaimer::run(
+            evm_rpc.clone(),
             auction_claimer_config,
-            contract_data_engine,
-        );
+            contract_data_engine.clone(),
+            evm_tx_broadcaster.clone(),
+            &mut join_set,
+        )
+        .await?;
 
-        info!("Starting auction claimer...");
-        join_set.spawn(async move {
-            match auction_claimer.run().await {
-                Ok(_) => {
-                    info!("Auction claimer completed successfully");
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("Auction claimer failed: {:?}", e);
-                    Err(e)
-                }
-            }
-        });
-
-        // Wait for any of the tasks to complete
-        while let Some(res) = join_set.join_next().await {
-            match res {
-                Ok(result) => {
-                    if let Err(e) = result {
-                        error!("Task failed with error: {:?}", e);
-                    } else {
-                        info!("Task completed successfully");
-                    }
-                }
-                Err(e) => {
-                    error!("Task join failed: {:?}", e);
-                }
-            }
-        }
-
-        Ok(())
+        handle_background_thread_result(join_set.join_next().await)
     }
 }
