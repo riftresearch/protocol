@@ -1,40 +1,31 @@
-use super::*;
 use ::bitcoin::consensus::{Decodable, Encodable};
-use ::bitcoin::hashes::serde::Serialize;
 use ::bitcoin::hashes::Hash;
 use ::bitcoin::{Amount, Transaction};
 use accumulators::mmr::map_leaf_index_to_element_index;
-use alloy::eips::eip6110::DEPOSIT_REQUEST_TYPE;
 use alloy::hex;
 use alloy::network::EthereumWallet;
-use alloy::primitives::utils::{format_ether, format_units};
-use alloy::primitives::{Address as EvmAddress, U256};
+use alloy::primitives::utils::format_units;
+use alloy::primitives::U256;
 use alloy::providers::ext::AnvilApi;
 use alloy::providers::{Provider, ProviderBuilder, WalletProvider, WsConnect};
 use alloy::signers::local::LocalSigner;
-use alloy::sol_types::{SolEvent, SolValue};
-use bitcoin::hashes::serde::Deserialize;
-use bitcoin_light_client_core::hasher::Keccak256Hasher;
-use bitcoin_light_client_core::leaves::BlockLeaf as CoreBlockLeaf;
+use alloy::sol_types::SolEvent;
 use bitcoin_light_client_core::light_client::Header;
-use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
 use bitcoin_light_client_core::{ChainTransition, ProvenLeaf, VerifiedBlock};
 use bitcoincore_rpc_async::bitcoin::hashes::Hash as BitcoinHash;
-use bitcoincore_rpc_async::bitcoin::BlockHash;
 use bitcoincore_rpc_async::RpcApi;
 use devnet::RiftDevnet;
 use rift_core::giga::RiftProgramInput;
 use rift_core::spv::generate_bitcoin_txn_merkle_proof;
 use rift_core::OrderFillingTransaction;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
-use rift_sdk::indexed_mmr::client_mmr_proof_to_circuit_mmr_proof;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
 use rift_sdk::{
-    create_websocket_provider, get_retarget_height_from_block_height, DatabaseLocation,
+    get_retarget_height_from_block_height, DatabaseLocation,
 };
 use sol_bindings::{
-    BaseCreateOrderParams, BlockLeaf, BlockProofParams, CreateOrderParams, OrderCreated,
+    BaseCreateOrderParams, BlockProofParams, CreateOrderParams, OrderCreated,
     PaymentsCreated, SettleOrderParams, SubmitPaymentProofParams,
 };
 use tokio::signal;

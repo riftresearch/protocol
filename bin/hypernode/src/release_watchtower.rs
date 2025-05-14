@@ -1,27 +1,21 @@
-use std::{collections::HashMap, sync::Arc, thread::current};
+use std::sync::Arc;
 
 use alloy::{
     eips::BlockId,
     primitives::Address,
     providers::{DynProvider, Provider},
-    pubsub::{PubSubFrontend, SubscriptionStream},
-    rpc::types::{BlockTransactionsKind, Header},
+    pubsub::SubscriptionStream,
+    rpc::types::Header,
 };
-use bitcoin_data_engine::BitcoinDataEngine;
-use bitcoincore_rpc_async::bitcoin::{hashes::Hash, BlockHash};
 use data_engine::engine::ContractDataEngine;
 use futures::{
     future::Ready,
     stream::{self, Chain, Once},
     Stream, StreamExt,
 };
-use rift_sdk::{
-    bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt},
-    RiftExchangeHarnessClient,
-};
+use rift_sdk::RiftExchangeHarnessClient;
 use sol_bindings::{RiftExchangeHarnessInstance, SettleOrderParams};
 use tokio::{sync::watch, task::JoinSet};
-use tokio_util::task::TaskTracker;
 use tracing::{info, info_span, Instrument};
 
 use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster};

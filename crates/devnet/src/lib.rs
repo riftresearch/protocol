@@ -6,31 +6,24 @@ pub mod mempool_electrs_rest_client;
 pub mod mempool_electrs_types;
 pub mod mempool_electrsd;
 
-use alloy::providers::fillers::{
-    BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
-};
-use bitcoin_data_engine::BitcoinDataEngine;
 pub use bitcoin_devnet::BitcoinDevnet;
 pub use evm_devnet::EthDevnet;
 
 use evm_devnet::ForkConfig;
 use eyre::Result;
-use log::info;
 use sol_bindings::RiftExchangeHarnessInstance;
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::task::JoinSet;
-use tokio::time::Instant;
 
 use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 
-use rift_sdk::{create_websocket_wallet_provider, get_rift_program_hash, DatabaseLocation};
+use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation};
 
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::RpcApi;
-use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
+use rift_sdk::bitcoin_utils::BitcoinClientExt;
 
 // ================== Contract ABIs ================== //
 
@@ -59,10 +52,9 @@ sol!(
     "../../contracts/artifacts/SP1MockVerifier.json"
 );
 
-use alloy::network::{Ethereum, EthereumWallet, NetworkWallet};
-use alloy::primitives::{Address as EvmAddress, U256};
-use alloy::providers::{DynProvider, Identity, Provider, RootProvider};
-use alloy::pubsub::PubSubFrontend;
+use alloy::network::EthereumWallet;
+use alloy::primitives::Address as EvmAddress;
+use alloy::providers::{DynProvider, Provider};
 
 pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>;
 
@@ -86,12 +78,11 @@ pub async fn deploy_contracts(
     u64,
 )> {
     use alloy::{
-        hex::FromHex,
         primitives::Address,
-        providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
+        providers::ext::AnvilApi,
         signers::local::PrivateKeySigner,
     };
-    use eyre::eyre;
+    
     use std::str::FromStr;
 
     let deployer_signer: PrivateKeySigner = anvil.keys()[0].clone().into();

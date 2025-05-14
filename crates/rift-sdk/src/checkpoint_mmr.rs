@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,9 +7,7 @@ use alloy::hex;
 use serde::{Deserialize, Serialize};
 
 use accumulators::mmr::{
-    self, element_index_to_leaf_index, elements_count_to_leaf_count,
-    map_leaf_index_to_element_index, AppendResult, PeaksOptions, Proof as ClientMMRProof,
-    ProofOptions, MMR as ClientMMR,
+    element_index_to_leaf_index, Proof as ClientMMRProof,
 };
 use accumulators::store::{memory::InMemoryStore, sqlite::SQLiteStore, Store};
 
@@ -245,8 +242,8 @@ impl<H: LeafHasher> BlockTree<H> {
         let height2 = leaf2.leaf_data.height;
 
         // Initialize current nodes
-        let mut curr1 = leaf1.clone();
-        let mut curr2 = leaf2.clone();
+        let curr1 = leaf1.clone();
+        let curr2 = leaf2.clone();
 
         // Determine which node is lower in the tree
         let (mut lower_node, mut higher_node, height_diff) = if height1 > height2 {

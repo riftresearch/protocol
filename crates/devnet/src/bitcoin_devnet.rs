@@ -15,10 +15,9 @@ use tokio::time::Instant;
 use bitcoin::{Address as BitcoinAddress, Amount};
 use bitcoincore_rpc_async::Auth;
 use bitcoincore_rpc_async::RpcApi;
-use corepc_node::{types::GetTransaction, Client as BitcoinClient, Node as BitcoinRegtest};
+use corepc_node::{Client as BitcoinClient, Node as BitcoinRegtest};
 
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
-use tokio_util::task::TaskTracker;
 
 use crate::{mempool_electrs_rest_client, mempool_electrsd};
 

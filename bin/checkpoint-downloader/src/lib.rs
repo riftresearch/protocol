@@ -1,8 +1,6 @@
 use bitcoin_light_client_core::leaves::{decompress_block_leaves, BlockLeaf, BlockLeafCompressor};
-use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
-use thiserror::Error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CheckpointError {

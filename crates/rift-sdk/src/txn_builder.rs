@@ -15,7 +15,6 @@ use bitcoin::{
 use rift_core::order_hasher::SolidityHash;
 use rift_core::payments::AggregateOrderHasher;
 
-use crate::btc_txn_broadcaster::BitcoinSigner;
 use crate::errors::{Result, RiftSdkError};
 use sol_bindings::Order;
 use std::str::FromStr;
