@@ -5,15 +5,6 @@
 - [Docker](https://docs.docker.com/get-docker/) 
 - [Foundry](https://getfoundry.sh) 
 
-### Mempool Electrs
-The `electrs` binary from [Mempool](https://github.com/mempool/electrs) is required for Bitcoin transaction indexing. Install it like so:
-```bash
-git clone https://github.com/mempool/electrs && cd electrs
-git checkout v3.2.0
-cargo install  --bin electrs --path .
-electrs --version 
-cd .. && rm -rf electrs
-```
 
 ## Running the Devnet
 The devnet provides a local development environment with both Bitcoin and Ethereum networks. To run it:

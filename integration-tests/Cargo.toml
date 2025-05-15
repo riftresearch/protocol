@@ -41,4 +41,3 @@ serial_test = { workspace = true }
 once_cell = { workspace = true }
 test-data-utils = { workspace = true }
 crypto-bigint = { workspace = true }
-mockall = "0.13.1"

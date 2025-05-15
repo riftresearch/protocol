@@ -33,3 +33,5 @@ thiserror = { workspace = true }
 reqwest = {workspace = true}
 async-trait = { workspace = true }
 which = { workspace = true }
+electrsd = { workspace = true}
+esplora-client = {workspace = true}

@@ -16,10 +16,12 @@ use bitcoin::{Address as BitcoinAddress, Amount};
 use bitcoincore_rpc_async::Auth;
 use bitcoincore_rpc_async::RpcApi;
 use corepc_node::{Client as BitcoinClient, Node as BitcoinRegtest};
+use electrsd::{downloaded_exe_path, Conf as ElectrsConf, ElectrsD};
+use esplora_client::AsyncClient as EsploraClient;
 
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 
-use crate::{mempool_electrs_rest_client, mempool_electrsd};
+use crate::SyntheticBTC::configureMinterCall;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
@@ -31,8 +33,8 @@ pub struct BitcoinDevnet {
     pub cookie: PathBuf,
     pub datadir: PathBuf,
     pub rpc_url_with_cookie: String,
-    pub mempool_electrsd: Option<Arc<mempool_electrsd::MempoolElectrsD>>,
-    pub mempool_electrs_rest_client: Option<Arc<mempool_electrs_rest_client::ReqwestClient>>,
+    pub electrsd: Option<Arc<ElectrsD>>,
+    pub esplora_client: Option<Arc<EsploraClient>>,
     /// If you optionally funded a BTC address upon startup,
     /// we keep track of the satoshis here.
     pub funded_sats: u64,
@@ -46,7 +48,7 @@ impl BitcoinDevnet {
     pub async fn setup(
         funded_address: Option<String>,
         using_bitcoin: bool,
-        using_mempool_electrs: bool,
+        using_esplora: bool,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<(Self, u32)> {
         if !using_bitcoin {
@@ -121,32 +123,38 @@ impl BitcoinDevnet {
             t.elapsed()
         );
 
-        let mempool_electrsd = if using_mempool_electrs {
+        let mut conf = electrsd::Conf::default();
+        conf.http_enabled = true;
+        // Disable stderr logging to avoid cluttering the console
+        // true can be useful for debugging
+        conf.view_stderr = false;
+
+        let electrsd = if using_esplora {
             Some(Arc::new(
-                mempool_electrsd::MempoolElectrsD::with_conf(
-                    &mempool_electrsd::Config::default(),
-                    &bitcoin_regtest,
-                    mempool_electrsd::exe_path()
+                ElectrsD::with_conf(
+                    electrsd::exe_path()
                         .expect("Failed to get electrs executable path, maybe it's not installed?"),
+                    &bitcoin_regtest,
+                    &conf,
                 )
-                .expect("Failed to create mempool electrsd instance"),
+                .expect("Failed to create electrsd instance"),
             ))
         } else {
             None
         };
 
-        let mempool_electrs_rest_client = if using_mempool_electrs {
-            Some(Arc::new(mempool_electrs_rest_client::ReqwestClient::new(
-                Url::parse(
-                    mempool_electrsd
+        let esplora_client = if using_esplora {
+            Some(Arc::new(
+                EsploraClient::from_builder(esplora_client::Builder::new(
+                    &electrsd
                         .as_ref()
                         .unwrap()
-                        .mempool_http_url
-                        .as_ref()
-                        .unwrap(),
-                )
-                .unwrap(),
-            )))
+                        .esplora_url
+                        .clone()
+                        .expect("Failed to get electrsd esplora url"),
+                ))
+                .expect("Failed to create esplora client"),
+            ))
         } else {
             None
         };
@@ -170,8 +178,8 @@ impl BitcoinDevnet {
             rpc_url_with_cookie,
             funded_sats,
             datadir,
-            mempool_electrsd,
-            mempool_electrs_rest_client,
+            electrsd,
+            esplora_client,
         };
 
         Ok((devnet, if using_bitcoin { 101 } else { 1 }))

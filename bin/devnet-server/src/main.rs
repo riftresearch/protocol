@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let mut devnet_builder = RiftDevnet::builder()
         .interactive(true)
         .using_bitcoin(true)
-        .using_mempool_electrs(true)
+        .using_esplora(true)
         .data_engine_db_location(DatabaseLocation::InMemory);
 
     if let Some(evm_address) = args.evm_address {
