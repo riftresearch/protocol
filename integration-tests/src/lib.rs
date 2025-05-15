@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod auction_claimer_test;
+#[cfg(test)]
 mod bitcoin_data_engine_test;
 #[cfg(test)]
 mod data_engine_test;
