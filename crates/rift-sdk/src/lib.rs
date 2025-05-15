@@ -1,6 +1,7 @@
 pub mod bitcoin_utils;
 pub mod checkpoint_mmr;
 mod errors;
+pub mod fee_provider;
 pub mod indexed_mmr;
 pub mod proof_generator;
 pub mod txn_broadcast;

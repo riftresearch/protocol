@@ -17,7 +17,9 @@ use log::error;
 use rift_sdk::{
     bitcoin_utils::{self, AsyncBitcoinClient},
     checkpoint_mmr::CheckpointedBlockTree,
-    create_websocket_wallet_provider, handle_background_thread_result,
+    create_websocket_wallet_provider,
+    fee_provider::{BtcFeeOracle, BtcFeeProvider},
+    handle_background_thread_result,
     txn_broadcast::TransactionBroadcaster,
     txn_builder::P2WPKHBitcoinWallet,
     DatabaseLocation,
@@ -72,10 +74,6 @@ pub struct MakerConfig {
     /// Spread in basis points
     #[arg(long, env, default_value = "50")]
     pub spread_bps: u64,
-
-    /// BTC transaction fee in satoshis
-    #[arg(long, env, default_value = "1000")]
-    pub btc_fee_sats: u64,
 
     /// ETH gas fee in satoshis equivalent
     #[arg(long, env, default_value = "2000")]
@@ -154,6 +152,9 @@ impl MakerConfig {
             .await?,
         );
 
+        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(btc_client.clone()));
+        btc_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
+
         let evm_rpc = wallet_provider.clone().erased();
 
         let evm_tx_broadcaster = Arc::new(TransactionBroadcaster::new(
@@ -178,7 +179,7 @@ impl MakerConfig {
             market_maker_address: Address::from_str(&self.market_maker_address)
                 .map_err(|e| eyre::eyre!("Invalid market maker address: {}", e))?,
             spread_bps: self.spread_bps,
-            btc_fee_sats: self.btc_fee_sats,
+            btc_fee_provider: btc_fee_oracle.clone(),
             eth_gas_fee_sats: self.eth_gas_fee_sats,
             max_batch_size: self.max_batch_size,
             evm_ws_rpc: self.evm_ws_rpc.clone(),
