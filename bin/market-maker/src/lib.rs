@@ -5,7 +5,7 @@ use bitcoin::Network;
 use bitcoincore_rpc_async::Auth;
 use clap::Parser;
 use rift_sdk::{
-    bitcoin_utils::{self, AsyncBitcoinClient},
+    bitcoin_utils::{AsyncBitcoinClient},
     create_websocket_wallet_provider,
     txn_broadcast::TransactionBroadcaster,
     txn_builder::P2WPKHBitcoinWallet,

@@ -1,9 +1,6 @@
-use alloy::hex;
 use alloy::primitives::Address;
-use alloy::providers::ext::TraceApi;
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::Method;
-use axum::response::IntoResponse;
 use axum::{extract::State, routing::get, Json, Router};
 use bitcoin_light_client_core::hasher::Digest;
 use bitcoin_light_client_core::leaves::BlockLeaf;

@@ -1,18 +1,9 @@
-use bitcoin_light_client_core::leaves::{
-    decompress_block_leaves, get_genesis_leaf, BlockLeaf, BlockLeafCompressor,
-};
 use bitcoincore_rpc_async::{Auth, RpcApi};
 use checkpoint_downloader::compress_checkpoint_leaves;
-use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
-use hex;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
-use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read, Write};
 use std::time::Duration;
-use tempfile;
 use tokio;
-use zstd::stream::Encoder;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -80,8 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(test)]
 mod tests {
-    use super::*;
+    use bitcoin_light_client_core::leaves::get_genesis_leaf;
+    use checkpoint_downloader::{compress_checkpoint_leaves, decompress_checkpoint_file};
 
     #[test]
     fn test_compress_checkpoint_leaves() {

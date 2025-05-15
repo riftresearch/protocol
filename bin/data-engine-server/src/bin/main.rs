@@ -1,11 +1,8 @@
-use bitcoin_light_client_core::leaves::get_genesis_leaf;
 use clap::Parser;
 use eyre::Result;
 
-use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 use data_engine_server::ServerConfig;
-use rift_sdk::DatabaseLocation;
 use tokio::task::JoinSet;
 
 #[tokio::main]

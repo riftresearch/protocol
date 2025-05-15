@@ -1,11 +1,9 @@
-use alloy::signers::k256;
 use bitcoincore_rpc_async::bitcoin::block::Header;
 use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{Block, BlockHash};
-use bitcoincore_rpc_async::json::{GetBlockHeaderResult, GetBlockResult};
+use bitcoincore_rpc_async::json::GetBlockHeaderResult;
 use serde_json::value::RawValue;
-use tokio::time::Instant;
 use tracing::info;
 
 use crate::errors::RiftSdkError;
@@ -18,9 +16,7 @@ use bitcoincore_rpc_async::jsonrpc::{Request, Response};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::Future;
-use futures::{stream, StreamExt};
-use std::ops::Deref;
-use std::str::FromStr;
+use futures::StreamExt;
 use std::time::Duration;
 
 use async_trait::async_trait;

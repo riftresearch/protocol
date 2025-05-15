@@ -3,31 +3,24 @@
 pub mod bitcoin_devnet;
 pub mod evm_devnet;
 
-use alloy::providers::fillers::{
-    BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
-};
-use bitcoin_data_engine::BitcoinDataEngine;
 pub use bitcoin_devnet::BitcoinDevnet;
 pub use evm_devnet::EthDevnet;
 
 use evm_devnet::ForkConfig;
 use eyre::Result;
-use log::info;
 use sol_bindings::RiftExchangeHarnessInstance;
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile::NamedTempFile;
 use tokio::task::JoinSet;
-use tokio::time::Instant;
 
 use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 
-use rift_sdk::{create_websocket_wallet_provider, get_rift_program_hash, DatabaseLocation};
+use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation};
 
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::RpcApi;
-use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt};
+use rift_sdk::bitcoin_utils::BitcoinClientExt;
 
 // ================== Contract ABIs ================== //
 
@@ -56,10 +49,9 @@ sol!(
     "../../contracts/artifacts/SP1MockVerifier.json"
 );
 
-use alloy::network::{Ethereum, EthereumWallet, NetworkWallet};
-use alloy::primitives::{Address as EvmAddress, U256};
-use alloy::providers::{DynProvider, Identity, Provider, RootProvider};
-use alloy::pubsub::PubSubFrontend;
+use alloy::network::EthereumWallet;
+use alloy::primitives::Address as EvmAddress;
+use alloy::providers::{DynProvider, Provider};
 
 pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>;
 
@@ -82,13 +74,8 @@ pub async fn deploy_contracts(
     Arc<SyntheticBTCWebsocket>,
     u64,
 )> {
-    use alloy::{
-        hex::FromHex,
-        primitives::Address,
-        providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
-        signers::local::PrivateKeySigner,
-    };
-    use eyre::eyre;
+    use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
+
     use std::str::FromStr;
 
     let deployer_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -119,14 +106,10 @@ pub async fn deploy_contracts(
                 provider.get_code_at(*mock_token.address()).await?,
             )
             .await?;
-        println!("Deploying MockToken at {}", token_address);
         SyntheticBTC::new(token_address, provider.clone().erased())
     } else {
-        println!("POINTING TO EXISTING MockToken at {}", token_address);
         SyntheticBTC::new(token_address, provider.clone().erased())
     };
-
-    println!("token decimals: {}", token.decimals().call().await?);
 
     // Record the block number to track from
     let deployment_block_number = provider.get_block_number().await?;
@@ -180,6 +163,7 @@ pub struct RiftDevnetBuilder {
     fork_config: Option<ForkConfig>,
     data_engine_db_location: DatabaseLocation,
     log_chunk_size: u64,
+    using_esplora: bool,
 }
 
 impl Default for RiftDevnetBuilder {
@@ -192,6 +176,7 @@ impl Default for RiftDevnetBuilder {
             fork_config: None,
             data_engine_db_location: DatabaseLocation::InMemory,
             log_chunk_size: 10000,
+            using_esplora: false,
         }
     }
 }
@@ -241,6 +226,12 @@ impl RiftDevnetBuilder {
         self
     }
 
+    /// Start a blockstream/electrs esplora REST API server for bitcoin data indexing.
+    pub fn using_esplora(mut self, value: bool) -> Self {
+        self.using_esplora = value;
+        self
+    }
+
     /// Actually build the `RiftDevnet`, consuming this builder.
     ///
     /// Returns a tuple of:
@@ -256,6 +247,7 @@ impl RiftDevnetBuilder {
             fork_config,
             data_engine_db_location,
             log_chunk_size,
+            using_esplora,
         } = self;
 
         let mut join_set = JoinSet::new();
@@ -264,6 +256,7 @@ impl RiftDevnetBuilder {
         let (bitcoin_devnet, current_mined_height) = crate::bitcoin_devnet::BitcoinDevnet::setup(
             funded_bitcoin_address,
             using_bitcoin,
+            using_esplora,
             &mut join_set,
         )
         .await?;
@@ -400,14 +393,27 @@ impl RiftDevnetBuilder {
                 "Bitcoin RPC URL:       {}",
                 bitcoin_devnet.rpc_url_with_cookie
             );
+
+            if using_esplora {
+                println!(
+                    "Esplora API URL:       http://{}",
+                    bitcoin_devnet
+                        .electrsd
+                        .as_ref()
+                        .unwrap()
+                        .esplora_url
+                        .as_ref()
+                        .unwrap()
+                );
+            }
+
             println!(
-                "{} Address:  {}",
+                "{} Address:         {}",
                 crate::TOKEN_SYMBOL,
                 ethereum_devnet.token_contract.address()
             );
             println!(
-                "{} Address:  {}",
-                "Rift Exchange",
+                "Rift Exchange Address: {}",
                 ethereum_devnet.rift_exchange_contract.address()
             );
             println!("---RIFT DEVNET---");

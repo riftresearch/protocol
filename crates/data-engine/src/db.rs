@@ -1,14 +1,12 @@
 use crate::models::{ChainAwareOrder, ChainAwarePayment, FinalizedTransaction, OTCSwap};
 use alloy::{
     hex,
-    primitives::{keccak256, Address},
-    sol_types::SolValue,
+    primitives::Address,
 };
 use eyre::Result;
 use rift_core::order_hasher::SolidityHash;
 use sol_bindings::{Order, Payment};
-use std::str::FromStr;
-use tokio_rusqlite::{params, Connection, Error::Rusqlite};
+use tokio_rusqlite::{params, Connection};
 use tracing::info;
 
 const ORDER_STATUS_LIVE: i64 = 0;

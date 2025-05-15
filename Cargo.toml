@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "bin/benchmark-light-client",
-  "bin/devnet",
+  "bin/devnet-server",
   "bin/data-engine-server",
   "bin/hypernode",
   "bin/checkpoint-downloader",
@@ -40,7 +40,7 @@ data-engine = { path = "crates/data-engine" }
 test-data-utils = { path = "test-data" }
 data-engine-server = { path = "bin/data-engine-server" }
 checkpoint-downloader = { path = "bin/checkpoint-downloader" }
-devnet = {path = "bin/devnet"}
+devnet = {path = "crates/devnet"}
 market-maker = {path = "bin/market-maker"}
 hypernode = {path = "bin/hypernode"}
 
@@ -56,9 +56,6 @@ crypto-bigint = "0.5.5"
 tiny-keccak = "2.0.2"
 sha2 = "0.10.8"
 
-bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
-# This needs to be pinned to the same version of rust-bitcoin
-bitcoincore-rpc-async = { git = "https://github.com/riftresearch/rust-bitcoincore-rpc-async", tag = "bitcoin-0.32.5-patch-v1" }
 
 accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "fe0c7ed0a803a219b9b4e20d314ea074b859d688", features = ["all"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -95,11 +92,16 @@ chrono = "0.4.38"
 futures = "0.3.30"
 futures-util = "0.3.30"
 backoff = { version = "0.4.0", features=["tokio"] }
+which = "7.0.3"
 
+bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
+# This needs to be pinned to the same version of rust-bitcoin
+bitcoincore-rpc-async = { git = "https://github.com/riftresearch/rust-bitcoincore-rpc-async", tag = "bitcoin-0.32.5-patch-v1" }
 
-# TODO: Update this to the version of corepc that supports Arm Macs once it's released
-corepc-node = { git = "https://github.com/rust-bitcoin/corepc", rev = "7949505ebc29a478887852b6c0bc773f6a50baf7", features = ["28_0", "download"] }
-# corepc-node = { version = "0.6.1", features = ["28_0", "download"] }
+corepc-node = { version = "0.7.0", features = ["28_0", "download"] }
+electrsd = { version= "0.33.0", features = ["corepc-node_28_0", "esplora_a33e97e1", "legacy"] }
+esplora-client = "0.12.0"
+
 dotenv = "0.15.0"
 bip39 = "2.1.0"
 

@@ -1,6 +1,5 @@
-use std::fmt::{self, Debug};
+use std::fmt::{Debug};
 
-use hex::encode;
 use sha2::{Digest as Sha2Digest, Sha256};
 use tiny_keccak::{Hasher as TinyKeccakHasher, Keccak};
 

@@ -1,7 +1,7 @@
 use crate::RIFT_PROGRAM_ELF;
 use rift_core::giga::RiftProgramInput;
 use sp1_sdk::{
-    include_elf, EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
+    EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
     SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 use std::str::FromStr;

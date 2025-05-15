@@ -1,6 +1,5 @@
 
-use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
-use alloy::providers::{DynProvider, ProviderBuilder, WsConnect};
+use crate::test_utils::{create_deposit, setup_test_tracing};
 use alloy::rpc::json_rpc::ErrorPayload;
 use alloy::sol_types::SolError;
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
@@ -9,25 +8,14 @@ use bitcoincore_rpc_async::RpcApi;
 use corepc_node::serde_json;
 use crypto_bigint::{CheckedAdd, Encoding};
 use hypernode::fork_watchtower::{ForkDetectionResult, ForkWatchtower};
-use hypernode::{HypernodeArgs, Provider};
-use rift_sdk::proof_generator::ProofGeneratorType;
-use rift_sdk::DatabaseLocation;
-use std::sync::Arc;
+use hypernode::Provider;
 use std::time::Duration;
 
 use tokio::time::timeout;
 
-use alloy::primitives::FixedBytes;
-use alloy::rpc::types::{Transaction, TransactionReceipt, TransactionRequest};
-use rift_core::giga::{RiftProgramInput, RustProofType};
-use rift_sdk::txn_broadcast::{
-    PreflightCheck, RevertInfo, TransactionExecutionResult, TransactionStatusUpdate,
-};
-use sol_bindings::{BlockProofParams, RiftExchangeHarnessInstance};
-use tokio::sync::broadcast;
 
 use serde_json::value::RawValue;
-use sol_bindings::{BlockNotConfirmed, BlockNotInChain, ChainworkTooLow, CheckpointNotEstablished};
+use sol_bindings::{ChainworkTooLow, CheckpointNotEstablished};
 
 /// Tests that the fork watchtower correctly identifies when there is no fork
 #[tokio::test]
@@ -64,7 +52,7 @@ async fn test_fork_watchtower_no_fork_detection() {
 async fn test_fork_watchtower_stale_chain_detection() {
     setup_test_tracing();
 
-    let (mut devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
     println!("Initial Bitcoin height: {}", bitcoin_height);
@@ -208,7 +196,7 @@ async fn test_fork_watchtower_error_handling() {
 async fn test_fork_watchtower_fork_detection_and_resolution() {
     setup_test_tracing();
 
-    let (mut devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
@@ -306,7 +294,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
     // Create a fake block with a invalid hash
     let fake_block_hash = [0xFF; 32];
 
-    let mut chainwork = current_light_client_tip.chainwork_as_u256();
+    let chainwork = current_light_client_tip.chainwork_as_u256();
 
     let one = crypto_bigint::U256::from_u8(1);
     let fake_chainwork = chainwork.checked_add(&one).unwrap();
@@ -541,7 +529,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 async fn test_fork_watchtower_light_client_tip_not_in_bde() {
     setup_test_tracing();
 
-    let (mut devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
@@ -776,7 +764,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 async fn test_fork_watchtower_equal_chainwork() {
     setup_test_tracing();
 
-    let (mut devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
