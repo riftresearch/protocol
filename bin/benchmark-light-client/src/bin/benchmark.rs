@@ -350,6 +350,7 @@ async fn main() {
         format_duration(start.elapsed())
     );
 
+    let mut regression_data: Vec<(f64, f64)> = Vec::new();
     for &n in &[1, 5, 10, 20, 50, 75, 100, 500, 1000, 2016] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
         let result =
@@ -364,7 +365,42 @@ async fn main() {
         } else {
             table.add_row(row![n, format_duration(result.duration)]);
         }
+
+        regression_data.push((n as f64, result.duration.as_secs_f64()));
     }
 
     table.printstd();
+
+    if regression_data.len() > 1 {
+        let count = regression_data.len() as f64;
+        let sum_x: f64 = regression_data.iter().map(|(x, _)| *x).sum();
+        let sum_y: f64 = regression_data.iter().map(|(_, y)| *y).sum();
+        let mean_x = sum_x / count;
+        let mean_y = sum_y / count;
+
+        let mut numerator = 0.0;
+        let mut denominator = 0.0;
+        for (x, y) in regression_data.iter() {
+            numerator += (*x - mean_x) * (*y - mean_y);
+            denominator += (*x - mean_x).powi(2);
+        }
+
+        let slope = numerator / denominator;
+        let intercept = mean_y - slope * mean_x;
+
+        let mut ss_res = 0.0;
+        let mut ss_tot = 0.0;
+        for (x, y) in regression_data.iter() {
+            let predicted = slope * *x + intercept;
+            ss_res += (*y - predicted).powi(2);
+            ss_tot += (*y - mean_y).powi(2);
+        }
+
+        let r_squared = 1.0 - ss_res / ss_tot;
+
+        println!(
+            "Linear regression for proof time vs BCH blocks:\ny = {:.4}x + {:.4} (R^2 = {:.4})",
+            slope, intercept, r_squared
+        );
+    }
 }
