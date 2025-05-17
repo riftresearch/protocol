@@ -399,7 +399,7 @@ async fn main() {
         let r_squared = 1.0 - ss_res / ss_tot;
 
         println!(
-            "Linear regression for proof time vs BCH blocks:\ny = {:.4}x + {:.4} (R^2 = {:.4})",
+            "Linear regression: proof time as a function of blocks disposed + appended:\ny = {:.4} x + {:.4};  R² = {:.4}",
             slope, intercept, r_squared
         );
     }
