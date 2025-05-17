@@ -350,7 +350,7 @@ async fn main() {
         format_duration(start.elapsed())
     );
 
-    for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
+    for &n in &[1, 5, 10, 20, 50, 75, 100, 500, 1000, 2016] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
         let result =
             prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
