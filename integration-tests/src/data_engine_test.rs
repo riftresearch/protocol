@@ -28,19 +28,59 @@ fn get_test_data() -> Vec<BlockLeaf> {
 #[tokio::test]
 async fn test_data_engine_file_db() {
     setup_test_tracing();
-    // create a temp directory
+
     let temp_dir = tempfile::tempdir().unwrap();
     let dir_str = temp_dir.path().to_str().unwrap().to_string();
 
-    ContractDataEngine::seed(&DatabaseLocation::Directory(dir_str), get_test_data())
+    let leaves = get_test_data();
+
+    // Seed the database
+    ContractDataEngine::seed(&DatabaseLocation::Directory(dir_str.clone()), leaves.clone())
         .await
         .unwrap();
+
+    // Re-open using the same database location
+    let engine = ContractDataEngine::seed(&DatabaseLocation::Directory(dir_str), Vec::new())
+        .await
+        .unwrap();
+
+    // Verify the first leaf matches the seeded data
+    let retrieved = engine
+        .checkpointed_block_tree
+        .read()
+        .await
+        .get_leaf_by_leaf_index(0)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(retrieved, leaves[0]);
 }
 
 #[tokio::test]
 async fn test_data_engine_in_memory_db() {
     setup_test_tracing();
-    ContractDataEngine::seed(&DatabaseLocation::InMemory, get_test_data())
+
+    let leaves = get_test_data();
+
+    // Initial seeding
+    ContractDataEngine::seed(&DatabaseLocation::InMemory, leaves.clone())
         .await
         .unwrap();
+
+    // Create a new instance using the same location and seed again
+    let engine = ContractDataEngine::seed(&DatabaseLocation::InMemory, leaves.clone())
+        .await
+        .unwrap();
+
+    let retrieved = engine
+        .checkpointed_block_tree
+        .read()
+        .await
+        .get_leaf_by_leaf_index(0)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(retrieved, leaves[0]);
 }
