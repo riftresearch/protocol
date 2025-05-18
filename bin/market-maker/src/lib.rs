@@ -15,8 +15,12 @@ use data_engine::engine::ContractDataEngine;
 use eyre::Result;
 use log::error;
 use rift_sdk::{
+<<<<<<< HEAD
     bitcoin_utils::{self, AsyncBitcoinClient},
     checkpoint_mmr::CheckpointedBlockTree,
+=======
+    bitcoin_utils::{AsyncBitcoinClient},
+>>>>>>> main
     create_websocket_wallet_provider,
     fee_provider::{BtcFeeOracle, BtcFeeProvider},
     handle_background_thread_result,

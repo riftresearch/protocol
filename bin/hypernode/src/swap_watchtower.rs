@@ -1,11 +1,8 @@
 use accumulators::mmr::map_leaf_index_to_element_index;
 
 use alloy::{
-    eips::eip7251::ConsolidationRequest,
     primitives::Address,
     providers::{DynProvider, Provider},
-    pubsub::PubSubFrontend,
-    sol_types::SolValue,
 };
 use bitcoin::{block::Version, consensus::Decodable, CompactTarget};
 use bitcoin_data_engine::BitcoinDataEngine;
@@ -18,7 +15,7 @@ use bitcoincore_rpc_async::{
     json::GetBlockResult,
     RpcApi,
 };
-use data_engine::{engine::ContractDataEngine, models::ChainAwareOrder};
+use data_engine::engine::ContractDataEngine;
 use itertools::Itertools;
 use rift_core::{
     giga::RiftProgramInput,
@@ -44,9 +41,8 @@ use tokio::{
         mpsc::{UnboundedReceiver, UnboundedSender},
         RwLockReadGuard,
     },
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
 };
-use tokio_util::task::TaskTracker;
 use tracing::{info, info_span, instrument, warn, Instrument};
 
 use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster};

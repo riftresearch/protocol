@@ -1,25 +1,18 @@
-use std::str::FromStr;
 use std::sync::Arc;
 
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
-use rift_sdk::create_websocket_provider;
 use tokio::time::Instant;
 
 use alloy::{
-    network::{Ethereum, EthereumWallet, TransactionBuilder},
+    network::{EthereumWallet, TransactionBuilder},
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
     providers::{
         ext::AnvilApi,
-        fillers::{
-            BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
-            WalletFiller,
-        },
-        DynProvider, Identity, Provider, ProviderBuilder, RootProvider, WsConnect,
+        DynProvider, Provider, ProviderBuilder, WsConnect,
     },
-    pubsub::PubSubFrontend,
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };

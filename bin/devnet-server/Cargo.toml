@@ -1,0 +1,19 @@
+[package]
+name = "devnet-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+exclude.workspace = true
+
+[[bin]]
+name = "devnet"
+path = "src/main.rs"
+
+[dependencies]
+clap = {workspace = true}
+devnet = { workspace = true}
+eyre = { workspace = true}
+log = { workspace = true}
+rift-sdk = { workspace = true}
+tokio = { workspace = true}
+env_logger = { workspace = true}

@@ -1,4 +1,5 @@
 pub mod bitcoin_utils;
+pub mod btc_txn_broadcaster;
 pub mod checkpoint_mmr;
 mod errors;
 pub mod fee_provider;
@@ -7,7 +8,7 @@ pub mod proof_generator;
 pub mod txn_broadcast;
 pub mod txn_builder;
 
-use alloy::network::{Ethereum, EthereumWallet};
+use alloy::network::EthereumWallet;
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };

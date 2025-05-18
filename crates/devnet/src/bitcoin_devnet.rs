@@ -7,6 +7,7 @@ use bitcoincore_rpc_async::json::GetRawTransactionResult;
 use corepc_node::Conf;
 use eyre::{eyre, Result};
 use log::info;
+use reqwest::Url;
 use rift_sdk::DatabaseLocation;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -14,10 +15,13 @@ use tokio::time::Instant;
 use bitcoin::{Address as BitcoinAddress, Amount};
 use bitcoincore_rpc_async::Auth;
 use bitcoincore_rpc_async::RpcApi;
-use corepc_node::{types::GetTransaction, Client as BitcoinClient, Node as BitcoinRegtest};
+use corepc_node::{Client as BitcoinClient, Node as BitcoinRegtest};
+use electrsd::{downloaded_exe_path, Conf as ElectrsConf, ElectrsD};
+use esplora_client::AsyncClient as EsploraClient;
 
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
-use tokio_util::task::TaskTracker;
+
+use crate::SyntheticBTC::configureMinterCall;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
@@ -27,8 +31,10 @@ pub struct BitcoinDevnet {
     pub miner_client: BitcoinClient,
     pub miner_address: BitcoinAddress,
     pub cookie: PathBuf,
+    pub datadir: PathBuf,
     pub rpc_url_with_cookie: String,
-
+    pub electrsd: Option<Arc<ElectrsD>>,
+    pub esplora_client: Option<Arc<EsploraClient>>,
     /// If you optionally funded a BTC address upon startup,
     /// we keep track of the satoshis here.
     pub funded_sats: u64,
@@ -42,6 +48,7 @@ impl BitcoinDevnet {
     pub async fn setup(
         funded_address: Option<String>,
         using_bitcoin: bool,
+        using_esplora: bool,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<(Self, u32)> {
         if !using_bitcoin {
@@ -66,10 +73,17 @@ impl BitcoinDevnet {
             .map_err(|e| eyre!(e))?;
         let alice_address = alice.new_address()?;
 
+        let mine_time = Instant::now();
         // Mine 101 blocks to get initial coinbase BTC
         bitcoin_regtest
             .client
             .generate_to_address(if using_bitcoin { 101 } else { 1 }, &alice_address)?;
+
+        info!(
+            "Mined {} blocks in {:?}",
+            if using_bitcoin { 101 } else { 1 },
+            mine_time.elapsed()
+        );
 
         // If user wants to fund a specific BTC address
         let mut funded_sats = 0;
@@ -109,6 +123,42 @@ impl BitcoinDevnet {
             t.elapsed()
         );
 
+        let mut conf = electrsd::Conf::default();
+        conf.http_enabled = true;
+        // Disable stderr logging to avoid cluttering the console
+        // true can be useful for debugging
+        conf.view_stderr = false;
+
+        let electrsd = if using_esplora {
+            Some(Arc::new(
+                ElectrsD::with_conf(
+                    electrsd::exe_path()
+                        .expect("Failed to get electrs executable path, maybe it's not installed?"),
+                    &bitcoin_regtest,
+                    &conf,
+                )
+                .expect("Failed to create electrsd instance"),
+            ))
+        } else {
+            None
+        };
+
+        let esplora_client = if using_esplora {
+            Some(Arc::new(
+                EsploraClient::from_builder(esplora_client::Builder::new(
+                    &electrsd
+                        .as_ref()
+                        .unwrap()
+                        .esplora_url
+                        .clone()
+                        .expect("Failed to get electrsd esplora url"),
+                ))
+                .expect("Failed to create esplora client"),
+            ))
+        } else {
+            None
+        };
+
         let cookie_str = std::fs::read_to_string(cookie.clone()).unwrap();
         // http://<user>:<password>@<host>:<port>/
         let rpc_url_with_cookie = format!(
@@ -117,6 +167,7 @@ impl BitcoinDevnet {
             bitcoin_regtest.params.rpc_socket.ip(),
             bitcoin_regtest.params.rpc_socket.port()
         );
+        let datadir = bitcoin_regtest.workdir().join("regtest");
         let devnet = BitcoinDevnet {
             data_engine,
             rpc_client: bitcoin_rpc_client,
@@ -126,6 +177,9 @@ impl BitcoinDevnet {
             cookie,
             rpc_url_with_cookie,
             funded_sats,
+            datadir,
+            electrsd,
+            esplora_client,
         };
 
         Ok((devnet, if using_bitcoin { 101 } else { 1 }))

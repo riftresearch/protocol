@@ -12,16 +12,15 @@ use bitcoincore_rpc_async::RpcApi;
 use data_engine::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
-use rift_core::order_hasher::SolidityHash;
 use rift_sdk::{
-    proof_generator::{ProofGeneratorType, RiftProofGenerator},
-    txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet},
+    proof_generator::ProofGeneratorType,
+    txn_builder::{self, serialize_no_segwit},
     DatabaseLocation,
 };
 use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
-use tokio::signal::{self, unix::signal};
+use tokio::signal::{self};
 
-use crate::test_utils::{create_deposit, setup_test_tracing, MultichainAccount};
+use crate::test_utils::{setup_test_tracing, MultichainAccount};
 
 #[tokio::test]
 // Serial anything that uses alot of bitcoin mining

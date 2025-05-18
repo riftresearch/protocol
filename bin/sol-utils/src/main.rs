@@ -1,12 +1,7 @@
-use std::io::Read;
 
-use accumulators::mmr::map_leaf_index_to_element_index;
 use alloy::{
-    dyn_abi::{abi::encode, DynSolType, DynSolValue},
     hex,
     primitives::{FixedBytes, U256},
-    rpc::types::Index,
-    sol,
     sol_types::SolValue,
 };
 
@@ -18,9 +13,6 @@ use bitcoin_light_client_core::{
 use clap::{Parser, Subcommand};
 
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
-use rift_sdk::indexed_mmr::{
-    client_mmr_proof_to_circuit_mmr_proof, client_mmr_to_root, digest_to_hex,
-};
 use rift_sdk::{indexed_mmr::IndexedMMR, DatabaseLocation};
 
 const BLOCK_HASH_SEED: [u8; 32] =

@@ -10,7 +10,7 @@ use alloy::hex;
 use serde::{Deserialize, Serialize};
 
 use accumulators::mmr::{
-    self, element_index_to_leaf_index, elements_count_to_leaf_count,
+    element_index_to_leaf_index, elements_count_to_leaf_count,
     map_leaf_index_to_element_index, AppendResult, PeaksOptions, Proof as ClientMMRProof,
     ProofOptions, MMR as ClientMMR,
 };

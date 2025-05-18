@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::{Address, FixedBytes};
+use alloy::primitives::Address;
 use alloy::providers::DynProvider;
 use alloy::sol_types::SolError;
 use backoff::backoff::Backoff;
@@ -15,7 +15,7 @@ use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
 use sol_bindings::{
-    BlockNotConfirmed, BlockNotInChain, BlockProofParams, ChainworkTooLow,
+    BlockProofParams, ChainworkTooLow,
     CheckpointNotEstablished, RiftExchangeHarnessInstance,
 };
 use thiserror::Error;

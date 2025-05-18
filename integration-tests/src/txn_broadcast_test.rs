@@ -1,26 +1,8 @@
-use std::sync::Arc;
 
-use crate::test_utils::{create_deposit, MultichainAccount};
-use bitcoincore_rpc_async::RpcApi;
+use crate::test_utils::create_deposit;
 
-use super::*;
-use alloy::{
-    eips::BlockNumberOrTag,
-    primitives::{Address, U256},
-    providers::Provider,
-};
-use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
-use devnet::RiftDevnet;
-use eyre::OptionExt;
-use hypernode::HypernodeArgs;
-use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
-use rift_sdk::{
-    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, txn_builder,
-    DatabaseLocation,
-};
-use sol_bindings::{
-    BlockLeaf as ContractBlockLeaf, NotEnoughConfirmationBlocks, Order, RiftExchangeHarnessErrors,
-};
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionExecutionResult};
+use sol_bindings::NotEnoughConfirmationBlocks;
 
 #[tokio::test]
 async fn test_txn_broadcast_success() {

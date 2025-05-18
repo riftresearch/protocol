@@ -2,7 +2,7 @@
 // Actual storage of leaves and proof generation is left to the client
 use crate::hasher::{Digest, Hasher};
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Debug};
+use std::fmt::{self};
 
 /// Trait for different MMR data storage strategies
 pub trait MMRStorageStrategy: Clone {

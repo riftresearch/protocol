@@ -14,8 +14,8 @@ use futures_util::stream::StreamExt;
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::DatabaseLocation;
 use sol_bindings::{
-    submitPaymentProofsCall, submitPaymentProofsOnlyCall, updateLightClientCall, AuctionUpdated,
-    BitcoinLightClientUpdated, Order, OrderCreated, OrderRefunded, OrderState, OrdersSettled,
+    submitPaymentProofsCall, updateLightClientCall,
+    BitcoinLightClientUpdated, Order, OrderCreated, OrderRefunded, OrdersSettled,
     PaymentsCreated,
 };
 

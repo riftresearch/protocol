@@ -4,10 +4,9 @@ use std::time::Duration;
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoincore_rpc_async::Auth;
 use corepc_node::client::bitcoin::Address as BitcoinAddress;
-use corepc_node::{types::GetTransaction, Client as BitcoinClient, Node as BitcoinRegtest};
+use corepc_node::Node as BitcoinRegtest;
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::DatabaseLocation;
-use tokio::signal;
 use tokio::task::JoinSet;
 
 use crate::test_utils::setup_test_tracing;
@@ -18,7 +17,7 @@ async fn setup_bitcoin_regtest_and_client() -> (
     BitcoinAddress,
     JoinSet<eyre::Result<()>>,
 ) {
-    let mut join_set = JoinSet::new();
+    let join_set = JoinSet::new();
     let bitcoin_regtest = BitcoinRegtest::from_downloaded().unwrap();
     let cookie = bitcoin_regtest.params.cookie_file.clone();
     let bitcoin_address = bitcoin_regtest

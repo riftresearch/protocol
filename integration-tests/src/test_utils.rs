@@ -6,32 +6,22 @@ use alloy::{
 use once_cell::sync::OnceCell;
 use rift_sdk::txn_builder::P2WPKHBitcoinWallet;
 
-use futures::channel::oneshot;
-use std::{
-    collections::HashMap,
-    fmt::Write,
-    sync::{Arc, Mutex},
-};
-use tracing::{Event, Subscriber};
+use std::sync::Arc;
 use tracing_subscriber::{
-    fmt,
-    layer::{Context, Layer, SubscriberExt},
     util::SubscriberInitExt,
     EnvFilter,
 };
 
 use bitcoincore_rpc_async::RpcApi;
 
-use alloy::{eips::BlockNumberOrTag, primitives::U256, providers::Provider};
+use alloy::{primitives::U256, providers::Provider};
 use bitcoin::{consensus::Encodable, hashes::Hash, Amount, Transaction};
 use devnet::{RiftDevnet, RiftExchangeHarnessWebsocket};
-use eyre::OptionExt;
 
-use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
+use rift_sdk::txn_broadcast::TransactionBroadcaster;
 
-use hypernode::HypernodeArgs;
 use rift_sdk::{
-    create_websocket_wallet_provider, proof_generator::ProofGeneratorType, txn_builder,
+    create_websocket_wallet_provider, txn_builder,
     DatabaseLocation,
 };
 use sol_bindings::{
@@ -295,7 +285,7 @@ static LOGGING: OnceCell<()> = OnceCell::new();
 
 pub fn setup_test_tracing() {
     LOGGING.get_or_init(|| {
-        // Only init tracing if --nocapture is passed
+        // Only init tracing if --nocapture  is passed
         let has_nocapture = std::env::args().any(|arg| arg == "--nocapture");
         if has_nocapture {
             tracing_subscriber::fmt()
