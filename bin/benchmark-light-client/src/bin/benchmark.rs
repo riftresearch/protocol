@@ -27,9 +27,13 @@ use accumulators::mmr::element_index_to_leaf_index;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The type of benchmark to run: "execute", "prove-cpu", "prove-cuda", or "prove-network"
+    /// Type of prover to use: "execute", "cpu", "cuda", or "network"
     #[arg(short, long, default_value = "execute")]
-    r#type: String,
+    prover: String,
+
+    /// Number of samples to average for each block count
+    #[arg(long, default_value_t = 1)]
+    samples: usize,
 }
 
 /// Holds a “circuit MMR” (used for building the final root) and a “client MMR” (for real proofs),
@@ -320,22 +324,50 @@ async fn prove_bch_overwrite(
     prove_chain_transition(chain_transition, benchmark_type, proof_generator).await
 }
 
+fn average_and_std(values: &[f64]) -> (f64, f64) {
+    let n = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / n;
+    if values.len() < 2 {
+        return (mean, 0.0);
+    }
+    let variance = values
+        .iter()
+        .map(|v| (*v - mean).powi(2))
+        .sum::<f64>()
+        / n;
+    (mean, variance.sqrt())
+}
+
 #[tokio::main]
 async fn main() {
     sp1_sdk::utils::setup_logger();
 
     let args = Args::parse();
-    let benchmark_type = match args.r#type.to_lowercase().as_str() {
+    let benchmark_type = match args.prover.to_lowercase().as_str() {
         "execute" => ProofGeneratorType::Execute,
-        "prove-cpu" => ProofGeneratorType::ProveCPU,
-        "prove-cuda" => ProofGeneratorType::ProveCUDA,
-        "prove-network" => ProofGeneratorType::ProveNetwork,
-        _ => panic!("Invalid benchmark type. Must be 'execute', 'prove-cpu', 'prove-cuda', or 'prove-network'"),
+        "cpu" => ProofGeneratorType::ProveCPU,
+        "cuda" => ProofGeneratorType::ProveCUDA,
+        "network" => ProofGeneratorType::ProveNetwork,
+        _ => panic!(
+            "Invalid prover type. Must be 'execute', 'cpu', 'cuda', or 'network'"
+        ),
     };
 
     let mut table = Table::new();
     if matches!(benchmark_type, ProofGeneratorType::Execute) {
-        table.add_row(row!["Disposed Blocks", "Cycle Count", "Time"]);
+        if args.samples > 1 {
+            table.add_row(row![
+                "Disposed Blocks",
+                "Avg Cycles",
+                "Cycle Std Dev",
+                "Avg Time",
+                "Time Std Dev"
+            ]);
+        } else {
+            table.add_row(row!["Disposed Blocks", "Cycle Count", "Time"]);
+        }
+    } else if args.samples > 1 {
+        table.add_row(row!["Disposed Blocks", "Avg Time", "Time Std Dev"]);
     } else {
         table.add_row(row!["Disposed Blocks", "Time to Prove"]);
     }
@@ -353,20 +385,53 @@ async fn main() {
     let mut regression_data: Vec<(f64, f64)> = Vec::new();
     for &n in &[1, 5, 10, 20, 50, 75, 100, 500, 1000, 2016] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
-        let result =
-            prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
-        println!("Result: {:?}", result);
 
-        // reset the state so we can run the next benchmark
-        base_state.reset_to_base().await;
+        let mut durations = Vec::new();
+        let mut cycles_vec = Vec::new();
+        for _ in 0..args.samples {
+            let result =
+                prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
+            durations.push(result.duration.as_secs_f64());
+            if let Some(c) = result.cycles {
+                cycles_vec.push(c as f64);
+            }
 
-        if let Some(cycles) = result.cycles {
-            table.add_row(row![n, cycles, format_duration(result.duration)]);
-        } else {
-            table.add_row(row![n, format_duration(result.duration)]);
+            // reset the state so we can run the next benchmark
+            base_state.reset_to_base().await;
         }
 
-        regression_data.push((n as f64, result.duration.as_secs_f64()));
+        let (avg_duration, std_duration) = average_and_std(&durations);
+        if !cycles_vec.is_empty() {
+            let (avg_cycles, std_cycles) = average_and_std(&cycles_vec);
+            if args.samples > 1 {
+                table.add_row(row![
+                    n,
+                    avg_cycles as u64,
+                    format!("{:.2}", std_cycles),
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+                    format_duration(std::time::Duration::from_secs_f64(std_duration)),
+                ]);
+            } else {
+                table.add_row(row![
+                    n,
+                    avg_cycles as u64,
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration))
+                ]);
+            }
+        } else if args.samples > 1 {
+            table.add_row(row![
+                n,
+                format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+                format_duration(std::time::Duration::from_secs_f64(std_duration)),
+            ]);
+        } else {
+            table.add_row(row![
+                n,
+                format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+            ]);
+        }
+
+        regression_data.push((n as f64, avg_duration));
     }
 
     table.printstd();
