@@ -162,7 +162,7 @@ async fn extend_with_bch_blocks(
     state: &mut BchOverwriteMMRState,
     n: usize,
 ) -> (BlockLeaf, Header, MMRProof, Vec<BlockLeaf>) {
-    println!("Extending chain with {} BCH blocks...", n);
+    println!("Extending chain with {} disposed blocks...", n);
     let start = Instant::now();
 
     let parent_leaf = state.parent_leaf;
@@ -335,9 +335,9 @@ async fn main() {
 
     let mut table = Table::new();
     if matches!(benchmark_type, ProofGeneratorType::Execute) {
-        table.add_row(row!["n (BCH blocks)", "Cycle Count", "Time"]);
+        table.add_row(row!["Disposed Blocks", "Cycle Count", "Time"]);
     } else {
-        table.add_row(row!["n (BCH blocks)", "Time to Prove"]);
+        table.add_row(row!["Disposed Blocks", "Time to Prove"]);
     }
 
     let proof_generator = RiftProofGenerator::new(benchmark_type);
