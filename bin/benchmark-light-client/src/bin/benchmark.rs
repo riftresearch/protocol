@@ -36,7 +36,7 @@ struct Args {
     samples: usize,
 }
 
-/// Holds a “circuit MMR” (used for building the final root) and a “client MMR” (for real proofs),
+/// Holds a "circuit MMR" (used for building the final root) and a "client MMR" (for real proofs),
 /// plus metadata about the chain at block #478558.
 struct BchOverwriteMMRState {
     indexed_mmr: IndexedMMR<Keccak256Hasher>, // used to fetch real proofs
@@ -310,7 +310,7 @@ async fn prove_chain_transition(
     proof_generator.prove(&program_input).await.unwrap()
 }
 
-/// Runs the entire “dispose n BCH blocks and append n+1 BTC blocks” scenario with real MMR proofs.
+/// Runs the entire "dispose n BCH blocks and append n+1 BTC blocks" scenario with real MMR proofs.
 async fn prove_bch_overwrite(
     n: usize,
     base_state: &mut BchOverwriteMMRState,
@@ -330,11 +330,7 @@ fn average_and_std(values: &[f64]) -> (f64, f64) {
     if values.len() < 2 {
         return (mean, 0.0);
     }
-    let variance = values
-        .iter()
-        .map(|v| (*v - mean).powi(2))
-        .sum::<f64>()
-        / n;
+    let variance = values.iter().map(|v| (*v - mean).powi(2)).sum::<f64>() / n;
     (mean, variance.sqrt())
 }
 
@@ -348,9 +344,7 @@ async fn main() {
         "cpu" => ProofGeneratorType::ProveCPU,
         "cuda" => ProofGeneratorType::ProveCUDA,
         "network" => ProofGeneratorType::ProveNetwork,
-        _ => panic!(
-            "Invalid prover type. Must be 'execute', 'cpu', 'cuda', or 'network'"
-        ),
+        _ => panic!("Invalid prover type. Must be 'execute', 'cpu', 'cuda', or 'network'"),
     };
 
     let mut table = Table::new();
@@ -383,7 +377,7 @@ async fn main() {
     );
 
     let mut regression_data: Vec<(f64, f64)> = Vec::new();
-    for &n in &[1, 5, 10, 20, 50, 75, 100, 500, 1000, 2016] {
+    for &n in &[1, 6, 24, 144, 288, 576, 1008, 2016] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
 
         let mut durations = Vec::new();
