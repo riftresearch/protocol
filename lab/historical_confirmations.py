@@ -5,7 +5,10 @@ maximum time to mine a certain number of sequential blocks.
 """
 
 from scipy.stats import gamma
+from scipy.optimize import curve_fit
 from block_analysis import get_associated_time_to_mines
+import numpy as np
+import matplotlib.pyplot as plt
 
 # Parameters
 scale = 10  # Scale (θ) = average time per block (minutes)
@@ -18,7 +21,7 @@ print(f"[CDF] Probability of {shape} block/s mining in {max_times:.2f} minutes: 
 
 # Parameters
 scale = 10  # Scale (θ) = average time per block (minutes)
-search_ranges = range(1, 255)
+search_ranges = range(2, 255)
 shape = list(search_ranges) # Shape (k) = num blocks 
 max_times = [max_time / 60 for block_range, max_time in get_associated_time_to_mines(windows=search_ranges)[0].items()]
 
@@ -29,45 +32,50 @@ for i in range(len(shape)):
     probabilities.append(probability)
     print(f"[CDF] Probability of {shape[i]} block/s mining in {max_times[i]:.2f} minutes: {probability*100:.10f}%")
 
-# ----------------------------------------
-# Add-on: fit line & quadratic, graph them
-# ----------------------------------------
-import numpy as np
-import matplotlib.pyplot as plt
+blocks = np.array(shape, dtype=float)
+minutes = np.array(max_times, dtype=float)
 
-# Convert the lists you already built
-blocks = np.array(shape, dtype=float)        #  n  (1 … 254)
-minutes = np.array(max_times, dtype=float)   #  t(n)
+# Helper for R²
+def r2(actual, predicted):
+    ss_res = np.sum((actual - predicted)**2)
+    ss_tot = np.sum((actual - actual.mean())**2)
+    return 1 - ss_res/ss_tot
 
-# ----- linear (degree-1) fit -----
-lin_coeff = np.polyfit(blocks, minutes, 1)   # [slope, intercept]
-lin_fit   = np.poly1d(lin_coeff)
-lin_pred  = lin_fit(blocks)
+# Linear fit
+lin_coef = np.polyfit(blocks, minutes, 1)
+lin_pred = np.poly1d(lin_coef)(blocks)
+r2_lin = r2(minutes, lin_pred)
 
-# ----- quadratic (degree-2) fit -----
-quad_coeff = np.polyfit(blocks, minutes, 2)  # [a, b, c]  for  a n² + b n + c
-quad_fit   = np.poly1d(quad_coeff)
-quad_pred  = quad_fit(blocks)
+# Quadratic fit
+quad_coef = np.polyfit(blocks, minutes, 2)
+quad_pred = np.poly1d(quad_coef)(blocks)
+r2_quad = r2(minutes, quad_pred)
 
-# ----- R² for each model -----
-ss_tot   = np.sum((minutes - minutes.mean())**2)
-r2_lin   = 1 - np.sum((minutes - lin_pred )**2) / ss_tot
-r2_quad  = 1 - np.sum((minutes - quad_pred)**2) / ss_tot
+# Power-law non-linear fit
+def power_law(n, c, d):
+    return c * n**d
 
-print("\n--- Fits on max-time data -------------------------------------")
-print("Linear :  t(n) ≈ {:.4f}·n  + {:.4f}     (R² = {:.4f})"
-      .format(lin_coeff[0], lin_coeff[1], r2_lin))
-print("Quadrat:  t(n) ≈ {:.6f}·n² + {:.4f}·n + {:.4f}  (R² = {:.4f})"
-      .format(quad_coeff[0], quad_coeff[1], quad_coeff[2], r2_quad))
+p0 = (minutes[0], 0.7)  # crude initial guess
+pwr_coef, _ = curve_fit(power_law, blocks, minutes, p0=p0, maxfev=10000)
+c_hat, d_hat = pwr_coef
+pwr_pred = power_law(blocks, c_hat, d_hat)
+r2_pwr = r2(minutes, pwr_pred)
 
-# ----- plot -----
-plt.figure(figsize=(8, 5))
-plt.scatter(blocks, minutes,  color='tab:orange', label='data', s=20)
-plt.plot(blocks, lin_pred,   label=f'linear fit  (R²≈{r2_lin:.3f})')
-plt.plot(blocks, quad_pred,  label=f'quadratic fit (R²≈{r2_quad:.3f})')
-plt.xlabel('Blocks mined (n)')
-plt.ylabel('Time to mine n sequential blocks (minutes)')
-plt.title('Empirical max-time data with linear & quadratic fits')
+# Print formulas
+print("Linear    : t(n) ≈ {:.4f}·n + {:.2f}          R²={:.4f}".format(lin_coef[0], lin_coef[1], r2_lin))
+print("Quadratic : t(n) ≈ {:.6f}·n² + {:.4f}·n + {:.2f}  R²={:.4f}".format(
+    quad_coef[0], quad_coef[1], quad_coef[2], r2_quad))
+print("Power‑law : t(n) ≈ {:.2f}·n^{:.3f}              R²={:.4f}".format(c_hat, d_hat, r2_pwr))
+
+# Plot
+plt.figure(figsize=(8,5))
+plt.scatter(blocks, minutes, color='tab:orange', label='data', s=18)
+plt.plot(blocks, lin_pred, label=f'linear (R²≈{r2_lin:.3f})')
+plt.plot(blocks, quad_pred, label=f'quadratic (R²≈{r2_quad:.3f})')
+plt.plot(blocks, pwr_pred, label=f'power‑law (R²≈{r2_pwr:.3f})', linestyle='--')
+plt.xlabel('Blocks')
+plt.ylabel('Minutes')
+plt.title('Sequential‑block mining times: linear vs quadratic vs power‑law')
 plt.legend()
 plt.tight_layout()
 plt.show()
