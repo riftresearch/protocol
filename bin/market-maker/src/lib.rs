@@ -15,14 +15,10 @@ use data_engine::engine::ContractDataEngine;
 use eyre::Result;
 use log::error;
 use rift_sdk::{
-<<<<<<< HEAD
-    bitcoin_utils::{self, AsyncBitcoinClient},
+    bitcoin_utils::AsyncBitcoinClient,
     checkpoint_mmr::CheckpointedBlockTree,
-=======
-    bitcoin_utils::{AsyncBitcoinClient},
->>>>>>> main
     create_websocket_wallet_provider,
-    fee_provider::{BtcFeeOracle, BtcFeeProvider},
+    fee_provider::{BtcFeeOracle, BtcFeeProvider, EsploraClient},
     handle_background_thread_result,
     txn_broadcast::TransactionBroadcaster,
     txn_builder::P2WPKHBitcoinWallet,
@@ -147,16 +143,7 @@ impl MakerConfig {
             self.btc_mnemonic_derivation_path.as_deref(),
         )?;
 
-        let btc_client = Arc::new(
-            AsyncBitcoinClient::new(
-                self.btc_rpc.clone(),
-                Auth::None,
-                Duration::from_millis(self.btc_rpc_timeout_ms),
-            )
-            .await?,
-        );
-
-        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(btc_client.clone()));
+        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(self.btc_rpc.clone()));
         btc_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
 
         let evm_rpc = wallet_provider.clone().erased();

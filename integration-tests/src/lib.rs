@@ -11,6 +11,8 @@ mod fork_watchtower_test;
 #[cfg(test)]
 mod hypernode_test;
 #[cfg(test)]
+mod quote_test;
+#[cfg(test)]
 mod test_utils;
 #[cfg(test)]
 mod txn_broadcast_test;
