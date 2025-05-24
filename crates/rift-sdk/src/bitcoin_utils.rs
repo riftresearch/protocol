@@ -166,6 +166,7 @@ impl AuthExt for Auth {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncBitcoinClient {
     client: BitcoinClient,
 }
@@ -284,8 +285,55 @@ impl AsyncBitcoinClient {
                 results.push(result);
             }
         }
-
         Ok(results)
+    }
+
+    pub async fn estimate_smart_fee(
+        &self,
+        conf_target: u32,
+        mode: Option<&str>,
+    ) -> bitcoincore_rpc_async::Result<EstimateSmartFeeResult> {
+        let estimate_mode = mode.unwrap_or("CONSERVATIVE");
+        self.call(
+            "estimatesmartfee",
+            &[
+                serde_json::json!(conf_target),
+                serde_json::json!(estimate_mode),
+            ],
+        )
+        .await
+    }
+
+    pub async fn estimate_fee_rate_sats_per_vb(
+        &self,
+        conf_target: u32,
+        mode: Option<&str>,
+    ) -> Result<u64, RiftSdkError> {
+        let result: EstimateSmartFeeResult = self
+            .estimate_smart_fee(conf_target, mode)
+            .await
+            .map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!("estimatesmartfee RPC failed: {}", e))
+            })?;
+
+        if let Some(errors) = result.errors {
+            return Err(RiftSdkError::BitcoinRpcError(format!(
+                "estimatesmartfee returned errors: {:?}",
+                errors
+            )));
+        }
+
+        let feerate_btc_per_kvb = result.feerate.ok_or_else(|| {
+            RiftSdkError::BitcoinRpcError("estimatesmartfee did not return a feerate".to_string())
+        })?;
+
+        let feerate_sats_per_vb = (feerate_btc_per_kvb * 100_000.0).round() as u64;
+        if feerate_sats_per_vb == 0 {
+            return Err(RiftSdkError::BitcoinRpcError(
+                "Estimated fee rate is zero".to_string(),
+            ));
+        }
+        Ok(feerate_sats_per_vb)
     }
 }
 
@@ -808,4 +856,13 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         Ok(headers)
     }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct EstimateSmartFeeResult {
+    #[serde(default)]
+    pub feerate: Option<f64>, // in BTC/kB or BTC/kvB
+    #[serde(default)]
+    pub errors: Option<Vec<String>>,
+    pub blocks: u32,
 }

@@ -2,8 +2,11 @@ pub mod bitcoin_utils;
 pub mod btc_txn_broadcaster;
 pub mod checkpoint_mmr;
 mod errors;
+pub mod fee_provider;
 pub mod indexed_mmr;
 pub mod proof_generator;
+pub mod quote;
+pub mod chains;
 pub mod txn_broadcast;
 pub mod txn_builder;
 
