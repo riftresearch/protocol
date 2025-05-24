@@ -18,7 +18,7 @@ rift-core = { workspace = true }
 sol-bindings= { workspace = true }
 bitcoincore-rpc-async = { workspace = true }
 checkpoint-downloader = { workspace = true }
-
+tiny-keccak = { workspace = true }
 
 reqwest = { workspace = true }
 tokio-util = { workspace = true }

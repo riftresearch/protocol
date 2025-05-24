@@ -2446,7 +2446,7 @@ dependencies = [
  "data-engine-server",
  "electrsd",
  "env_logger",
- "esplora-client",
+ "esplora-client 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "eyre",
  "futures",
  "futures-util",
@@ -2781,6 +2781,19 @@ checksum = "976dd42dc7e85965fe702eb8164f21f450704bdde31faefd6471dba214cb594e"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "esplora-client"
+version = "0.12.0"
+dependencies = [
+ "bitcoin",
+ "hex-conservative 0.2.1",
+ "log",
+ "minreq",
+ "reqwest 0.12.15",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -4343,6 +4356,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sol-bindings",
+ "tiny-keccak",
  "tokio",
  "tokio-rusqlite",
  "tokio-util",
@@ -5911,6 +5925,7 @@ dependencies = [
  "bitcoin-light-client-core",
  "bitcoincore-rpc-async",
  "crypto-bigint",
+ "esplora-client 0.12.0",
  "eyre",
  "futures",
  "hex",

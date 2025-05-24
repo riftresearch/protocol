@@ -1,5 +1,4 @@
 pub mod auction_claimer;
-mod main;
 
 use std::{sync::Arc, time::Duration};
 
@@ -14,11 +13,12 @@ use clap::Parser;
 use data_engine::engine::ContractDataEngine;
 use eyre::Result;
 use log::error;
+use rift_sdk::fee_provider::EthFeeOracle;
 use rift_sdk::{
     bitcoin_utils::AsyncBitcoinClient,
     checkpoint_mmr::CheckpointedBlockTree,
     create_websocket_wallet_provider,
-    fee_provider::{BtcFeeOracle, BtcFeeProvider, EsploraClient},
+    fee_provider::{BtcFeeOracle, BtcFeeProvider},
     handle_background_thread_result,
     txn_broadcast::TransactionBroadcaster,
     txn_builder::P2WPKHBitcoinWallet,
@@ -75,13 +75,17 @@ pub struct MakerConfig {
     #[arg(long, env, default_value = "50")]
     pub spread_bps: u64,
 
-    /// ETH gas fee in satoshis equivalent
-    #[arg(long, env, default_value = "2000")]
-    pub eth_gas_fee_sats: u64,
-
     /// Maximum batch size for claiming auctions
     #[arg(long, env, default_value = "5")]
     pub max_batch_size: usize,
+
+    /// BTC transaction size in virtual bytes (optional, defaults to standard tx size)
+    #[arg(long, env)]
+    pub btc_tx_size_vbytes: Option<u64>,
+
+    /// Mempool.space API URL for fetching BTC fee rates (e.g., https://mempool.space/api)
+    #[arg(long, env, default_value = "https://mempool.space/api")]
+    pub mempool_api_url: String,
 
     /// Location of checkpoint file (bitcoin blocks that are committed to at contract deployment)
     #[arg(long, env)]
@@ -106,6 +110,10 @@ pub struct MakerConfig {
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
     pub btc_batch_rpc_size: usize,
+
+    /// Chain ID for the EVM network
+    #[arg(long, env, default_value = "1")]
+    pub chain_id: u64,
 }
 
 fn parse_network(s: &str) -> Result<Network, String> {
@@ -143,10 +151,17 @@ impl MakerConfig {
             self.btc_mnemonic_derivation_path.as_deref(),
         )?;
 
-        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(self.btc_rpc.clone()));
+        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(self.mempool_api_url.clone()));
         btc_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
 
         let evm_rpc = wallet_provider.clone().erased();
+
+        let eth_fee_oracle = Arc::new(EthFeeOracle::new(self.chain_id));
+        eth_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
+        info!(
+            "ETH Fee Provider (EthFeeOracle) initialized and updater spawned for chain_id: {}",
+            self.chain_id
+        );
 
         let evm_tx_broadcaster = Arc::new(TransactionBroadcaster::new(
             wallet_provider,
@@ -171,9 +186,10 @@ impl MakerConfig {
                 .map_err(|e| eyre::eyre!("Invalid market maker address: {}", e))?,
             spread_bps: self.spread_bps,
             btc_fee_provider: btc_fee_oracle.clone(),
-            eth_gas_fee_sats: self.eth_gas_fee_sats,
+            eth_fee_provider: eth_fee_oracle.clone(),
             max_batch_size: self.max_batch_size,
             evm_ws_rpc: self.evm_ws_rpc.clone(),
+            btc_tx_size_vbytes: self.btc_tx_size_vbytes,
         };
 
         // Initialize contract data engine if light client address is provided

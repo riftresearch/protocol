@@ -48,7 +48,7 @@ pub async fn get_gas_data(chain_id: u64, fetch_eth_price: bool) -> Result<ChainD
         .to_owned();
 
     // randomize the rpcs
-    let mut rng = rand::rng();
+    let mut rng = rand::thread_rng();
     rpcs.shuffle(&mut rng);
 
     for rpc_window in rpcs.chunks(CHUNK_SIZE) {
@@ -84,19 +84,15 @@ pub async fn get_gas_data(chain_id: u64, fetch_eth_price: bool) -> Result<ChainD
                 None
             };
 
-            if let Some(gas_price) = gas_price {
-                Some(ChainData {
-                    name: CHAIN_ID_TO_NAME_MAP
-                        .get(&chain_id_str)
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                        .unwrap_or_else(|| format!("Unknown Chain: {}", chain_id_str)),
-                    gas_per_unit_wei: gas_price,
-                    eth_price,
-                })
-            } else {
-                None
-            }
+            gas_price.map(|gas_price| ChainData {
+                name: CHAIN_ID_TO_NAME_MAP
+                    .get(&chain_id_str)
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| format!("Unknown Chain: {}", chain_id_str)),
+                gas_per_unit_wei: gas_price,
+                eth_price,
+            })
         }))
         .await;
 

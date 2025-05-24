@@ -20,6 +20,38 @@ use tokio::{
     sync::{mpsc, Mutex, RwLock},
     task::JoinSet,
 };
+use rift_sdk::fee_provider::EthFeeProvider;
+use tiny_keccak::{Hasher, Keccak};
+
+const AUCTION_CLAIM_GAS_LIMIT: u64 = 300_000;
+
+// Default BTC transaction size calculation
+const BTC_P2WPKH_INPUT_VBYTES: u64 = 68;  // Witness input size
+const BTC_P2WPKH_OUTPUT_VBYTES: u64 = 31; // P2WPKH output size
+const BTC_P2PKH_OUTPUT_VBYTES: u64 = 34;  // P2PKH output size
+const BTC_P2SH_OUTPUT_VBYTES: u64 = 32;   // P2SH output size
+const BTC_TX_OVERHEAD_VBYTES: u64 = 11;   // Version (4) + locktime (4) + input/output counts (1-3)
+const BTC_OP_RETURN_OUTPUT_VBYTES: u64 = 43; // OP_RETURN with 32 bytes of data
+
+const DEFAULT_BTC_TX_VBYTES: u64 = BTC_TX_OVERHEAD_VBYTES + 
+    BTC_P2WPKH_INPUT_VBYTES + 
+    BTC_P2WPKH_OUTPUT_VBYTES + // payment output
+    BTC_P2WPKH_OUTPUT_VBYTES + // change output
+    BTC_OP_RETURN_OUTPUT_VBYTES; // OP_RETURN for order hash
+trait SolidityHash {
+    fn hash(&self) -> [u8; 32];
+}
+
+impl SolidityHash for DutchAuction {
+    fn hash(&self) -> [u8; 32] {
+        let mut hasher = Keccak::v256();
+        let mut output = [0u8; 32];
+        let abi_encoded = self.abi_encode();
+        hasher.update(&abi_encoded);
+        hasher.finalize(&mut output);
+        output
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PendingAuction {
@@ -53,9 +85,10 @@ pub struct AuctionClaimerConfig {
     pub market_maker_address: Address,
     pub spread_bps: u64,
     pub btc_fee_provider: Arc<dyn BtcFeeProvider>,
-    pub eth_gas_fee_sats: u64,
+    pub eth_fee_provider: Arc<dyn EthFeeProvider>,
     pub max_batch_size: usize,
     pub evm_ws_rpc: String,
+    pub btc_tx_size_vbytes: Option<u64>,
 }
 
 /// Finds best block to claim an auction for profit
@@ -63,8 +96,9 @@ pub async fn calculate_optimal_claim_block(
     auction: &DutchAuction,
     spread_bps: u64,
     btc_fee_provider: Arc<dyn BtcFeeProvider>,
-    eth_gas_fee_sats: u64,
+    eth_fee_provider: Arc<dyn EthFeeProvider>,
     current_block: u64,
+    btc_tx_size_vbytes: Option<u64>,
 ) -> Option<u64> {
     if spread_bps == 0 {
         debug!("Invalid spread bps: #{}", spread_bps);
@@ -72,6 +106,8 @@ pub async fn calculate_optimal_claim_block(
     }
 
     let btc_fee_sats = btc_fee_provider.get_fee_rate_sats_per_vb().await;
+    let eth_sats_per_gas = eth_fee_provider.get_fee_rate_sats_per_eth_gas().await;
+    let eth_gas_fee_sats = eth_sats_per_gas * AUCTION_CLAIM_GAS_LIMIT;
 
     // Get auction parameters
     let start_btc_out_f64 = u128::try_from(auction.dutchAuctionParams.startBtcOut)
@@ -101,15 +137,23 @@ pub async fn calculate_optimal_claim_block(
     let btc_fee_sats_f64 = btc_fee_sats as f64;
     let eth_gas_fee_sats_f64 = eth_gas_fee_sats as f64;
     let redemption_fee_f64 = 0.0; // 0 for cbBTC
-
+    
     // Synthetic BTC is deposit amount
     let synthetic_btc_f64 = deposit_amount_f64;
 
     // Calculate max BTC we'd send
     // sentSats_max = (sBTC - 2f_btc - f_eth - r(sBTC)) / (1 + s/10^4)
-    let double_btc_fee_f64 = btc_fee_sats_f64 * 2.0;
+    let tx_size_vbytes = btc_tx_size_vbytes.unwrap_or(DEFAULT_BTC_TX_VBYTES);
+    
+    let total_btc_fee_f64 = btc_fee_sats_f64 * (tx_size_vbytes as f64) * 2.0;
+    
+    debug!(
+        "BTC fee calculation: {} sats/vB * {} vBytes * 2 txs = {} sats total",
+        btc_fee_sats, tx_size_vbytes, total_btc_fee_f64
+    );
+
     let numerator_f64 =
-        synthetic_btc_f64 - double_btc_fee_f64 - eth_gas_fee_sats_f64 - redemption_fee_f64;
+        synthetic_btc_f64 - total_btc_fee_f64 - eth_gas_fee_sats_f64 - redemption_fee_f64;
 
     let spread_factor_f64 = spread_bps_f64 / 10000.0;
     let denominator_f64 = 1.0 + spread_factor_f64;
@@ -153,7 +197,7 @@ pub async fn calculate_optimal_claim_block(
         );
         return None;
     }
-
+    
     // If above start amount, profitable now
     if max_sent_sats_f64 >= start_btc_out_f64 {
         debug!(
@@ -173,7 +217,7 @@ pub async fn calculate_optimal_claim_block(
     }
 
     // Find optimal with decay formula
-
+    
     // t(a) = t_0 + (t_1 - t_0)(a - a_0)/(a_1 - a_0)
 
     let t_0 = start_block;
@@ -202,12 +246,12 @@ pub async fn calculate_optimal_claim_block(
     }
 
     let block_offset_f64 =
-        (decay_blocks as f64) * (price_diff_to_target_f64 / btc_price_decay_range_f64);
-
+    (decay_blocks as f64) * (price_diff_to_target_f64 / btc_price_decay_range_f64);
+    
     // Calculate block offset
     let optimal_block_f64 = (t_0 as f64) + block_offset_f64;
     let optimal_block = optimal_block_f64.ceil() as u64;
-
+    
     // Get optimal block
     let optimal_block = optimal_block.max(start_block).max(current_block);
 
@@ -256,6 +300,7 @@ impl AuctionClaimer {
         let auction_tx_for_listener = auction_tx.clone();
         let contract_data_engine = contract_data_engine.clone();
         let transaction_broadcaster_for_listener = transaction_broadcaster.clone();
+        let eth_fee_provider_for_listener = config.eth_fee_provider.clone();
 
         join_set.spawn(async move {
             info!("Starting event listener task");
@@ -375,12 +420,50 @@ impl AuctionClaimer {
                 );
 
                 // Check if auction is still valid
-                if auction.state != 0 {
-                    info!(
-                        "Skipping auction #{} as it's no longer claimable",
-                        auction.index
-                    );
-                    continue;
+                let auction_index = auction.index;
+                
+                match auction_house_instance
+                    .auctionHashes(U256::from(auction_index))
+                    .call()
+                    .await
+                {
+                    Ok(stored_hash) => {
+                        let expected_hash = FixedBytes::<32>::from(auction.hash());
+                        
+                        if stored_hash != expected_hash {
+                            info!(
+                                "Auction #{} state has changed before claim (hash mismatch), skipping",
+                                auction_index
+                            );
+                            continue;
+                        }
+                        
+                        let current_block = match provider_for_claimer.get_block_number().await {
+                            Ok(block) => block,
+                            Err(e) => {
+                                error!(
+                                    "Failed to get current block for expiry check on auction #{}: {:?}",
+                                    auction_index, e
+                                );
+                                continue;
+                            }
+                        };
+                        let deadline = auction.dutchAuctionParams.deadline;
+                        if U256::from(current_block) >= deadline {
+                            info!(
+                                "Auction #{} has expired before claim, skipping",
+                                auction_index
+                            );
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to verify auction #{} state before claim: {:?}",
+                            auction_index, e
+                        );
+                        continue;
+                    }
                 }
 
                 // Check whitelist requirements
@@ -393,22 +476,43 @@ impl AuctionClaimer {
                         provider_for_claimer.clone(),
                     );
 
-                    // Check if maker is whitelisted
-                    let is_whitelisted = match whitelist_instance
+                    match whitelist_instance
                         .isWhitelisted(config_for_claimer.market_maker_address, Bytes::new())
                         .call()
                         .await
                     {
-                        Ok(result) => result,
-                        Err(e) => {
-                            error!("Error checking whitelist: {:?}", e);
-                            false
+                        Ok(is_whitelisted) => {
+                            if !is_whitelisted {
+                                info!(
+                                    "Market maker {} not whitelisted for auction #{} (whitelist: {})",
+                                    config_for_claimer.market_maker_address,
+                                    auction.index,
+                                    whitelist_contract_address
+                                );
+                                continue;
+                            }
+                            debug!(
+                                "Market maker {} is whitelisted for auction #{}",
+                                config_for_claimer.market_maker_address, auction.index
+                            );
                         }
-                    };
-
-                    if !is_whitelisted {
-                        // Not for us, skip
-                        continue;
+                        Err(e) => {
+                            let error_str = e.to_string();
+                            if error_str.contains("connection") || 
+                               error_str.contains("timeout") || 
+                               error_str.contains("network") {
+                                warn!(
+                                    "Network error checking whitelist for auction #{}: {:?}. Skipping for safety.",
+                                    auction.index, e
+                                );
+                            } else {
+                                error!(
+                                    "Whitelist contract error for auction #{}: {:?}. This auction may have invalid whitelist configuration.",
+                                    auction.index, e
+                                );
+                            }
+                            continue;
+                        }
                     }
                 }
 
@@ -416,10 +520,42 @@ impl AuctionClaimer {
                 let filler_auth_data = Bytes::new();
 
                 // Get Merkle proof
-                let (leaf, siblings, peaks) = contract_data_engine_for_claimer
+                let proof_result = contract_data_engine_for_claimer
                     .get_tip_proof()
-                    .await
-                    .unwrap();
+                    .await;
+                
+                let (leaf, siblings, peaks) = match proof_result {
+                    Ok((leaf, siblings, peaks)) => {
+                        let leaf_height = leaf.height;
+                        let current_block = match provider_for_claimer.get_block_number().await {
+                            Ok(block) => block,
+                            Err(e) => {
+                                error!(
+                                    "Failed to get current block for auction #{}: {:?}",
+                                    auction.index, e
+                                );
+                                continue;
+                            }
+                        };
+                        
+                        const MAX_PROOF_AGE_BLOCKS: u64 = 10;
+                        if current_block > leaf_height as u64 + MAX_PROOF_AGE_BLOCKS {
+                            warn!(
+                                "MMR proof too stale for auction #{}: leaf height {} vs current block {}",
+                                auction.index, leaf_height, current_block
+                            );
+                        }
+                        
+                        (leaf, siblings, peaks)
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to get MMR proof for auction #{}: {:?}",
+                            auction.index, e
+                        );
+                        continue;
+                    }
+                };
 
                 // Claim the auction
                 let claim_call = auction_house_instance.claimAuction(
@@ -497,62 +633,115 @@ impl AuctionClaimer {
         match extract_auction_from_log(&log) {
             Ok(auction) => {
                 // Handle Created state auctions
-                if auction.state == 0 {
-                    // Check whitelist if needed
-                    if auction.dutchAuctionParams.fillerWhitelistContract != Address::ZERO {
-                        let whitelist_address = auction.dutchAuctionParams.fillerWhitelistContract;
-
-                        let whitelist_instance =
-                            MappingWhitelistInstance::new(whitelist_address, provider.clone());
-
-                        let is_whitelisted = match whitelist_instance
-                            .isWhitelisted(config.market_maker_address, Bytes::new())
-                            .call()
-                            .await
-                        {
-                            Ok(result) => result,
-                            Err(e) => {
-                                error!("Error checking whitelist: {:?}", e);
-                                false
-                            }
-                        };
-
-                        if !is_whitelisted {
-                            return Ok(());
+                let auction_index = auction.index;
+                let auction_state = auction.state;
+                
+                {
+                    let mut auctions = pending_auctions.lock().await;
+                    let mut updated_auctions = BinaryHeap::new();
+                    
+                    while let Some(Reverse(pending)) = auctions.pop() {
+                        if pending.auction.index != auction_index {
+                            updated_auctions.push(Reverse(pending));
+                        } else if pending.auction.state != auction_state {
+                            info!(
+                                "Auction #{} state changed from {} to {}, removing from pending queue",
+                                auction_index, pending.auction.state, auction_state
+                            );
+                        } else {
+                            updated_auctions.push(Reverse(pending));
                         }
                     }
+                    
+                    *auctions = updated_auctions;
+                }
+                
+                match auction_state {
+                    0 => {
+                        debug!("Processing auction #{} in Created state", auction_index);
+                        
+                        if auction.dutchAuctionParams.fillerWhitelistContract != Address::ZERO {
+                            let whitelist_address = auction.dutchAuctionParams.fillerWhitelistContract;
 
-                    // Check if profitable to claim
-                    if let Some(claim_block) = calculate_optimal_claim_block(
-                        &auction,
-                        config.spread_bps,
-                        config.btc_fee_provider.clone(),
-                        config.eth_gas_fee_sats,
-                        (provider.get_block_number().await).unwrap_or(0),
-                    )
-                    .await
-                    {
-                        // Add to pending queue
-                        let pending_auction = PendingAuction {
-                            auction: auction.clone(),
-                            claim_at_block: claim_block,
+                            let whitelist_instance =
+                                MappingWhitelistInstance::new(whitelist_address, provider.clone());
+
+                            match whitelist_instance
+                                .isWhitelisted(config.market_maker_address, Bytes::new())
+                                .call()
+                                .await
+                            {
+                                Ok(is_whitelisted) => {
+                                    if !is_whitelisted {
+                                        debug!(
+                                            "Market maker {} not whitelisted for auction #{}, skipping",
+                                            config.market_maker_address, auction_index
+                                        );
+                                        return Ok(());
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Error checking whitelist for auction #{}: {:?}. Assuming not whitelisted.",
+                                        auction_index, e
+                                    );
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        let current_block = match provider.get_block_number().await {
+                            Ok(block) => block,
+                            Err(e) => {
+                                error!("Failed to get current block: {:?}", e);
+                                0
+                            }
                         };
+                        
+                        if let Some(claim_block) = calculate_optimal_claim_block(
+                            &auction,
+                            config.spread_bps,
+                            config.btc_fee_provider.clone(),
+                            config.eth_fee_provider.clone(),
+                            current_block,
+                            config.btc_tx_size_vbytes,
+                        )
+                        .await
+                        {
+                            let pending_auction = PendingAuction {
+                                auction: auction.clone(),
+                                claim_at_block: claim_block,
+                            };
 
-                        let mut auctions = pending_auctions.lock().await;
-                        auctions.push(Reverse(pending_auction));
+                            let mut auctions = pending_auctions.lock().await;
+                            auctions.push(Reverse(pending_auction));
 
-                        info!(
-                            "Added auction #{} to pending queue, will claim at block {}",
-                            auction.index, claim_block
-                        );
-                    } else {
-                        info!("Auction #{} is not profitable, skipping", auction.index);
+                            info!(
+                                "Added auction #{} to pending queue, will claim at block {}",
+                                auction.index, claim_block
+                            );
+                        } else {
+                            info!("Auction #{} is not profitable, skipping", auction.index);
+                        }
                     }
-                } else {
-                    info!(
-                        "Auction #{} received with state {}",
-                        auction.index, auction.state
-                    );
+                    1 => {
+                        info!(
+                            "Auction #{} has been filled (claimed by someone else)",
+                            auction.index
+                        );
+                    }
+                    2 => {
+                        info!(
+                            "Auction #{} has been refunded",
+                            auction.index
+                        );
+                    }
+                    _ => {
+                        warn!(
+                            "Auction #{} received with unknown state {}",
+                            auction.index, auction.state
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -579,7 +768,7 @@ impl AuctionClaimer {
                 if pending.claim_at_block <= current_block {
                     if let Some(Reverse(auction)) = auctions.pop() {
                         auctions_to_verify.push(auction);
-
+                        
                         // Process in batches
                         if auctions_to_verify.len() >= max_batch_size {
                             break;
@@ -592,19 +781,58 @@ impl AuctionClaimer {
             }
         }
 
+        let auction_house_instance = BTCDutchAuctionHouseInstance::new(
+            config.auction_house_address,
+            provider.clone(),
+        );
+
         // Verify each auction before claiming
         let mut auctions_to_claim = Vec::new();
 
         for pending in auctions_to_verify {
-            // Make sure auction is still valid
-            if pending.auction.state != 0 {
-                info!(
-                    "Skipping auction #{} - no longer claimable",
-                    pending.auction.index
-                );
-                continue;
-            } else {
-                auctions_to_claim.push(pending);
+            let auction_index = pending.auction.index;
+            
+            match auction_house_instance
+                .auctionHashes(U256::from(auction_index))
+                .call()
+                .await
+            {
+                Ok(stored_hash) => {
+                    let current_hash = FixedBytes::<32>::from(pending.auction.hash());
+                    
+                    if stored_hash != current_hash {
+                        debug!(
+                            "Auction #{} state has changed (hash mismatch), re-evaluating",
+                            auction_index
+                        );
+                        
+                        info!(
+                            "Skipping auction #{} - state has changed on-chain",
+                            auction_index
+                        );
+                        continue;
+                    }
+                    
+                    if pending.auction.state == 0 {
+                        let deadline = pending.auction.dutchAuctionParams.deadline;
+                        if U256::from(current_block) >= deadline {
+                            info!(
+                                "Skipping auction #{} - has expired (deadline: {}, current: {})",
+                                auction_index, deadline, current_block
+                            );
+                            continue;
+                        }
+                    }
+                    
+                    auctions_to_claim.push(pending);
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to query auction #{} state: {:?}",
+                        auction_index, e
+                    );
+                    continue;
+                }
             }
         }
 
@@ -626,3 +854,4 @@ impl AuctionClaimer {
         Ok(())
     }
 }
+

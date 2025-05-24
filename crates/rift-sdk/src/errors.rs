@@ -43,6 +43,9 @@ pub enum RiftSdkError {
 
     #[error("Invalid private key: {0}")]
     InvalidPrivateKey(String),
+
+    #[error("Generic error: {0}")]
+    Generic(String),
 }
 
 pub type Result<T> = std::result::Result<T, RiftSdkError>;
