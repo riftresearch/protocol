@@ -27,7 +27,7 @@ use accumulators::mmr::element_index_to_leaf_index;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Type of prover to use: "execute", "cpu", "cuda", or "network"
+    /// Type of prover to use: "execute", "gas", "cpu", "cuda", or "network"
     #[arg(short, long, default_value = "execute")]
     prover: String,
 
@@ -341,6 +341,7 @@ async fn main() {
     let args = Args::parse();
     let benchmark_type = match args.prover.to_lowercase().as_str() {
         "execute" => ProofGeneratorType::Execute,
+        "gas" => ProofGeneratorType::Gas,
         "cpu" => ProofGeneratorType::ProveCPU,
         "cuda" => ProofGeneratorType::ProveCUDA,
         "network" => ProofGeneratorType::ProveNetwork,
@@ -359,6 +360,18 @@ async fn main() {
             ]);
         } else {
             table.add_row(row!["Disposed Blocks", "Cycle Count", "Time"]);
+        }
+    } else if matches!(benchmark_type, ProofGeneratorType::Gas) {
+        if args.samples > 1 {
+            table.add_row(row![
+                "Disposed Blocks",
+                "Avg Gas",
+                "Gas Std Dev",
+                "Avg Time",
+                "Time Std Dev"
+            ]);
+        } else {
+            table.add_row(row!["Disposed Blocks", "Gas", "Time"]);
         }
     } else if args.samples > 1 {
         table.add_row(row!["Disposed Blocks", "Avg Time", "Time Std Dev"]);
@@ -382,12 +395,16 @@ async fn main() {
 
         let mut durations = Vec::new();
         let mut cycles_vec = Vec::new();
+        let mut gas_vec = Vec::new();
         for _ in 0..args.samples {
             let result =
                 prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
             durations.push(result.duration.as_secs_f64());
             if let Some(c) = result.cycles {
                 cycles_vec.push(c as f64);
+            }
+            if let Some(g) = result.gas {
+                gas_vec.push(g as f64);
             }
 
             // reset the state so we can run the next benchmark
@@ -409,6 +426,23 @@ async fn main() {
                 table.add_row(row![
                     n,
                     avg_cycles as u64,
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration))
+                ]);
+            }
+        } else if !gas_vec.is_empty() {
+            let (avg_gas, std_gas) = average_and_std(&gas_vec);
+            if args.samples > 1 {
+                table.add_row(row![
+                    n,
+                    avg_gas as u64,
+                    format!("{:.2}", std_gas),
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+                    format_duration(std::time::Duration::from_secs_f64(std_duration)),
+                ]);
+            } else {
+                table.add_row(row![
+                    n,
+                    avg_gas as u64,
                     format_duration(std::time::Duration::from_secs_f64(avg_duration))
                 ]);
             }
