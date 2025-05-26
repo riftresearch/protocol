@@ -21,12 +21,10 @@ use rift_core::OrderFillingTransaction;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
-use rift_sdk::{
-    get_retarget_height_from_block_height, DatabaseLocation,
-};
+use rift_sdk::{get_retarget_height_from_block_height, DatabaseLocation};
 use sol_bindings::{
-    BaseCreateOrderParams, BlockProofParams, CreateOrderParams, OrderCreated,
-    PaymentsCreated, SettleOrderParams, SubmitPaymentProofParams,
+    BaseCreateOrderParams, BlockProofParams, CreateOrderParams, OrderCreated, PaymentsCreated,
+    SettleOrderParams, SubmitPaymentProofParams,
 };
 use tokio::signal;
 
@@ -288,7 +286,7 @@ async fn test_simulated_swap_end_to_end() {
     let canon_txid = canon_bitcoin_tx.compute_txid();
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
-    let payment_tx = txn_builder::build_rift_payment_transaction(
+    let payment_tx = txn_builder::build_rift_payment_transaction_single_input(
         &vec![new_order.clone()],
         &canon_txid,
         &canon_bitcoin_tx,

@@ -26,6 +26,8 @@ sol-bindings= { workspace = true }
 hex = { workspace = true }
 bip39 = { workspace = true }
 tracing = { workspace = true }
+esplora-client = { workspace = true }
+bitcoin-coin-selection = { workspace = true}
 
 [dev-dependencies]
 tempfile = { workspace = true }

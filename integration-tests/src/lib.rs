@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod bitcoin_data_engine_test;
 #[cfg(test)]
+mod btc_txn_broadcaster_test;
+#[cfg(test)]
 mod data_engine_test;
 #[cfg(test)]
 mod devnet_test;

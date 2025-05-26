@@ -253,7 +253,7 @@ async fn test_hypernode_simple_swap() {
     let canon_txid = canon_bitcoin_tx.compute_txid();
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
-    let payment_tx = txn_builder::build_rift_payment_transaction(
+    let payment_tx = txn_builder::build_rift_payment_transaction_single_input(
         &vec![new_order.clone()],
         &canon_txid,
         &canon_bitcoin_tx,

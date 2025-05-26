@@ -7,10 +7,7 @@ use once_cell::sync::OnceCell;
 use rift_sdk::txn_builder::P2WPKHBitcoinWallet;
 
 use std::sync::Arc;
-use tracing_subscriber::{
-    util::SubscriberInitExt,
-    EnvFilter,
-};
+use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
 
 use bitcoincore_rpc_async::RpcApi;
 
@@ -20,10 +17,7 @@ use devnet::{RiftDevnet, RiftExchangeHarnessWebsocket};
 
 use rift_sdk::txn_broadcast::TransactionBroadcaster;
 
-use rift_sdk::{
-    create_websocket_wallet_provider, txn_builder,
-    DatabaseLocation,
-};
+use rift_sdk::{create_websocket_wallet_provider, txn_builder, DatabaseLocation};
 use sol_bindings::{
     BaseCreateOrderParams, BlockLeaf as ContractBlockLeaf, CreateOrderParams, Order,
 };
@@ -246,7 +240,7 @@ pub async fn send_bitcoin_for_deposit(
     let canon_txid = canon_bitcoin_tx.compute_txid();
 
     // ---4) Taker broadcasts a Bitcoin transaction paying that scriptPubKey---
-    let payment_tx = txn_builder::build_rift_payment_transaction(
+    let payment_tx = txn_builder::build_rift_payment_transaction_single_input(
         &vec![vault.clone()],
         &canon_txid,
         &canon_bitcoin_tx,
