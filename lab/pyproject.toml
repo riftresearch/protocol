@@ -5,6 +5,7 @@ description = ""
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "bitcoinlib>=0.7.3",
     "matplotlib>=3.10.0",
     "numpy>=2.2.1",
     "scipy>=1.14.1",

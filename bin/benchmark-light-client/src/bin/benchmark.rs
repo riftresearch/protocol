@@ -27,12 +27,16 @@ use accumulators::mmr::element_index_to_leaf_index;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The type of benchmark to run: "execute", "prove-cpu", "prove-cuda", or "prove-network"
+    /// Type of prover to use: "execute", "gas", "cpu", "cuda", or "network"
     #[arg(short, long, default_value = "execute")]
-    r#type: String,
+    prover: String,
+
+    /// Number of samples to average for each block count
+    #[arg(long, default_value_t = 1)]
+    samples: usize,
 }
 
-/// Holds a “circuit MMR” (used for building the final root) and a “client MMR” (for real proofs),
+/// Holds a "circuit MMR" (used for building the final root) and a "client MMR" (for real proofs),
 /// plus metadata about the chain at block #478558.
 struct BchOverwriteMMRState {
     indexed_mmr: IndexedMMR<Keccak256Hasher>, // used to fetch real proofs
@@ -162,7 +166,7 @@ async fn extend_with_bch_blocks(
     state: &mut BchOverwriteMMRState,
     n: usize,
 ) -> (BlockLeaf, Header, MMRProof, Vec<BlockLeaf>) {
-    println!("Extending chain with {} BCH blocks...", n);
+    println!("Extending chain with {} disposed blocks...", n);
     let start = Instant::now();
 
     let parent_leaf = state.parent_leaf;
@@ -306,7 +310,7 @@ async fn prove_chain_transition(
     proof_generator.prove(&program_input).await.unwrap()
 }
 
-/// Runs the entire “dispose n BCH blocks and append n+1 BTC blocks” scenario with real MMR proofs.
+/// Runs the entire "dispose n BCH blocks and append n+1 BTC blocks" scenario with real MMR proofs.
 async fn prove_bch_overwrite(
     n: usize,
     base_state: &mut BchOverwriteMMRState,
@@ -320,24 +324,59 @@ async fn prove_bch_overwrite(
     prove_chain_transition(chain_transition, benchmark_type, proof_generator).await
 }
 
+fn average_and_std(values: &[f64]) -> (f64, f64) {
+    let n = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / n;
+    if values.len() < 2 {
+        return (mean, 0.0);
+    }
+    let variance = values.iter().map(|v| (*v - mean).powi(2)).sum::<f64>() / n;
+    (mean, variance.sqrt())
+}
+
 #[tokio::main]
 async fn main() {
     sp1_sdk::utils::setup_logger();
 
     let args = Args::parse();
-    let benchmark_type = match args.r#type.to_lowercase().as_str() {
+    let benchmark_type = match args.prover.to_lowercase().as_str() {
         "execute" => ProofGeneratorType::Execute,
-        "prove-cpu" => ProofGeneratorType::ProveCPU,
-        "prove-cuda" => ProofGeneratorType::ProveCUDA,
-        "prove-network" => ProofGeneratorType::ProveNetwork,
-        _ => panic!("Invalid benchmark type. Must be 'execute', 'prove-cpu', 'prove-cuda', or 'prove-network'"),
+        "gas" => ProofGeneratorType::Gas,
+        "cpu" => ProofGeneratorType::ProveCPU,
+        "cuda" => ProofGeneratorType::ProveCUDA,
+        "network" => ProofGeneratorType::ProveNetwork,
+        _ => panic!("Invalid prover type. Must be 'execute', 'cpu', 'cuda', or 'network'"),
     };
 
     let mut table = Table::new();
     if matches!(benchmark_type, ProofGeneratorType::Execute) {
-        table.add_row(row!["n (BCH blocks)", "Cycle Count", "Time"]);
+        if args.samples > 1 {
+            table.add_row(row![
+                "Disposed Blocks",
+                "Avg Cycles",
+                "Cycle Std Dev",
+                "Avg Time",
+                "Time Std Dev"
+            ]);
+        } else {
+            table.add_row(row!["Disposed Blocks", "Cycle Count", "Time"]);
+        }
+    } else if matches!(benchmark_type, ProofGeneratorType::Gas) {
+        if args.samples > 1 {
+            table.add_row(row![
+                "Disposed Blocks",
+                "Avg Gas",
+                "Gas Std Dev",
+                "Avg Time",
+                "Time Std Dev"
+            ]);
+        } else {
+            table.add_row(row!["Disposed Blocks", "Gas", "Time"]);
+        }
+    } else if args.samples > 1 {
+        table.add_row(row!["Disposed Blocks", "Avg Time", "Time Std Dev"]);
     } else {
-        table.add_row(row!["n (BCH blocks)", "Time to Prove"]);
+        table.add_row(row!["Disposed Blocks", "Time to Prove"]);
     }
 
     let proof_generator = RiftProofGenerator::new(benchmark_type);
@@ -350,21 +389,111 @@ async fn main() {
         format_duration(start.elapsed())
     );
 
-    for &n in &[1, 5, 10, 50, 100, 500, 1_000, 10_000] {
+    let mut regression_data: Vec<(f64, f64)> = Vec::new();
+    for &n in &[1, 6, 24, 144, 288, 576, 1008, 2016] {
         println!("=== Overwriting {n} BCH blocks with {n}+1 BTC blocks ===");
-        let result =
-            prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
-        println!("Result: {:?}", result);
 
-        // reset the state so we can run the next benchmark
-        base_state.reset_to_base().await;
+        let mut durations = Vec::new();
+        let mut cycles_vec = Vec::new();
+        let mut gas_vec = Vec::new();
+        for _ in 0..args.samples {
+            let result =
+                prove_bch_overwrite(n, &mut base_state, benchmark_type, &proof_generator).await;
+            durations.push(result.duration.as_secs_f64());
+            if let Some(c) = result.cycles {
+                cycles_vec.push(c as f64);
+            }
+            if let Some(g) = result.gas {
+                gas_vec.push(g as f64);
+            }
 
-        if let Some(cycles) = result.cycles {
-            table.add_row(row![n, cycles, format_duration(result.duration)]);
-        } else {
-            table.add_row(row![n, format_duration(result.duration)]);
+            // reset the state so we can run the next benchmark
+            base_state.reset_to_base().await;
         }
+
+        let (avg_duration, std_duration) = average_and_std(&durations);
+        if !cycles_vec.is_empty() {
+            let (avg_cycles, std_cycles) = average_and_std(&cycles_vec);
+            if args.samples > 1 {
+                table.add_row(row![
+                    n,
+                    avg_cycles as u64,
+                    format!("{:.2}", std_cycles),
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+                    format_duration(std::time::Duration::from_secs_f64(std_duration)),
+                ]);
+            } else {
+                table.add_row(row![
+                    n,
+                    avg_cycles as u64,
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration))
+                ]);
+            }
+        } else if !gas_vec.is_empty() {
+            let (avg_gas, std_gas) = average_and_std(&gas_vec);
+            if args.samples > 1 {
+                table.add_row(row![
+                    n,
+                    avg_gas as u64,
+                    format!("{:.2}", std_gas),
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+                    format_duration(std::time::Duration::from_secs_f64(std_duration)),
+                ]);
+            } else {
+                table.add_row(row![
+                    n,
+                    avg_gas as u64,
+                    format_duration(std::time::Duration::from_secs_f64(avg_duration))
+                ]);
+            }
+        } else if args.samples > 1 {
+            table.add_row(row![
+                n,
+                format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+                format_duration(std::time::Duration::from_secs_f64(std_duration)),
+            ]);
+        } else {
+            table.add_row(row![
+                n,
+                format_duration(std::time::Duration::from_secs_f64(avg_duration)),
+            ]);
+        }
+
+        regression_data.push((n as f64, avg_duration));
     }
 
     table.printstd();
+
+    if regression_data.len() > 1 {
+        let count = regression_data.len() as f64;
+        let sum_x: f64 = regression_data.iter().map(|(x, _)| *x).sum();
+        let sum_y: f64 = regression_data.iter().map(|(_, y)| *y).sum();
+        let mean_x = sum_x / count;
+        let mean_y = sum_y / count;
+
+        let mut numerator = 0.0;
+        let mut denominator = 0.0;
+        for (x, y) in regression_data.iter() {
+            numerator += (*x - mean_x) * (*y - mean_y);
+            denominator += (*x - mean_x).powi(2);
+        }
+
+        let slope = numerator / denominator;
+        let intercept = mean_y - slope * mean_x;
+
+        let mut ss_res = 0.0;
+        let mut ss_tot = 0.0;
+        for (x, y) in regression_data.iter() {
+            let predicted = slope * *x + intercept;
+            ss_res += (*y - predicted).powi(2);
+            ss_tot += (*y - mean_y).powi(2);
+        }
+
+        let r_squared = 1.0 - ss_res / ss_tot;
+
+        println!(
+            "Linear regression: proof time as a function of blocks disposed + appended:\ny = {:.4} x + {:.4};  R² = {:.4}",
+            slope, intercept, r_squared
+        );
+    }
 }
