@@ -97,10 +97,15 @@ which = "7.0.3"
 bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1", default-features = false}
 # This needs to be pinned to the same version of rust-bitcoin
 bitcoincore-rpc-async = { git = "https://github.com/riftresearch/rust-bitcoincore-rpc-async", tag = "bitcoin-0.32.5-patch-v1" }
+esplora-client = { git = "https://github.com/riftresearch/rust-esplora-client.git", rev = "a571328ff799993f877d87db8dad6e4c6b313225", features = ["async", "tokio"] }
+bitcoin-coin-selection =  { version = "0.7.0", features = ["rand"]}
 
 corepc-node = { version = "0.7.0", features = ["28_0", "download"] }
 electrsd = { version= "0.33.0", features = ["corepc-node_28_0", "esplora_a33e97e1", "legacy"] }
+<<<<<<< HEAD
 esplora-client = { git = "https://github.com/riftresearch/rust-esplora-client.git", features = ["async", "tokio"] }
+=======
+>>>>>>> 3d6b51948f2110783177ad526a79c9ac405b3c21
 
 dotenv = "0.15.0"
 bip39 = "2.1.0"

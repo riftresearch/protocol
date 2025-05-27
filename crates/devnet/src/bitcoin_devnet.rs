@@ -144,20 +144,39 @@ impl BitcoinDevnet {
         };
 
         let esplora_client = if using_esplora {
+            let esplora_url = electrsd
+                .as_ref()
+                .unwrap()
+                .esplora_url
+                .clone()
+                .expect("Failed to get electrsd esplora url");
+
+            println!("Raw esplora URL: {:#?}", esplora_url);
+
+            // Ensure the URL has the proper scheme
+            let full_url =
+                if esplora_url.starts_with("http://") || esplora_url.starts_with("https://") {
+                    esplora_url
+                } else {
+                    format!("http://{}", esplora_url)
+                };
+
+            println!("Full esplora URL: {}", full_url);
+
             Some(Arc::new(
-                EsploraClient::from_builder(esplora_client::Builder::new(
-                    &electrsd
-                        .as_ref()
-                        .unwrap()
-                        .esplora_url
-                        .clone()
-                        .expect("Failed to get electrsd esplora url"),
-                ))
-                .expect("Failed to create esplora client"),
+                EsploraClient::from_builder(esplora_client::Builder::new(&full_url))
+                    .expect("Failed to create esplora client"),
             ))
         } else {
             None
         };
+
+        if let Some(ref client) = esplora_client {
+            let test_resp = client.get_fee_estimates().await;
+            if test_resp.is_err() {
+                return Err(eyre!("Electrs client failed {}", test_resp.err().unwrap()));
+            }
+        }
 
         let cookie_str = std::fs::read_to_string(cookie.clone()).unwrap();
         // http://<user>:<password>@<host>:<port>/

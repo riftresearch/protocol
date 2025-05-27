@@ -77,8 +77,8 @@ def print_results(max_times, max_sequences):
         print(f"Longest time to mine {window} sequential blocks: {max_time} seconds ({max_time/60:.2f} minutes)")
         print(f"  Blocks: {start_block} to {end_block}")
 
-
-def get_associated_time_to_mines(windows: range = range(2, 10), ignore_before: int = 100_000):
+# 337340 is the first block in the first difficulty adjustment of 2015 01/03/2015
+def get_associated_time_to_mines(windows: range = range(2, 10), ignore_before: int = 337340):
     blocks = load_blocks(ignore_before=ignore_before)
     print(f"Loaded {len(blocks)} blocks")
 

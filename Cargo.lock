@@ -1396,6 +1396,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-coin-selection"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf95cd5f7da622e999c2a107a80ccc2079c93bf34acfcf206d2b961c3195f735"
+dependencies = [
+ "bitcoin",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "bitcoin-core-rs"
 version = "0.1.0"
 dependencies = [
@@ -2786,6 +2796,7 @@ dependencies = [
 [[package]]
 name = "esplora-client"
 version = "0.12.0"
+<<<<<<< HEAD
 dependencies = [
  "bitcoin",
  "hex-conservative 0.2.1",
@@ -2801,6 +2812,9 @@ name = "esplora-client"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "209cf00e44b979682b22be38672317d8bb48dd5ea2726e61b762d6b14b5842f2"
+=======
+source = "git+https://github.com/riftresearch/rust-esplora-client.git?rev=a571328ff799993f877d87db8dad6e4c6b313225#a571328ff799993f877d87db8dad6e4c6b313225"
+>>>>>>> 3d6b51948f2110783177ad526a79c9ac405b3c21
 dependencies = [
  "bitcoin",
  "hex-conservative 0.2.1",
@@ -5922,10 +5936,15 @@ dependencies = [
  "backoff",
  "bip39",
  "bitcoin",
+ "bitcoin-coin-selection",
  "bitcoin-light-client-core",
  "bitcoincore-rpc-async",
  "crypto-bigint",
+<<<<<<< HEAD
  "esplora-client 0.12.0",
+=======
+ "esplora-client",
+>>>>>>> 3d6b51948f2110783177ad526a79c9ac405b3c21
  "eyre",
  "futures",
  "hex",

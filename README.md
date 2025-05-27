@@ -13,7 +13,7 @@ Trustless cross-chain swap protocol for Bitcoin and Ethereum
 To install the required dependencies on Ubuntu, run:
 ```sh
 sudo apt update
-sudo apt install -y clang pkg-config libssl-dev build-essential
+sudo apt install build-essential pkg-config libssl-dev git-lfs clang
 ```
 
 ### macOS

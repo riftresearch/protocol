@@ -1,8 +1,8 @@
 use crate::RIFT_PROGRAM_ELF;
 use rift_core::giga::RiftProgramInput;
 use sp1_sdk::{
-    EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey,
+    SP1Stdin, SP1VerifyingKey,
 };
 use std::str::FromStr;
 use std::sync::Arc;
@@ -32,6 +32,9 @@ impl RiftProofGenerator {
                 std::env::set_var("SP1_PROVER", "network");
             }
             ProofGeneratorType::Execute => {
+                std::env::set_var("SP1_PROVER", "mock");
+            }
+            ProofGeneratorType::Gas => {
                 std::env::set_var("SP1_PROVER", "mock");
             }
         }
@@ -80,6 +83,7 @@ impl RiftProofGenerator {
                         proof_type: ProofGeneratorType::Execute,
                         proof: None,
                         cycles: Some(report.total_instruction_count()),
+                        gas: None,
                         duration: start.elapsed(),
                     }
                 }
@@ -91,6 +95,18 @@ impl RiftProofGenerator {
                         proof_type: prover_type,
                         proof: Some(sp1_proof),
                         cycles: None,
+                        gas: None,
+                        duration: start.elapsed(),
+                    }
+                }
+                ProofGeneratorType::Gas => {
+                    let (_output, report) =
+                        prover_client.execute(RIFT_PROGRAM_ELF, &stdin).run()?;
+                    Proof {
+                        proof_type: ProofGeneratorType::Gas,
+                        proof: None,
+                        cycles: None,
+                        gas: Some(report.gas.unwrap()),
                         duration: start.elapsed(),
                     }
                 }
@@ -114,6 +130,7 @@ impl RiftProofGenerator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofGeneratorType {
     Execute,
+    Gas,
     ProveCPU,
     ProveCUDA,
     ProveNetwork,
@@ -138,6 +155,7 @@ pub struct Proof {
     pub proof_type: ProofGeneratorType,
     pub proof: Option<SP1ProofWithPublicValues>,
     pub cycles: Option<u64>,
+    pub gas: Option<u64>,
     pub duration: std::time::Duration,
 }
 
