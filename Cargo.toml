@@ -102,10 +102,6 @@ bitcoin-coin-selection =  { version = "0.7.0", features = ["rand"]}
 
 corepc-node = { version = "0.7.0", features = ["28_0", "download"] }
 electrsd = { version= "0.33.0", features = ["corepc-node_28_0", "esplora_a33e97e1", "legacy"] }
-<<<<<<< HEAD
-esplora-client = { git = "https://github.com/riftresearch/rust-esplora-client.git", features = ["async", "tokio"] }
-=======
->>>>>>> 3d6b51948f2110783177ad526a79c9ac405b3c21
 
 dotenv = "0.15.0"
 bip39 = "2.1.0"

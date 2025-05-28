@@ -9,10 +9,7 @@ use alloy::{
     network::{EthereumWallet, TransactionBuilder},
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
-    providers::{
-        ext::AnvilApi,
-        DynProvider, Provider, ProviderBuilder, WsConnect,
-    },
+    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WsConnect},
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };

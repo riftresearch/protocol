@@ -26,16 +26,11 @@ sol-bindings= { workspace = true }
 hex = { workspace = true }
 bip39 = { workspace = true }
 tracing = { workspace = true }
-<<<<<<< HEAD
 anyhow = "1.0.95"
 rand = "0.9.0"
 lazy_static = "1.5.0"
 esplora-client = { workspace = true }
-
-=======
-esplora-client = { workspace = true }
 bitcoin-coin-selection = { workspace = true}
->>>>>>> 3d6b51948f2110783177ad526a79c9ac405b3c21
 
 [dev-dependencies]
 tempfile = { workspace = true }
