@@ -95,7 +95,7 @@ pub use internal_solidity_types::BTCDutchAuctionHouse::{
     self, AuctionUpdated, BTCDutchAuctionHouseInstance, DutchAuction, DutchAuctionParams,
 };
 
-pub use internal_solidity_types::MappingWhitelist::MappingWhitelistInstance;
+pub use internal_solidity_types::MappingWhitelist::{self, MappingWhitelistInstance};
 
 pub use internal_solidity_types::BitcoinLightClient::BitcoinLightClientInstance;
 
