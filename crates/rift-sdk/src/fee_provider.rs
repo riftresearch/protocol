@@ -11,12 +11,12 @@ use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
-const BTC_FEE_UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 5); // Update every 5 minutes
+const BTC_FEE_UPDATE_INTERVAL: Duration = Duration::from_secs(30); // Update every 30 seconds
 const DEFAULT_BTC_FEE_SATS_PER_VB: u64 = 10; // A fallback default
 const TARGET_BLOCK_VSIZE: u64 = 1_000_000; // Target virtual size for simulated block (1M vBytes)
 
 // Constants for ETH Fee Provider
-const ETH_FEE_UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 5); // Update every 5 minutes
+const ETH_FEE_UPDATE_INTERVAL: Duration = Duration::from_secs(30); // Update every 30 seconds
 const DEFAULT_ETH_SATS_PER_GAS: u64 = 1; // Fallback: 1 satoshi per gas unit
 
 #[async_trait::async_trait]

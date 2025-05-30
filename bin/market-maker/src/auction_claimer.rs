@@ -145,6 +145,7 @@ pub async fn calculate_optimal_claim_block(
     // sentSats_max = (sBTC - 2f_btc - f_eth - r(sBTC)) / (1 + s/10^4)
     let tx_size_vbytes = btc_tx_size_vbytes.unwrap_or(DEFAULT_BTC_TX_VBYTES);
     
+    // 2x to account for the cost to redeem the bridged bitcoin
     let total_btc_fee_f64 = btc_fee_sats_f64 * (tx_size_vbytes as f64) * 2.0;
     
     debug!(
@@ -635,27 +636,7 @@ impl AuctionClaimer {
                 // Handle Created state auctions
                 let auction_index = auction.index;
                 let auction_state = auction.state;
-                
-                {
-                    let mut auctions = pending_auctions.lock().await;
-                    let mut updated_auctions = BinaryHeap::new();
-                    
-                    while let Some(Reverse(pending)) = auctions.pop() {
-                        if pending.auction.index != auction_index {
-                            updated_auctions.push(Reverse(pending));
-                        } else if pending.auction.state != auction_state {
-                            info!(
-                                "Auction #{} state changed from {} to {}, removing from pending queue",
-                                auction_index, pending.auction.state, auction_state
-                            );
-                        } else {
-                            updated_auctions.push(Reverse(pending));
-                        }
-                    }
-                    
-                    *auctions = updated_auctions;
-                }
-                
+
                 match auction_state {
                     0 => {
                         debug!("Processing auction #{} in Created state", auction_index);
