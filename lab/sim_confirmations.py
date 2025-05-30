@@ -138,10 +138,7 @@ def predict_confirmation_time(k: int, coefficients: Tuple[float, float, float]) 
 def main():
     """Compute model params for confirmation model fitting."""
     confidences = [
-        0.999,    # 99.9% 
-        0.99999,   # 99.99%
-        0.999999,  # 99.999%
-        0.9999999, # 99.9999% 
+        0.999999999,
     ]
 
     for confidence in confidences:
@@ -152,18 +149,19 @@ def main():
             heavy_k=6,
             epsilon=1e-4,
             show_plot=False,
-            print_results=False
+            print_results=True
         )
         β0, β1, β2 = result['coefficients']
         print(f"Equation: t(k) = {β0:.6f} + {β1:.6f}√k + {β2:.6f}k")
-        print("\nFirst 6 k values and errors:")
-        print("k\tTime\t\tAbs Error\tRel Error")
+        print("\nFirst 6 confirmations and errors:")
+        print("k\tExact (min)\tFit (min)\tAbs Error\tRel Error")
         for i in range(6):
             k = result['k_vals'][i]
-            time = predict_confirmation_time(k, result['coefficients'])
+            exact = result['t_exact'][i]
+            fit = result['t_fit'][i]
             abs_err = result['errors_abs'][i]
             rel_err = result['errors_rel'][i]
-            print(f"{k}\t{time:.6f}\t{abs_err:.6f}\t{rel_err:.6f}")
+            print(f"{k}\t{exact:.6f}\t{fit:.6f}\t{abs_err:.6f}\t{rel_err:.6f}")
         print()
 
 
