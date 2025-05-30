@@ -4005,6 +4005,7 @@ dependencies = [
  "tempfile",
  "test-data-utils",
  "tokio",
+ "tokio-rusqlite",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
@@ -4335,6 +4336,7 @@ dependencies = [
  "async-trait",
  "backoff",
  "bitcoin",
+ "bitcoin-data-engine",
  "bitcoin-light-client-core",
  "bitcoincore-rpc-async",
  "checkpoint-downloader",
@@ -4342,6 +4344,7 @@ dependencies = [
  "clap",
  "dashmap",
  "data-engine",
+ "esplora-client",
  "eyre",
  "futures",
  "hex",
@@ -8139,6 +8142,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.14.5",
  "pin-project-lite",
+ "slab",
  "tokio",
 ]
 
