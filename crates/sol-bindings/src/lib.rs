@@ -44,23 +44,6 @@ mod internal_solidity_types {
         "../../contracts/artifacts/RiftExchange.json"
     );
 
-    sol! {
-        #[allow(missing_docs)]
-        /// Foo
-        struct Foo {
-            uint256 a;
-            uint64 b;
-            Bar greater;
-        }
-
-        #[allow(missing_docs)]
-        /// Bar
-        enum Bar {
-            A,
-            B,
-        }
-    }
-
     /// the following types are not used as public arguments in the RiftExchange contract,
     /// but can be useful for testing
     pub mod nonpublic_types {
@@ -80,7 +63,6 @@ mod internal_solidity_types {
 // Re-export the nonpublic types under a specific module
 pub mod nonpublic {
     use super::internal_solidity_types;
-    pub use internal_solidity_types::Bar;
 
     pub use internal_solidity_types::nonpublic_types::HelperTypes::{
         BlockLeaf, DeploymentParams, MMRProof, ReleaseMMRProof,

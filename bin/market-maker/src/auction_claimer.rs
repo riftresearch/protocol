@@ -10,10 +10,9 @@ use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
 use rift_sdk::create_websocket_wallet_provider;
 use rift_sdk::fee_provider::BtcFeeProvider;
 use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
-use sol_bindings::BTCDutchAuctionHouse::BlockLeaf;
+use sol_bindings::BTCDutchAuctionHouse::{BTCDutchAuctionHouseErrors, BlockLeaf};
 use sol_bindings::{
-    AuctionUpdated, BTCDutchAuctionHouseInstance, BitcoinLightClientInstance, DutchAuction,
-    MappingWhitelistInstance,
+    AuctionUpdated, BTCDutchAuctionHouseInstance, BitcoinLightClientInstance, DutchAuction, MappingWhitelistInstance
 };
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 use tokio::{
@@ -23,6 +22,7 @@ use tokio::{
 use rift_sdk::fee_provider::EthFeeProvider;
 use tiny_keccak::{Hasher, Keccak};
 
+const MAX_AUCTION_CLAIM_ATTEMPTS: u64 = 3;
 const AUCTION_CLAIM_GAS_LIMIT: u64 = 300_000;
 
 // Default BTC transaction size calculation
@@ -280,7 +280,7 @@ pub fn extract_auction_from_log(log: &Log) -> Result<DutchAuction> {
     Ok(auction)
 }
 
-pub struct AuctionClaimer {}
+pub struct AuctionClaimer;
 
 impl AuctionClaimer {
     /// Start listening for auctions and process them
@@ -439,211 +439,227 @@ impl AuctionClaimer {
         info!("Starting auction claimer task");
 
         while let Some((auction, claim_block)) = auction_rx.recv().await {
-            info!(
-                "Claiming auction #{} at block {}",
-                auction.index, claim_block
-            );
+            for _ in 0..MAX_AUCTION_CLAIM_ATTEMPTS {
+                info!(
+                    "Claiming auction #{} at block {}",
+                    auction.index, claim_block
+                );
 
-            let auction_house_instance = BTCDutchAuctionHouseInstance::new(
-                config.auction_house_address,
-                provider.clone(),
-            );
-
-            // Check if auction is still valid
-            let auction_index = auction.index;
-            
-            match auction_house_instance
-                .auctionHashes(U256::from(auction_index))
-                .call()
-                .await
-            {
-                Ok(stored_hash) => {
-                    let expected_hash = FixedBytes::<32>::from(auction.hash());
-                    
-                    if stored_hash != expected_hash {
-                        info!(
-                            "Auction #{} state has changed before claim (hash mismatch), skipping",
-                            auction_index
-                        );
-                        continue;
-                    }
-                    
-                    let current_block = match provider.get_block_number().await {
-                        Ok(block) => block,
-                        Err(e) => {
-                            error!(
-                                "Failed to get current block for expiry check on auction #{}: {:?}",
-                                auction_index, e
-                            );
-                            continue;
-                        }
-                    };
-                    let deadline = auction.dutchAuctionParams.deadline;
-                    if U256::from(current_block) >= deadline {
-                        info!(
-                            "Auction #{} has expired before claim, skipping",
-                            auction_index
-                        );
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to verify auction #{} state before claim: {:?}",
-                        auction_index, e
-                    );
-                    continue;
-                }
-            }
-
-            // Check whitelist requirements
-            if auction.dutchAuctionParams.fillerWhitelistContract != Address::ZERO {
-                let whitelist_contract_address =
-                    auction.dutchAuctionParams.fillerWhitelistContract;
-
-                let whitelist_instance = MappingWhitelistInstance::new(
-                    whitelist_contract_address,
+                let auction_house_instance = BTCDutchAuctionHouseInstance::new(
+                    config.auction_house_address,
                     provider.clone(),
                 );
 
-                match whitelist_instance
-                    .isWhitelisted(config.market_maker_address, Bytes::new())
+                // Check if auction is still valid
+                let auction_index = auction.index;
+                
+                match auction_house_instance
+                    .auctionHashes(U256::from(auction_index))
                     .call()
                     .await
                 {
-                    Ok(is_whitelisted) => {
-                        if !is_whitelisted {
+                    Ok(stored_hash) => {
+                        let expected_hash = FixedBytes::<32>::from(auction.hash());
+                        
+                        if stored_hash != expected_hash {
                             info!(
-                                "Market maker {} not whitelisted for auction #{} (whitelist: {})",
-                                config.market_maker_address,
-                                auction.index,
-                                whitelist_contract_address
+                                "Auction #{} state has changed before claim (hash mismatch), skipping",
+                                auction_index
                             );
-                            continue;
+                            break;
                         }
-                        debug!(
-                            "Market maker {} is whitelisted for auction #{}",
-                            config.market_maker_address, auction.index
-                        );
+                        
+                        let current_block = match provider.get_block_number().await {
+                            Ok(block) => block,
+                            Err(e) => {
+                                error!(
+                                    "Failed to get current block for expiry check on auction #{}: {:?}",
+                                    auction_index, e
+                                );
+                                break;
+                            }
+                        };
+                        let deadline = auction.dutchAuctionParams.deadline;
+                        if U256::from(current_block) >= deadline {
+                            info!(
+                                "Auction #{} has expired before claim, skipping",
+                                auction_index
+                            );
+                            break;
+                        }
                     }
                     Err(e) => {
-                        let error_str = e.to_string();
-                        if error_str.contains("connection") || 
-                           error_str.contains("timeout") || 
-                           error_str.contains("network") {
-                            warn!(
-                                "Network error checking whitelist for auction #{}: {:?}. Skipping for safety.",
-                                auction.index, e
-                            );
-                        } else {
-                            error!(
-                                "Whitelist contract error for auction #{}: {:?}. This auction may have invalid whitelist configuration.",
-                                auction.index, e
-                            );
-                        }
-                        continue;
+                        error!(
+                            "Failed to verify auction #{} state before claim: {:?}",
+                            auction_index, e
+                        );
+                        break;
                     }
                 }
-            }
 
-            // Prepare claim parameters
-            let filler_auth_data = Bytes::new();
+                // Check whitelist requirements
+                if auction.dutchAuctionParams.fillerWhitelistContract != Address::ZERO {
+                    let whitelist_contract_address =
+                        auction.dutchAuctionParams.fillerWhitelistContract;
 
-            // Get Merkle proof
-            let proof_result = contract_data_engine
-                .get_tip_proof()
-                .await;
-            
-            let (leaf, siblings, peaks) = match proof_result {
-                Ok((leaf, siblings, peaks)) => {
-                    let leaf_height = leaf.height;
-                    let current_block = match provider.get_block_number().await {
-                        Ok(block) => block,
+                    let whitelist_instance = MappingWhitelistInstance::new(
+                        whitelist_contract_address,
+                        provider.clone(),
+                    );
+
+                    match whitelist_instance
+                        .isWhitelisted(config.market_maker_address, Bytes::new())
+                        .call()
+                        .await
+                    {
+                        Ok(is_whitelisted) => {
+                            if !is_whitelisted {
+                                info!(
+                                    "Market maker {} not whitelisted for auction #{} (whitelist: {})",
+                                    config.market_maker_address,
+                                    auction.index,
+                                    whitelist_contract_address
+                                );
+                                break;
+                            }
+                            debug!(
+                                "Market maker {} is whitelisted for auction #{}",
+                                config.market_maker_address, auction.index
+                            );
+                        }
                         Err(e) => {
-                            error!(
-                                "Failed to get current block for auction #{}: {:?}",
-                                auction.index, e
-                            );
-                            continue;
+                            let error_str = e.to_string();
+                            if error_str.contains("connection") || 
+                            error_str.contains("timeout") || 
+                            error_str.contains("network") {
+                                warn!(
+                                    "Network error checking whitelist for auction #{}: {:?}. Skipping for safety.",
+                                    auction.index, e
+                                );
+                            } else {
+                                error!(
+                                    "Whitelist contract error for auction #{}: {:?}. This auction may have invalid whitelist configuration.",
+                                    auction.index, e
+                                );
+                            }
+                            break;
                         }
-                    };
-                    
-                    const MAX_PROOF_AGE_BLOCKS: u64 = 10;
-                    if current_block > leaf_height as u64 + MAX_PROOF_AGE_BLOCKS {
-                        warn!(
-                            "MMR proof too stale for auction #{}: leaf height {} vs current block {}",
-                            auction.index, leaf_height, current_block
-                        );
                     }
-                    
-                    (leaf, siblings, peaks)
                 }
-                Err(e) => {
-                    error!(
-                        "Failed to get MMR proof for auction #{}: {:?}",
-                        auction.index, e
-                    );
-                    continue;
-                }
-            };
 
-            // Claim the auction
-            let claim_call = auction_house_instance.claimAuction(
-                auction.clone(),
-                filler_auth_data.clone(),
-                siblings.into_iter().map(FixedBytes::from).collect(),
-                peaks.into_iter().map(FixedBytes::from).collect(),
-            );
+                // Prepare claim parameters
+                let filler_auth_data = Bytes::new();
 
-            let calldata = claim_call.calldata();
-
-            let tx_request = claim_call
-                .clone()
-                .from(config.market_maker_address)
-                .into_transaction_request();
-
-            info!("Attempting to claim auction #{}", auction.index);
-
-            let claim_broadcast_result = transaction_broadcaster
-                .broadcast_transaction(
-                    calldata.clone(),
-                    tx_request.clone(),
-                    PreflightCheck::Simulate,
-                )
-                .await;
-
-            match claim_broadcast_result {
-                Ok(execution_result) => match execution_result {
-                    TransactionExecutionResult::Success(receipt) => {
-                        info!(
-                            "Successfully claimed auction #{}: tx_hash {}",
-                            auction.index, receipt.transaction_hash
-                        );
+                // Get Merkle proof
+                let proof_result = contract_data_engine
+                    .get_tip_proof()
+                    .await;
+                
+                let (leaf, siblings, peaks) = match proof_result {
+                    Ok((leaf, siblings, peaks)) => {
+                        let leaf_height = leaf.height;
+                        let current_block = match provider.get_block_number().await {
+                            Ok(block) => block,
+                            Err(e) => {
+                                error!(
+                                    "Failed to get current block for auction #{}: {:?}",
+                                    auction.index, e
+                                );
+                                break;
+                            }
+                        };
+                        
+                        const MAX_PROOF_AGE_BLOCKS: u64 = 10;
+                        if current_block > leaf_height as u64 + MAX_PROOF_AGE_BLOCKS {
+                            warn!(
+                                "MMR proof too stale for auction #{}: leaf height {} vs current block {}",
+                                auction.index, leaf_height, current_block
+                            );
+                        }
+                        
+                        (leaf, siblings, peaks)
                     }
-                    TransactionExecutionResult::Revert(revert_info) => {
+                    Err(e) => {
                         error!(
-                            "Claiming auction #{} reverted: {:?} - debug command: {}",
-                            auction.index,
-                            revert_info.error_payload,
-                            revert_info.debug_cli_command
+                            "Failed to get MMR proof for auction #{}: {:?}",
+                            auction.index, e
                         );
+                        break;
                     }
-                    TransactionExecutionResult::InvalidRequest(msg) => {
+                };
+
+                // Claim the auction
+                let claim_call = auction_house_instance.claimAuction(
+                    auction.clone(),
+                    filler_auth_data.clone(),
+                    siblings.into_iter().map(FixedBytes::from).collect(),
+                    peaks.into_iter().map(FixedBytes::from).collect(),
+                );
+
+                let calldata = claim_call.calldata();
+
+                let tx_request = claim_call
+                    .clone()
+                    .from(config.market_maker_address)
+                    .into_transaction_request();
+
+                info!("Attempting to claim auction #{}", auction.index);
+
+                let claim_broadcast_result = transaction_broadcaster
+                    .broadcast_transaction(
+                        calldata.clone(),
+                        tx_request.clone(),
+                        PreflightCheck::Simulate,
+                    )
+                    .await;
+
+                match claim_broadcast_result {
+                    Ok(execution_result) => match execution_result {
+                        TransactionExecutionResult::Success(receipt) => {
+                            info!(
+                                "Successfully claimed auction #{}: tx_hash {}",
+                                auction.index, receipt.transaction_hash
+                            );
+                        }
+                        TransactionExecutionResult::Revert(revert_info) => {
+                            match revert_info.error_payload.as_decoded_interface_error::<BTCDutchAuctionHouseErrors>() {
+                                Some(BTCDutchAuctionHouseErrors::BlockNotInChain(_)) => {
+                                    warn!(
+                                        "Auction #{} failed to claim due to light client update during claim",
+                                        auction.index
+                                    );
+                                    // Note: We continue and NOT break here because we want to try again
+                                    continue;
+                                }
+                                _ => {
+                                    // If any other error occurs we dont really care, just log it
+                                    warn!(
+                                        "Claiming auction #{} reverted: {:?} - debug command: {}",
+                                        auction.index,
+                                        revert_info.error_payload,
+                                        revert_info.debug_cli_command
+                                    );
+                                }
+                            }
+                        }
+                        TransactionExecutionResult::InvalidRequest(msg) => {
+                            error!(
+                                "Invalid request for claiming auction #{}: {}",
+                                auction.index, msg
+                            );
+                        }
+                        TransactionExecutionResult::UnknownError(msg) => {
+                            error!("Unknown error claiming auction #{}: {}", auction.index, msg);
+                        }
+                    },
+                    Err(e) => {
                         error!(
-                            "Invalid request for claiming auction #{}: {}",
-                            auction.index, msg
+                            "Error broadcasting claim for auction #{}: {:?}",
+                            auction.index, e
                         );
                     }
-                    TransactionExecutionResult::UnknownError(msg) => {
-                        error!("Unknown error claiming auction #{}: {}", auction.index, msg);
-                    }
-                },
-                Err(e) => {
-                    error!(
-                        "Error broadcasting claim for auction #{}: {:?}",
-                        auction.index, e
-                    );
                 }
+                break;
             }
         }
         Ok(())
