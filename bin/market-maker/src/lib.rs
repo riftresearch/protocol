@@ -220,8 +220,7 @@ impl MakerConfig {
             contract_data_engine.clone(),
             evm_tx_broadcaster.clone(),
             &mut join_set,
-        )
-        .await?;
+        )?;
 
         handle_background_thread_result(join_set.join_next().await)
     }
