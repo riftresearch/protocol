@@ -1,6 +1,7 @@
 /// Fetch ETH->USD price from Uniswap v3 on Ethereum mainnet
 use crate::chains::RpcProvider;
-use crate::chains::{CHAIN_ID_TO_RPCS_MAP, CHUNK_SIZE, RPC_TIMEOUT};
+use crate::chains::{CHUNK_SIZE, RPC_TIMEOUT};
+use alloy::providers::DynProvider;
 use alloy::{
     primitives::{address, Address, U160, U256},
     providers::{Provider, ProviderBuilder},
@@ -141,9 +142,10 @@ impl FetchEthPrice for RpcProvider {
     }
 }
 
-pub async fn fetch_weth_cbbtc_conversion_rates(chain_id: u64) -> anyhow::Result<ConversionRates> {
-    let chain_id_str = chain_id.to_string();
-
+pub async fn fetch_weth_cbbtc_conversion_rates(
+    provider: DynProvider,
+    chain_id: u64,
+) -> anyhow::Result<ConversionRates> {
     let pool_address = get_weth_cbbtc_pool_address(chain_id).ok_or_else(|| {
         anyhow::anyhow!(
             "WETH/cbBTC pool info not configured for chain_id: {}",
@@ -154,89 +156,55 @@ pub async fn fetch_weth_cbbtc_conversion_rates(chain_id: u64) -> anyhow::Result<
     let weth_address = get_weth_address(chain_id)
         .ok_or_else(|| anyhow::anyhow!("WETH address not configured for chain_id: {}", chain_id))?;
 
-    let mut rpcs = CHAIN_ID_TO_RPCS_MAP[&chain_id_str]["rpcs"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("No RPCs found for chain id: {}", chain_id_str))?
-        .to_owned();
+    let pool_address_clone = pool_address;
+    let weth_address_clone = weth_address;
 
+    let pool = IUniswapV3PoolState::new(pool_address_clone, &provider);
+    let pool_immut = IUniswapV3PoolImmutables::new(pool_address_clone, &provider);
+
+    let rates = match timeout(RPC_TIMEOUT, async {
+        let slot0_data = pool.slot0().call().await?;
+        let token0_addr = pool_immut.token0().call().await?;
+        let token1_addr = pool_immut.token1().call().await?;
+        Ok::<_, anyhow::Error>((slot0_data, token0_addr, token1_addr))
+    })
+    .await
     {
-        let mut rng = rand::thread_rng();
-        rpcs.shuffle(&mut rng);
-    }
+        Ok(Ok((slot0_data, token0_addr, token1_addr))) => {
+            let p_sqrt = q64_96_to_float(slot0_data.sqrtPriceX96);
+            let price_t1_in_t0_unadjusted = p_sqrt * p_sqrt;
 
-    for rpc_window in rpcs.chunks(CHUNK_SIZE) {
-        let rpc_urls: Vec<reqwest::Url> = rpc_window
-            .iter()
-            .map(|rpc| {
-                rpc["url"]
-                    .as_str()
-                    .unwrap_or_else(|| {
-                        rpc.as_str().expect(
-                            "Entry didn't have a defined URL (neither as string nor object)",
-                        )
-                    })
-                    .parse::<reqwest::Url>()
-                    .expect("Invalid URL")
+            let (cbbtc_per_eth, eth_per_cbbtc) = if token0_addr == weth_address_clone {
+                let cbbtc_per_eth =
+                    price_t1_in_t0_unadjusted * 10f64.powi(WETH_DECIMALS - CBBTC_DECIMALS);
+                let eth_per_cbbtc = 1.0 / cbbtc_per_eth;
+                (cbbtc_per_eth, eth_per_cbbtc)
+            } else if token1_addr == weth_address_clone {
+                let eth_per_cbbtc =
+                    price_t1_in_t0_unadjusted / 10f64.powi(WETH_DECIMALS - CBBTC_DECIMALS);
+                let cbbtc_per_eth = 1.0 / eth_per_cbbtc;
+                (cbbtc_per_eth, eth_per_cbbtc)
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Invalid token addresses for WETH/cbBTC pool on chain_id: {}",
+                    chain_id
+                ));
+            };
+
+            Ok::<_, anyhow::Error>(ConversionRates {
+                cbbtc_per_eth,
+                eth_per_cbbtc,
             })
-            .collect();
-
-        let results = futures::future::join_all(rpc_urls.iter().map(|url| {
-            let pool_address_clone = pool_address;
-            let weth_address_clone = weth_address;
-            async move {
-                let provider = ProviderBuilder::new().on_http(url.clone());
-
-                let pool = IUniswapV3PoolState::new(pool_address_clone, &provider);
-                let pool_immut = IUniswapV3PoolImmutables::new(pool_address_clone, &provider);
-
-                match timeout(RPC_TIMEOUT, async {
-                    let slot0_data = pool.slot0().call().await?;
-                    let token0_addr = pool_immut.token0().call().await?;
-                    let token1_addr = pool_immut.token1().call().await?;
-                    Ok::<_, anyhow::Error>((slot0_data, token0_addr, token1_addr))
-                })
-                .await
-                {
-                    Ok(Ok((slot0_data, token0_addr, token1_addr))) => {
-                        let p_sqrt = q64_96_to_float(slot0_data.sqrtPriceX96);
-                        let price_t1_in_t0_unadjusted = p_sqrt * p_sqrt;
-
-                        let (cbbtc_per_eth, eth_per_cbbtc) = if token0_addr == weth_address_clone {
-                            let cbbtc_per_eth = price_t1_in_t0_unadjusted
-                                * 10f64.powi(WETH_DECIMALS - CBBTC_DECIMALS);
-                            let eth_per_cbbtc = 1.0 / cbbtc_per_eth;
-                            (cbbtc_per_eth, eth_per_cbbtc)
-                        } else if token1_addr == weth_address_clone {
-                            let eth_per_cbbtc = price_t1_in_t0_unadjusted
-                                / 10f64.powi(WETH_DECIMALS - CBBTC_DECIMALS);
-                            let cbbtc_per_eth = 1.0 / eth_per_cbbtc;
-                            (cbbtc_per_eth, eth_per_cbbtc)
-                        } else {
-                            return None;
-                        };
-
-                        Some(ConversionRates {
-                            cbbtc_per_eth,
-                            eth_per_cbbtc,
-                        })
-                    }
-                    Ok(Err(_)) | Err(_) => None,
-                }
-            }
-        }))
-        .await;
-
-        for result in results {
-            if let Some(rates) = result {
-                return Ok(rates);
-            }
         }
-    }
+        Ok(Err(_)) | Err(_) => {
+            return Err(anyhow::anyhow!(
+                "No valid provider found for WETH/cbBTC rates on chain_id: {} within timeout period",
+                chain_id
+            ));
+        }
+    }?;
 
-    Err(anyhow::anyhow!(
-        "No valid provider found for WETH/cbBTC rates on chain_id: {} within timeout period",
-        chain_id_str
-    ))
+    Ok(rates)
 }
 
 pub fn q64_96_to_float(num: U160) -> f64 {

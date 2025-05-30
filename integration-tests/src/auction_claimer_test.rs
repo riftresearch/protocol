@@ -151,8 +151,10 @@ async fn test_calculate_optimal_claim_block_comprehensive() {
         .as_ref()
         .expect("No esplora URL");
 
+    let chain_id = devnet.ethereum.anvil.chain_id();
     let btc_fee_provider = Arc::new(BtcFeeOracle::new(format!("http://{}", esplora_url)));
-    let eth_fee_provider = Arc::new(EthFeeOracle::new(8453)); // Base chain ID
+
+    let eth_fee_provider = Arc::new(EthFeeOracle::new(devnet.ethereum.funded_provider, chain_id)); // Base chain ID
 
     let auction_immediate = create_test_auction(
         1,             // index
@@ -382,9 +384,10 @@ async fn test_whitelist_verification() {
         .esplora_url
         .as_ref()
         .expect("No esplora URL");
+    let chain_id = devnet.ethereum.anvil.chain_id();
 
     let btc_fee_provider = Arc::new(BtcFeeOracle::new(format!("http://{}", esplora_url)));
-    let eth_fee_provider = Arc::new(EthFeeOracle::new(8453)); // Base chain ID
+    let eth_fee_provider = Arc::new(EthFeeOracle::new(devnet.ethereum.funded_provider, chain_id)); // Base chain ID
 
     info!("Testing whitelisted maker...");
     let whitelisted_config = AuctionClaimerConfig {
@@ -621,7 +624,9 @@ async fn test_auction_claimer_end_to_end() {
 
         info!("Creating fee providers with esplora URL: {}", esplora_url);
         let btc_fee_provider = Arc::new(BtcFeeOracle::new(format!("http://{}", esplora_url)));
-        let eth_fee_provider = Arc::new(EthFeeOracle::new(8453)); // Base chain ID
+        let chain_id = devnet.ethereum.anvil.chain_id();
+        let eth_fee_provider =
+            Arc::new(EthFeeOracle::new(devnet.ethereum.funded_provider, chain_id)); // Base chain ID
 
         let auction_claimer_config = AuctionClaimerConfig {
             auction_house_address,
@@ -642,12 +647,14 @@ async fn test_auction_claimer_end_to_end() {
         info!("Minting tokens for auction owner...");
         devnet
             .ethereum
-            .mint_token(
-                auction_owner.ethereum_address,
-                U256::from(1000000000u64), // 10 BTC worth of tokens (with 8 decimals)
-            )
+            .token_contract
+            .mint(auction_owner.ethereum_address, U256::from(1000000000u64))
+            .send()
             .await
-            .expect("Failed to mint tokens");
+            .expect("Failed to mint tokens")
+            .watch()
+            .await
+            .expect("Failed to watch mint transaction");
 
         let token_with_owner = devnet::SyntheticBTC::new(
             *devnet.ethereum.token_contract.address(),

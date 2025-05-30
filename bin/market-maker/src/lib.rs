@@ -83,9 +83,9 @@ pub struct MakerConfig {
     #[arg(long, env)]
     pub btc_tx_size_vbytes: Option<u64>,
 
-    /// Mempool.space API URL for fetching BTC fee rates (e.g., https://mempool.space/api)
-    #[arg(long, env, default_value = "https://mempool.space/api")]
-    pub mempool_api_url: String,
+    /// Esplora (blockstream/electrs) API URL for fetching BTC fee rates
+    #[arg(long, env)]
+    pub esplora_api_url: String,
 
     /// Location of checkpoint file (bitcoin blocks that are committed to at contract deployment)
     #[arg(long, env)]
@@ -105,15 +105,11 @@ pub struct MakerConfig {
 
     /// Log chunk size
     #[arg(long, env, default_value = "10000")]
-    pub log_chunk_size: u64,
+    pub evm_log_chunk_size: u64,
 
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
     pub btc_batch_rpc_size: usize,
-
-    /// Chain ID for the EVM network
-    #[arg(long, env, default_value = "1")]
-    pub chain_id: u64,
 }
 
 fn parse_network(s: &str) -> Result<Network, String> {
@@ -144,6 +140,8 @@ impl MakerConfig {
             .await?,
         );
 
+        let chain_id = wallet_provider.get_chain_id().await?;
+
         let btc_wallet = P2WPKHBitcoinWallet::from_mnemonic(
             &self.btc_mnemonic,
             self.btc_mnemonic_passphrase.as_deref(),
@@ -151,16 +149,16 @@ impl MakerConfig {
             self.btc_mnemonic_derivation_path.as_deref(),
         )?;
 
-        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(self.mempool_api_url.clone()));
+        let btc_fee_oracle = Arc::new(BtcFeeOracle::new(self.esplora_api_url.clone()));
         btc_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
 
         let evm_rpc = wallet_provider.clone().erased();
 
-        let eth_fee_oracle = Arc::new(EthFeeOracle::new(self.chain_id));
+        let eth_fee_oracle = Arc::new(EthFeeOracle::new(evm_rpc.clone(), chain_id));
         eth_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
         info!(
             "ETH Fee Provider (EthFeeOracle) initialized and updater spawned for chain_id: {}",
-            self.chain_id
+            chain_id
         );
 
         let evm_tx_broadcaster = Arc::new(TransactionBroadcaster::new(
@@ -177,7 +175,6 @@ impl MakerConfig {
             "Loaded bitcoin blocks from checkpoint file"
         );
 
-        /// TODO: Build the market maker logic, spawn the various actors
         // Initialize the auction claimer configuration
         let auction_claimer_config = auction_claimer::AuctionClaimerConfig {
             auction_house_address: Address::from_str(&self.auction_house_address)
@@ -200,7 +197,7 @@ impl MakerConfig {
                 evm_rpc.clone(),
                 rift_exchange_address,
                 self.deploy_block_number,
-                self.log_chunk_size,
+                self.evm_log_chunk_size,
                 checkpoint_leaves,
                 &mut join_set,
             )

@@ -1,5 +1,6 @@
 use crate::errors::RiftSdkError;
 use crate::quote::fetch_weth_cbbtc_conversion_rates;
+use alloy::providers::DynProvider;
 use alloy::providers::Provider;
 use alloy::providers::ProviderBuilder;
 use esplora_client::r#async::AsyncClient;
@@ -190,6 +191,7 @@ pub trait EthFeeProvider: Send + Sync {
 #[derive(Debug)]
 pub struct EthFeeOracle {
     cached_fee: RwLock<CachedEthFee>,
+    provider: DynProvider,
     chain_id: u64,
 }
 
@@ -202,7 +204,7 @@ struct CachedEthFee {
 }
 
 impl EthFeeOracle {
-    pub fn new(chain_id: u64) -> Self {
+    pub fn new(provider: DynProvider, chain_id: u64) -> Self {
         Self {
             cached_fee: RwLock::new(CachedEthFee {
                 sats_per_eth_gas: DEFAULT_ETH_SATS_PER_GAS,
@@ -212,80 +214,39 @@ impl EthFeeOracle {
                     .checked_sub(ETH_FEE_UPDATE_INTERVAL)
                     .unwrap_or_else(Instant::now),
             }),
+            provider,
             chain_id,
         }
     }
 
     pub fn spawn_updater_in_set(self: Arc<Self>, join_set: &mut JoinSet<eyre::Result<()>>) {
-        info!(
-            "Spawning ETH fee (sats/gas) updater task in JoinSet for chain_id: {}",
-            self.chain_id
-        );
+        info!("Spawning ETH fee (sats/gas) updater task in JoinSet");
         join_set.spawn(async move { self.updater_loop().await });
     }
 
     async fn update_fee_cache(&self) -> Result<u64, RiftSdkError> {
         let gas_price_wei = {
-            let chain_id_str = self.chain_id.to_string();
-            let rpc_data = &crate::chains::CHAIN_ID_TO_RPCS_MAP[&chain_id_str]["rpcs"];
+            let gas_price = self.provider.get_gas_price().await.map_err(|e| {
+                error!("Failed to fetch ETH gas price (wei): {:?}", e);
+                RiftSdkError::Generic(format!("Failed to fetch ETH gas price (wei): {:?}", e))
+            })?;
+            gas_price
+        };
 
-            let rpc_url_opt = rpc_data
-                .as_array()
-                .and_then(|arr| arr.get(0))
-                .and_then(|v| v["url"].as_str().or_else(|| v.as_str()));
-
-            let rpc_url = match rpc_url_opt {
-                Some(u) => u,
-                None => {
-                    error!(
-                        "No RPC URL found for chain_id {} in CHAIN_ID_TO_RPCS_MAP",
-                        self.chain_id
-                    );
-                    return Err(RiftSdkError::Generic(format!(
-                        "Missing RPC URL for chain_id {} gas price fetch",
-                        self.chain_id
-                    )));
-                }
-            };
-
-            let rpc_url_parsed = match Url::parse(rpc_url) {
-                Ok(u) => u,
-                Err(e) => {
-                    error!("Failed to parse RPC URL {}: {:?}", rpc_url, e);
-                    return Err(RiftSdkError::Generic("Invalid RPC URL".to_string()));
-                }
-            };
-
-            let provider = ProviderBuilder::new().on_http(rpc_url_parsed);
-
-            match provider.get_gas_price().await {
-                Ok(price) => price,
+        let conversion_rates =
+            match fetch_weth_cbbtc_conversion_rates(self.provider.clone(), self.chain_id).await {
+                Ok(rates) => rates,
                 Err(e) => {
                     error!(
-                        "Failed to fetch ETH gas price (wei) for chain_id {}: {:?}",
+                        "Failed to fetch WETH/cbBTC conversion rates for chain_id {}: {:?}",
                         self.chain_id, e
                     );
                     return Err(RiftSdkError::Generic(format!(
-                        "ETH gas price fetch error for chain {}: {}",
+                        "WETH/cbBTC conversion rate error for chain {}: {}",
                         self.chain_id, e
                     )));
                 }
-            }
-        };
-
-        let conversion_rates = match fetch_weth_cbbtc_conversion_rates(self.chain_id).await {
-            Ok(rates) => rates,
-            Err(e) => {
-                error!(
-                    "Failed to fetch WETH/cbBTC conversion rates for chain_id {}: {:?}",
-                    self.chain_id, e
-                );
-                return Err(RiftSdkError::Generic(format!(
-                    "WETH/cbBTC conversion rate error for chain {}: {}",
-                    self.chain_id, e
-                )));
-            }
-        };
+            };
 
         let cbbtc_per_eth = conversion_rates.cbbtc_per_eth;
 
@@ -322,6 +283,7 @@ impl EthFeeOracle {
     }
 
     async fn updater_loop(&self) -> eyre::Result<()> {
+        let chain_id = self.provider.get_chain_id().await?;
         loop {
             if let Err(e) = self.update_fee_cache().await {
                 error!(
@@ -346,10 +308,7 @@ impl EthFeeProvider for EthFeeOracle {
         };
 
         if needs_update {
-            info!(
-                "ETH fee (sats/gas) cache is stale for chain {}. Attempting synchronous update.",
-                self.chain_id
-            );
+            info!("ETH fee (sats/gas) cache is stale. Attempting synchronous update.",);
             match self.update_fee_cache().await {
                 Ok(new_fee) => new_fee,
                 Err(e) => {
