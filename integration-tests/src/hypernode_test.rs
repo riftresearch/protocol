@@ -52,7 +52,7 @@ async fn test_hypernode_simple_swap() {
         .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
-        .unwrap();
+        .expect("Failed to build devnet");
 
     let maker_evm_provider = ProviderBuilder::new()
         .wallet(maker.ethereum_wallet)

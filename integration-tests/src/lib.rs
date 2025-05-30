@@ -1,4 +1,6 @@
 #[cfg(test)]
+mod auction_claimer_test;
+#[cfg(test)]
 mod bitcoin_data_engine_test;
 #[cfg(test)]
 mod btc_txn_broadcaster_test;
@@ -10,6 +12,8 @@ mod devnet_test;
 mod fork_watchtower_test;
 #[cfg(test)]
 mod hypernode_test;
+#[cfg(test)]
+mod quote_test;
 #[cfg(test)]
 mod test_utils;
 #[cfg(test)]
