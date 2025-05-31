@@ -35,3 +35,5 @@ async-trait = { workspace = true }
 which = { workspace = true }
 electrsd = { workspace = true}
 esplora-client = {workspace = true}
+once_cell = {workspace=true}
+fs2 = {workspace = true } 

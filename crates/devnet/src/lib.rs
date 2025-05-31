@@ -1,6 +1,7 @@
 //! `lib.rs` — central library code.
 
 pub mod bitcoin_devnet;
+mod devnet_lock;
 pub mod evm_devnet;
 
 pub use bitcoin_devnet::BitcoinDevnet;
@@ -220,7 +221,7 @@ impl RiftDevnetBuilder {
         self
     }
 
-    /// Location of the DataEngine’s database — defaults to in-memory.
+    /// Location of the DataEngine's database — defaults to in-memory.
     pub fn data_engine_db_location(mut self, loc: DatabaseLocation) -> Self {
         self.data_engine_db_location = loc;
         self
@@ -238,6 +239,9 @@ impl RiftDevnetBuilder {
     ///   - The devnet instance
     ///   - The number of satoshis funded to `funded_bitcoin_address` (if any)
     pub async fn build(self) -> Result<(crate::RiftDevnet, u64)> {
+        // 0) ───── Serialise the BUILD *only* ─────
+        let _build_lock = crate::devnet_lock::DevnetBuildGuard::acquire().await?;
+
         // All logic is adapted from the old `RiftDevnet::setup`.
         let Self {
             interactive,
@@ -259,7 +263,10 @@ impl RiftDevnetBuilder {
             using_esplora,
             &mut join_set,
         )
-        .await?;
+        .await
+        .map_err(|e| eyre::eyre!("[devnet builder] Failed to setup Bitcoin devnet: {}", e))?;
+
+        // Drop build lock here, only really necessary for bitcoin devnet setup
         let funding_sats = bitcoin_devnet.funded_sats;
 
         // 2) Collect Bitcoin checkpoint leaves
@@ -270,7 +277,8 @@ impl RiftDevnetBuilder {
         let checkpoint_leaves = bitcoin_devnet
             .rpc_client
             .get_leaves_from_block_range(0, current_mined_height, 100, None)
-            .await?;
+            .await
+            .map_err(|e| eyre::eyre!("[devnet builder] Failed to get checkpoint leaves: {}", e))?;
 
         // 3) Save compressed leaves to a named temp file
         let named_temp_file = tempfile::NamedTempFile::new()?;
@@ -278,7 +286,13 @@ impl RiftDevnetBuilder {
         checkpoint_downloader::compress_checkpoint_leaves(
             &checkpoint_leaves,
             output_file_path.as_str(),
-        )?;
+        )
+        .map_err(|e| {
+            eyre::eyre!(
+                "[devnet builder] Failed to compress checkpoint leaves: {}",
+                e
+            )
+        })?;
         let tip_block_leaf = checkpoint_leaves.last().unwrap().clone();
 
         // 4) Create/seed DataEngine
@@ -288,19 +302,24 @@ impl RiftDevnetBuilder {
             &data_engine_db_location,
             checkpoint_leaves,
         )
-        .await?;
+        .await
+        .map_err(|e| eyre::eyre!("[devnet builder] Failed to seed data engine: {}", e))?;
         log::info!("Data engine seeded in {:?}", t.elapsed());
 
         // 5) Ethereum side
         let circuit_verification_key_hash = rift_sdk::get_rift_program_hash();
         let (ethereum_devnet, deployment_block_number) = crate::evm_devnet::EthDevnet::setup(
             circuit_verification_key_hash,
-            contract_data_engine.get_mmr_root().await.unwrap(),
+            contract_data_engine
+                .get_mmr_root()
+                .await
+                .map_err(|e| eyre::eyre!("[devnet builder] Failed to get MMR root: {}", e))?,
             tip_block_leaf,
             fork_config,
             interactive,
         )
-        .await?;
+        .await
+        .map_err(|e| eyre::eyre!("[devnet builder] Failed to setup Ethereum devnet: {}", e))?;
 
         // 6) Start listening to on-chain events
         contract_data_engine
@@ -311,13 +330,17 @@ impl RiftDevnetBuilder {
                 log_chunk_size,
                 &mut join_set,
             )
-            .await?;
+            .await
+            .map_err(|e| eyre::eyre!("[devnet builder] Failed to start event listener: {}", e))?;
 
         // 7) Wait for initial sync
         let contract_data_engine = std::sync::Arc::new(contract_data_engine);
         println!("Waiting for contract data engine initial sync...");
         let t = tokio::time::Instant::now();
-        contract_data_engine.wait_for_initial_sync().await?;
+        contract_data_engine
+            .wait_for_initial_sync()
+            .await
+            .map_err(|e| eyre::eyre!("[devnet builder] Failed to wait for initial sync: {}", e))?;
         println!(
             "Contract data engine initial sync complete in {:?}",
             t.elapsed()
@@ -331,7 +354,10 @@ impl RiftDevnetBuilder {
                     crate::CONTRACT_DATA_ENGINE_SERVER_PORT,
                     &mut join_set,
                 )
-                .await?,
+                .await
+                .map_err(|e| {
+                    eyre::eyre!("[devnet builder] Failed to start data engine server: {}", e)
+                })?,
             )
         } else {
             None
@@ -349,7 +375,8 @@ impl RiftDevnetBuilder {
                     address,
                     alloy::primitives::U256::from_str("10000000000000000000")?,
                 )
-                .await?;
+                .await
+                .map_err(|e| eyre::eyre!("[devnet builder] Failed to fund ETH address: {}", e))?;
 
             // ~10 tokens with 18 decimals
             ethereum_devnet
@@ -357,16 +384,22 @@ impl RiftDevnetBuilder {
                     address,
                     alloy::primitives::U256::from_str("10000000000000000000")?,
                 )
-                .await?;
+                .await
+                .map_err(|e| eyre::eyre!("[devnet builder] Failed to mint token: {}", e))?;
 
             // Debugging: check funded balances
-            let eth_balance = ethereum_devnet.funded_provider.get_balance(address).await?;
+            let eth_balance = ethereum_devnet
+                .funded_provider
+                .get_balance(address)
+                .await
+                .map_err(|e| eyre::eyre!("[devnet builder] Failed to get ETH balance: {}", e))?;
             println!("Ether Balance of {} => {:?}", addr_str, eth_balance);
             let token_balance = ethereum_devnet
                 .token_contract
                 .balanceOf(address)
                 .call()
-                .await?;
+                .await
+                .map_err(|e| eyre::eyre!("[devnet builder] Failed to get token balance: {}", e))?;
             println!("Token Balance of {} => {:?}", addr_str, token_balance);
         }
 

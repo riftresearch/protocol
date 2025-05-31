@@ -1,4 +1,3 @@
-
 use crate::test_utils::{create_deposit, setup_test_tracing};
 use alloy::rpc::json_rpc::ErrorPayload;
 use alloy::sol_types::SolError;
@@ -13,13 +12,11 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-
 use serde_json::value::RawValue;
 use sol_bindings::{ChainworkTooLow, CheckpointNotEstablished};
 
 /// Tests that the fork watchtower correctly identifies when there is no fork
 #[tokio::test]
-#[serial_test::serial]
 async fn test_fork_watchtower_no_fork_detection() {
     setup_test_tracing();
 
@@ -48,7 +45,6 @@ async fn test_fork_watchtower_no_fork_detection() {
 
 /// Tests that the fork watchtower correctly identifies a stale chain
 #[tokio::test]
-#[serial_test::serial]
 async fn test_fork_watchtower_stale_chain_detection() {
     setup_test_tracing();
 
@@ -147,7 +143,6 @@ async fn test_fork_watchtower_stale_chain_detection() {
 
 /// Tests that the fork watchtower correctly handles error conditions
 #[tokio::test]
-#[serial_test::serial]
 async fn test_fork_watchtower_error_handling() {
     setup_test_tracing();
 
@@ -192,7 +187,6 @@ async fn test_fork_watchtower_error_handling() {
 
 /// Tests that the fork watchtower correctly detects and resolves a simulated fork
 #[tokio::test]
-#[serial_test::serial]
 async fn test_fork_watchtower_fork_detection_and_resolution() {
     setup_test_tracing();
 
@@ -525,7 +519,6 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn test_fork_watchtower_light_client_tip_not_in_bde() {
     setup_test_tracing();
 
@@ -760,7 +753,6 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 }
 
 #[tokio::test]
-#[serial_test::serial]
 async fn test_fork_watchtower_equal_chainwork() {
     setup_test_tracing();
 
