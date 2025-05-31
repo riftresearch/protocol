@@ -56,7 +56,6 @@ crypto-bigint = "0.5.5"
 tiny-keccak = "2.0.2"
 sha2 = "0.10.8"
 
-
 accumulators = { git = "https://github.com/riftresearch/rust-accumulators.git", rev = "fe0c7ed0a803a219b9b4e20d314ea074b859d688", features = ["all"] }
 clap = { version = "4.0", features = ["derive", "env"] }
 hex = "0.4.3"
@@ -108,7 +107,7 @@ dotenv = "0.15.0"
 bip39 = "2.1.0"
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0-rc.3" }
-sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0-rc.3" }
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0-rc.3" }
+crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0" }
+sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
 bitcoin = { git = "https://github.com/riftresearch/rust-bitcoin", tag = "bitcoin-0.32.5-patch-v1" }
