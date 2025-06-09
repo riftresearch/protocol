@@ -520,6 +520,14 @@ async fn monitor_workflow(
     let mut payment_sent_time: Option<std::time::Instant> = None;
 
     loop {
+        println!(
+            "-alpine- virtual swaps: {:?}",
+            auction_config
+                .data_engine
+                .get_virtual_swaps(market_maker_evm_address, 0, None)
+                .await
+                .unwrap()
+        );
         if mm_handle.is_finished() {
             return Err(eyre::eyre!(
                 "Market Maker process exited unexpectedly during workflow monitoring"
