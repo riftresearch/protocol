@@ -14,9 +14,10 @@ import "forge-std/src/console.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
+import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
 import {SyntheticBTC} from "./SyntheticBTC.t.sol";
 
-contract RiftExchangeHarness is RiftExchange {
+contract RiftExchangeHarness is BTCDutchAuctionHouse {
     using SafeTransferLib for address;
 
     constructor(
@@ -28,7 +29,7 @@ contract RiftExchangeHarness is RiftExchange {
         uint16 _takerFeeBips,
         BlockLeaf memory _tipBlockLeaf
     )
-        RiftExchange(
+        BTCDutchAuctionHouse(
             _mmrRoot,
             _depositToken,
             _circuitVerificationKey,
@@ -39,6 +40,7 @@ contract RiftExchangeHarness is RiftExchange {
         )
     {}
 
+    /// Test method to test just the core escrow logic (no auction)
     function createOrder(CreateOrderParams memory params) external {
         super._createOrder(params);
         syntheticBitcoin.safeTransferFrom(msg.sender, address(this), params.depositAmount);

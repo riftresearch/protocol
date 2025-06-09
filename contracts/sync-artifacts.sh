@@ -16,3 +16,6 @@ cp out/SP1MockVerifier.sol/SP1MockVerifier.json artifacts/
 cp out/BTCDutchAuctionHouse.sol/BTCDutchAuctionHouse.json artifacts/
 cp out/HelperTypes.t.sol/HelperTypes.json artifacts/
 cp out/RiftTest.t.sol/RiftExchangeHarness.json artifacts/
+cp out/MappingWhitelist.sol/MappingWhitelist.json artifacts/
+cp out/BitcoinLightClient.sol/BitcoinLightClient.json artifacts/
+cp out/RiftExchange.sol/RiftExchange.json artifacts/

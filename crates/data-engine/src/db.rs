@@ -1,8 +1,5 @@
 use crate::models::{ChainAwareOrder, ChainAwarePayment, FinalizedTransaction, OTCSwap};
-use alloy::{
-    hex,
-    primitives::Address,
-};
+use alloy::{hex, primitives::Address};
 use eyre::Result;
 use rift_core::order_hasher::SolidityHash;
 use sol_bindings::{Order, Payment};
@@ -179,6 +176,7 @@ pub async fn add_payment(
         order_index = order_index,
         operation = "add_payment"
     );
+
     Ok(())
 }
 
@@ -394,28 +392,27 @@ pub async fn get_virtual_swaps(
             let order_index: i64 = row.get(0)?;
             let _depositor: String = row.get(1)?; // we don't need it but keep the index
             let _recipient: String = row.get(2)?;
-            let _order_refund_timestamp: i64 = row.get(3)?;
 
-            let order_json: String = row.get(4)?;
+            let order_json: String = row.get(3)?;
             let order: Order = serde_json::from_str(&order_json).map_err(|e| {
                 tokio_rusqlite::Error::Other(format!("Failed to deserialize Order: {:?}", e).into())
             })?;
 
-            let order_block_number: i64 = row.get(5)?;
-            let order_block_hash_vec: Vec<u8> = row.get(6)?;
+            let order_block_number: i64 = row.get(4)?;
+            let order_block_hash_vec: Vec<u8> = row.get(5)?;
             let order_block_hash: [u8; 32] = order_block_hash_vec.try_into().map_err(|_| {
                 tokio_rusqlite::Error::Other("Invalid order_block_hash length".into())
             })?;
 
-            let order_txid_vec: Vec<u8> = row.get(7)?;
+            let order_txid_vec: Vec<u8> = row.get(6)?;
             let order_txid: [u8; 32] = order_txid_vec
                 .try_into()
                 .map_err(|_| tokio_rusqlite::Error::Other("Invalid order_txid length".into()))?;
 
             // Withdraw columns are optional
-            let refund_txid_vec: Option<Vec<u8>> = row.get(8)?;
-            let refund_block_number: Option<i64> = row.get(9)?;
-            let refund_block_hash_vec: Option<Vec<u8>> = row.get(10)?;
+            let refund_txid_vec: Option<Vec<u8>> = row.get(7)?;
+            let refund_block_number: Option<i64> = row.get(8)?;
+            let refund_block_hash_vec: Option<Vec<u8>> = row.get(9)?;
 
             // Assemble optional withdraw info
             let withdraw = if let (Some(txid_vec), Some(block_num), Some(block_hash_vec)) =
