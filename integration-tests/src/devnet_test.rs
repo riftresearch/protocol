@@ -37,7 +37,6 @@ use tokio::signal;
 ///  6) Submit the swap proof to finalize the swap on the RiftExchange
 ///  7) Check final on-chain state
 #[tokio::test]
-#[serial_test::serial]
 async fn test_simulated_swap_end_to_end() {
     // ---1) Spin up devnet with default config---
     //    Interactive = false => no local HTTP servers / Docker containers

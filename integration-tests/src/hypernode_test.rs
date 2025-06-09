@@ -24,7 +24,6 @@ use crate::test_utils::{setup_test_tracing, MultichainAccount};
 
 #[tokio::test]
 // Serial anything that uses alot of bitcoin mining
-#[serial_test::serial]
 async fn test_hypernode_simple_swap() {
     setup_test_tracing();
     // ---1) Spin up devnet with default config---
@@ -52,7 +51,7 @@ async fn test_hypernode_simple_swap() {
         .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
-        .unwrap();
+        .expect("Failed to build devnet");
 
     let maker_evm_provider = ProviderBuilder::new()
         .wallet(maker.ethereum_wallet)

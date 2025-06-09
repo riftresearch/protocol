@@ -1,7 +1,0 @@
-[test-groups]
-serial = { max-threads = 1 }   # logical mutex
-
-# Keeping this here in case we run into concurrent test failures again
-# [[profile.default.overrides]]
-# filter = 'test(/^fork_watchtower_test::/)'   # anything matching this filter
-# test-group = 'serial'

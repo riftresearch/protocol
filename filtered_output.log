@@ -1,0 +1,19 @@
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2m2025-06-06T20:37:33.710808Z[0m [32m INFO[0m [2mintegration_tests::market_maker_hypernode_e2e_test[0m[2m:[0m ✅ Order already exists in BTCDutchAuctionHouse data engine!    
+[2m2025-06-06T20:37:33.710825Z[0m [32m INFO[0m [2mintegration_tests::market_maker_hypernode_e2e_test[0m[2m:[0m   - Order state: 0    
+[2m2025-06-06T20:37:33.710853Z[0m [32m INFO[0m [2mintegration_tests::market_maker_hypernode_e2e_test[0m[2m:[0m   - Order index: 0    
+[2m2025-06-06T20:37:33.712645Z[0m [32m INFO[0m [2mintegration_tests::market_maker_hypernode_e2e_test[0m[2m:[0m   - ⚠️ Order NOT found in RiftExchange data engine - this might be the issue!    
+[2m2025-06-06T20:37:33.851092Z[0m [32m INFO[0m [2mintegration_tests::market_maker_hypernode_e2e_test[0m[2m:[0m ✅ Bitcoin payment sent for order    
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 23 filtered out; finished in 184.04s
