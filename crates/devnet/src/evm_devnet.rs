@@ -26,6 +26,7 @@ pub struct EthDevnet {
     pub anvil: AnvilInstance,
     pub token_contract: Arc<SyntheticBTCWebsocket>,
     pub rift_exchange_contract: Arc<RiftExchangeHarnessWebsocket>,
+    pub verifier_contract: Address,
     pub funded_provider: DynProvider,
     pub on_fork: bool,
 }
@@ -49,14 +50,15 @@ impl EthDevnet {
 
         info!("Deploying RiftExchange & MockToken...");
         let t = Instant::now();
-        let (rift_exchange, token_contract, deployment_block_number) = deploy_contracts(
-            &anvil,
-            circuit_verification_key_hash,
-            genesis_mmr_root,
-            tip_block_leaf,
-            on_fork,
-        )
-        .await?;
+        let (rift_exchange, token_contract, verifier_contract, deployment_block_number) =
+            deploy_contracts(
+                &anvil,
+                circuit_verification_key_hash,
+                genesis_mmr_root,
+                tip_block_leaf,
+                on_fork,
+            )
+            .await?;
         info!("Deployed in {:?}", t.elapsed());
 
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -73,6 +75,7 @@ impl EthDevnet {
             anvil,
             token_contract,
             rift_exchange_contract: rift_exchange,
+            verifier_contract,
             funded_provider,
             on_fork,
         };

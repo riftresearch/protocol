@@ -296,7 +296,7 @@ async fn deploy_auction_contracts(
         mmr_root.into(),
         *devnet.devnet.ethereum.token_contract.address(),
         circuit_verification_key_hash.into(),
-        Address::from([0xAA; 20]),
+        devnet.devnet.ethereum.verifier_contract,
         accounts.auction_creator.ethereum_address,
         10u16,
         safe_leaf_contract,

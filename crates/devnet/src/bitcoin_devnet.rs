@@ -46,14 +46,14 @@ impl BitcoinDevnet {
     /// Returns `(BitcoinDevnet, AsyncBitcoinClient)` so we can
     /// also have an async RPC client if needed.
     pub async fn setup(
-        funded_address: Option<String>,
+        funded_addresses: Vec<String>,
         using_bitcoin: bool,
         using_esplora: bool,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<(Self, u32)> {
         if !using_bitcoin {
             assert!(
-                funded_address.is_none(),
+                funded_addresses.is_empty(),
                 "You can't provide a funded address if you're not using Bitcoin"
             );
         }
@@ -87,10 +87,11 @@ impl BitcoinDevnet {
 
         // If user wants to fund a specific BTC address
         let mut funded_sats = 0;
-        if let Some(addr_str) = funded_address {
-            funded_sats = 4_995_000_000; // for example, ~49.95 BTC in sats
+        for addr_str in funded_addresses {
+            let amount = 4_995_000_000; // for example, ~49.95 BTC in sats
             let external_address = BitcoinAddress::from_str(&addr_str)?.assume_checked();
-            alice.send_to_address(&external_address, Amount::from_sat(funded_sats))?;
+            alice.send_to_address(&external_address, Amount::from_sat(amount))?;
+            funded_sats += amount;
         }
 
         let bitcoin_rpc_url = bitcoin_regtest.rpc_url_with_wallet("alice");

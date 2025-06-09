@@ -73,6 +73,7 @@ pub async fn deploy_contracts(
 ) -> Result<(
     Arc<RiftExchangeHarnessWebsocket>,
     Arc<SyntheticBTCWebsocket>,
+    alloy::primitives::Address,
     u64,
 )> {
     use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
@@ -129,7 +130,12 @@ pub async fn deploy_contracts(
     )
     .await?;
 
-    Ok((Arc::new(exchange), Arc::new(token), deployment_block_number))
+    Ok((
+        Arc::new(exchange),
+        Arc::new(token),
+        verifier_contract,
+        deployment_block_number,
+    ))
 }
 
 // ================== RiftDevnet ================== //
@@ -159,8 +165,8 @@ impl RiftDevnet {
 pub struct RiftDevnetBuilder {
     interactive: bool,
     using_bitcoin: bool,
-    funded_evm_address: Option<String>,
-    funded_bitcoin_address: Option<String>,
+    funded_evm_addresses: Vec<String>,
+    funded_bitcoin_addreses: Vec<String>,
     fork_config: Option<ForkConfig>,
     data_engine_db_location: DatabaseLocation,
     log_chunk_size: u64,
@@ -172,8 +178,8 @@ impl Default for RiftDevnetBuilder {
         Self {
             interactive: false,
             using_bitcoin: true,
-            funded_evm_address: None,
-            funded_bitcoin_address: None,
+            funded_evm_addresses: vec![],
+            funded_bitcoin_addreses: vec![],
             fork_config: None,
             data_engine_db_location: DatabaseLocation::InMemory,
             log_chunk_size: 10000,
@@ -205,13 +211,13 @@ impl RiftDevnetBuilder {
 
     /// Optionally fund a given EVM address with Ether and tokens.
     pub fn funded_evm_address<T: Into<String>>(mut self, address: T) -> Self {
-        self.funded_evm_address = Some(address.into());
+        self.funded_evm_addresses.push(address.into());
         self
     }
 
     /// Optionally fund a given Bitcoin address.
     pub fn funded_bitcoin_address<T: Into<String>>(mut self, address: T) -> Self {
-        self.funded_bitcoin_address = Some(address.into());
+        self.funded_bitcoin_addreses.push(address.into());
         self
     }
 
@@ -246,8 +252,8 @@ impl RiftDevnetBuilder {
         let Self {
             interactive,
             using_bitcoin,
-            funded_evm_address,
-            funded_bitcoin_address,
+            funded_evm_addresses,
+            funded_bitcoin_addreses,
             fork_config,
             data_engine_db_location,
             log_chunk_size,
@@ -258,7 +264,7 @@ impl RiftDevnetBuilder {
 
         // 1) Bitcoin side
         let (bitcoin_devnet, current_mined_height) = crate::bitcoin_devnet::BitcoinDevnet::setup(
-            funded_bitcoin_address,
+            funded_bitcoin_addreses,
             using_bitcoin,
             using_esplora,
             &mut join_set,
@@ -364,10 +370,10 @@ impl RiftDevnetBuilder {
         };
 
         // 9) Fund optional EVM address with Ether + tokens
-        if let Some(addr_str) = funded_evm_address {
+        for addr_str in funded_evm_addresses {
             use alloy::primitives::Address;
             use std::str::FromStr;
-            let address = Address::from_str(&addr_str)?;
+            let address = Address::from_str(&addr_str)?; // TODO: check if this is correct
 
             // ~10 ETH
             ethereum_devnet

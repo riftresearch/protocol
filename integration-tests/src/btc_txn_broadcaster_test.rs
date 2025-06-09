@@ -25,7 +25,7 @@ async fn test_btc_txn_broadcaster_basic() {
 
     // Setup devnet with Bitcoin and Esplora
     let (devnet, _) = BitcoinDevnet::setup(
-        Some(test_account.bitcoin_wallet.address.to_string()),
+        vec![test_account.bitcoin_wallet.address.to_string()],
         true,
         true,
         &mut join_set,
@@ -88,7 +88,7 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
 
     // Setup devnet with Bitcoin and Esplora
     let (devnet, _) = BitcoinDevnet::setup(
-        Some(test_account.bitcoin_wallet.address.to_string()),
+        vec![test_account.bitcoin_wallet.address.to_string()],
         true,
         true,
         &mut join_set,
@@ -162,7 +162,7 @@ async fn test_btc_txn_broadcaster_insufficient_funds() {
 
     // Setup devnet with Bitcoin and Esplora (without funding the wallet)
     let (devnet, _) = BitcoinDevnet::setup(
-        None, // Don't fund any address
+        vec![], // Don't fund any address
         true,
         true,
         &mut join_set,
@@ -207,7 +207,7 @@ async fn test_btc_txn_broadcaster_can_fund() {
 
     // Setup devnet with Bitcoin and Esplora
     let (devnet, _) = BitcoinDevnet::setup(
-        Some(test_account.bitcoin_wallet.address.to_string()),
+        vec![test_account.bitcoin_wallet.address.to_string()],
         true,
         true,
         &mut join_set,
