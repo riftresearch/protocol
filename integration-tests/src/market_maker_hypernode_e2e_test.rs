@@ -62,7 +62,11 @@ async fn run_e2e_test() -> Result<()> {
     let devnet = setup_devnet(&accounts).await?;
     accounts.fund_accounts(&devnet).await?;
 
-    let auction_config = deploy_auction_contracts(&accounts, &devnet).await?;
+    let auction_config = AuctionConfig {
+        auction_house_address: *devnet.devnet.ethereum.rift_exchange_contract.address(),
+        whitelist_address: Address::from([0x00; 20]),
+        data_engine: devnet.devnet.contract_data_engine.clone(),
+    };
 
     let mm_handle = start_market_maker(&accounts, &devnet, &auction_config).await?;
 
@@ -113,6 +117,7 @@ async fn run_e2e_test() -> Result<()> {
         &devnet_arc,
         &mm_handle,
         &hn_handle,
+        accounts.market_maker.ethereum_address,
     )
     .await?;
 
@@ -255,132 +260,20 @@ async fn setup_devnet(accounts: &TestAccounts) -> Result<DevnetConfig> {
         "Funded Market Maker's actual Bitcoin wallet: {}",
         market_maker_btc_wallet.address
     );
-
-    info!("DevNet setup complete");
-    Ok(DevnetConfig { devnet, chain_id })
-}
-
-struct AuctionConfig {
-    auction_house_address: Address,
-    whitelist_address: Address,
-    data_engine: Arc<data_engine::engine::ContractDataEngine>,
-}
-
-async fn deploy_auction_contracts(
-    accounts: &TestAccounts,
-    devnet: &DevnetConfig,
-) -> Result<AuctionConfig> {
-    info!("Deploying auction contracts...");
-
-    let provider = Arc::new(
-        create_websocket_wallet_provider(
-            devnet.devnet.ethereum.anvil.ws_endpoint_url().as_str(),
-            accounts.auction_creator.secret_bytes,
-        )
-        .await?
-        .erased(),
-    );
-
-    let mmr_root = devnet.devnet.contract_data_engine.get_mmr_root().await?;
-    let (safe_leaf, _, _) = devnet.devnet.contract_data_engine.get_tip_proof().await?;
-    let circuit_verification_key_hash = rift_sdk::get_rift_program_hash();
-
-    let safe_leaf_contract = sol_bindings::BTCDutchAuctionHouse::BlockLeaf {
-        blockHash: safe_leaf.block_hash.into(),
-        height: safe_leaf.height,
-        cumulativeChainwork: U256::from_be_bytes(safe_leaf.cumulative_chainwork),
-    };
-
-    let auction_house = BTCDutchAuctionHouse::deploy(
-        provider.clone(),
-        mmr_root.into(),
-        *devnet.devnet.ethereum.token_contract.address(),
-        circuit_verification_key_hash.into(),
-        devnet.devnet.ethereum.verifier_contract,
-        accounts.auction_creator.ethereum_address,
-        10u16,
-        safe_leaf_contract,
-    )
-    .await?;
-
-    let auction_house_address = *auction_house.address();
-
-    let whitelist = MappingWhitelist::deploy(provider.clone()).await?;
-    let whitelist_address = *whitelist.address();
-
-    whitelist
-        .addToWhitelist(accounts.market_maker.ethereum_address)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-
-    setup_tokens(accounts, devnet, auction_house_address).await?;
-
-    let mut join_set = tokio::task::JoinSet::new();
-    let data_engine = data_engine::engine::ContractDataEngine::start(
-        &DatabaseLocation::InMemory,
-        devnet.devnet.ethereum.funded_provider.clone(),
-        auction_house_address,
-        0,
-        10000,
-        Vec::new(),
-        &mut join_set,
-    )
-    .await?;
-
-    data_engine.wait_for_initial_sync().await?;
-
-    tokio::spawn(async move { while let Some(_) = join_set.join_next().await {} });
-
-    info!("✓ Auction contracts deployed");
-    Ok(AuctionConfig {
-        auction_house_address,
-        whitelist_address,
-        data_engine: Arc::new(data_engine),
-    })
-}
-
-async fn setup_tokens(
-    accounts: &TestAccounts,
-    devnet: &DevnetConfig,
-    auction_house: Address,
-) -> Result<()> {
-    let mint_amount = U256::from(100_000_000u128);
-
-    devnet
-        .devnet
-        .ethereum
-        .token_contract
-        .mint(accounts.market_maker.ethereum_address, mint_amount)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-
-    devnet
-        .devnet
-        .ethereum
-        .token_contract
-        .mint(accounts.auction_creator.ethereum_address, mint_amount)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-
     let mm_provider = create_websocket_wallet_provider(
-        devnet.devnet.ethereum.anvil.ws_endpoint_url().as_str(),
+        devnet.ethereum.anvil.ws_endpoint_url().as_str(),
         accounts.market_maker.secret_bytes,
     )
     .await?;
 
     let ac_provider = create_websocket_wallet_provider(
-        devnet.devnet.ethereum.anvil.ws_endpoint_url().as_str(),
+        devnet.ethereum.anvil.ws_endpoint_url().as_str(),
         accounts.auction_creator.secret_bytes,
     )
     .await?;
 
-    let token_address = *devnet.devnet.ethereum.token_contract.address();
+    let token_address = *devnet.ethereum.token_contract.address();
+    let auction_house = *devnet.ethereum.rift_exchange_contract.address();
 
     devnet::SyntheticBTC::new(token_address, mm_provider.erased())
         .approve(auction_house, U256::MAX)
@@ -396,7 +289,14 @@ async fn setup_tokens(
         .get_receipt()
         .await?;
 
-    Ok(())
+    info!("DevNet setup complete");
+    Ok(DevnetConfig { devnet, chain_id })
+}
+
+struct AuctionConfig {
+    auction_house_address: Address,
+    whitelist_address: Address,
+    data_engine: Arc<data_engine::engine::ContractDataEngine>,
 }
 
 async fn start_market_maker(
@@ -504,10 +404,19 @@ async fn monitor_workflow_fn(
     devnet: &DevnetConfig,
     mm_handle: &tokio::task::JoinHandle<Result<()>>,
     hn_handle: &tokio::task::JoinHandle<Result<()>>,
+    market_maker_evm_address: Address,
 ) -> Result<()> {
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    monitor_workflow(auction_index, auction_config, devnet, mm_handle, hn_handle).await
+    monitor_workflow(
+        auction_index,
+        auction_config,
+        devnet,
+        mm_handle,
+        hn_handle,
+        market_maker_evm_address,
+    )
+    .await
 }
 
 async fn create_auction(
@@ -597,6 +506,7 @@ async fn monitor_workflow(
     devnet: &DevnetConfig,
     mm_handle: &tokio::task::JoinHandle<Result<()>>,
     hn_handle: &tokio::task::JoinHandle<Result<()>>,
+    market_maker_evm_address: Address,
 ) -> Result<()> {
     info!(
         "Monitoring end-to-end workflow for auction {}...",
@@ -610,6 +520,14 @@ async fn monitor_workflow(
     let mut payment_sent_time: Option<std::time::Instant> = None;
 
     loop {
+        println!(
+            "-alpine- virtual swaps: {:?}",
+            auction_config
+                .data_engine
+                .get_virtual_swaps(market_maker_evm_address, 0, None)
+                .await
+                .unwrap()
+        );
         if mm_handle.is_finished() {
             return Err(eyre::eyre!(
                 "Market Maker process exited unexpectedly during workflow monitoring"
@@ -661,6 +579,22 @@ async fn monitor_workflow(
                         }
                         SwapStatus::ChallengePeriod => {
                             info!("Bitcoin payment detected - in challenge period");
+                            // Now warp ahead on the eth chain to the timestamp that unlocks the swap
+                            let swap_unlock_timestamp = swap
+                                .payments
+                                .first()
+                                .unwrap()
+                                .payment
+                                .challengeExpiryTimestamp
+                                + 1;
+
+                            devnet
+                                .devnet
+                                .ethereum
+                                .funded_provider
+                                .anvil_set_time(swap_unlock_timestamp)
+                                .await
+                                .unwrap();
                         }
                         SwapStatus::Completed => {
                             info!("Swap completed - end-to-end workflow successful!");
