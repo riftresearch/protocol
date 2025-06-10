@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         .using_esplora(true)
         .data_engine_db_location(DatabaseLocation::InMemory);
 
-    for address in args.addresses {
+    for address in args.fund_address {
         devnet_builder = devnet_builder.funded_evm_address(address);
     }
 
