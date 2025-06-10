@@ -2,6 +2,12 @@
 pragma solidity ^0.8.0;
 import {BlockLeaf} from "../../src/interfaces/IBitcoinLightClient.sol";
 
+// These are for getting compilation artifacts for the bundler3 contracts:
+import {Bundler3} from "bundler3/src/Bundler3.sol";
+import {GeneralAdapter1} from "bundler3/src/adapters/GeneralAdapter1.sol";
+import {ParaswapAdapter} from "bundler3/src/adapters/ParaswapAdapter.sol";
+
+
 interface HelperTypes {
     // Test-specific helper structs. Used for exposing a solidity interface to rust utils lib.
     struct MMRProof {

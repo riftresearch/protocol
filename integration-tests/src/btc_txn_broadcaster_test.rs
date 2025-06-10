@@ -28,6 +28,7 @@ async fn test_btc_txn_broadcaster_basic() {
         vec![test_account.bitcoin_wallet.address.to_string()],
         true,
         true,
+        false,
         &mut join_set,
     )
     .await
@@ -91,6 +92,7 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
         vec![test_account.bitcoin_wallet.address.to_string()],
         true,
         true,
+        false,
         &mut join_set,
     )
     .await
@@ -165,6 +167,7 @@ async fn test_btc_txn_broadcaster_insufficient_funds() {
         vec![], // Don't fund any address
         true,
         true,
+        false,
         &mut join_set,
     )
     .await
@@ -210,6 +213,7 @@ async fn test_btc_txn_broadcaster_can_fund() {
         vec![test_account.bitcoin_wallet.address.to_string()],
         true,
         true,
+        false,
         &mut join_set,
     )
     .await

@@ -3,6 +3,14 @@ use std::sync::Arc;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
+use rift_sdk::create_websocket_wallet_provider;
+use sol_bindings::{
+    Bundler3::{self, Bundler3Instance},
+    GeneralAdapter1::GeneralAdapter1Instance,
+    ParaswapAdapter::ParaswapAdapterInstance,
+    RiftAuctionAdaptor::RiftAuctionAdaptorInstance,
+    RiftExchangeHarnessInstance,
+};
 use tokio::time::Instant;
 
 use alloy::{
@@ -15,11 +23,16 @@ use alloy::{
 };
 
 use crate::{
-    // bring in the deployment logic/ABIs from lib
-    deploy_contracts,
-    RiftExchangeHarnessWebsocket,
-    SyntheticBTCWebsocket,
+    RiftExchangeHarnessWebsocket, SP1MockVerifier, SyntheticBTC, SyntheticBTCWebsocket,
+    TAKER_FEE_BIPS, TOKEN_ADDRESS,
 };
+
+pub struct PeripheryContracts {
+    pub bundler3: Arc<Bundler3Instance<DynProvider>>,
+    pub general_adapter1: Arc<GeneralAdapter1Instance<DynProvider>>,
+    pub rift_auction_adapter: Arc<RiftAuctionAdaptorInstance<DynProvider>>,
+    pub paraswap_adapter: Arc<ParaswapAdapterInstance<DynProvider>>,
+}
 
 /// Holds all Ethereum-related devnet state.
 pub struct EthDevnet {
@@ -29,6 +42,7 @@ pub struct EthDevnet {
     pub verifier_contract: Address,
     pub funded_provider: DynProvider,
     pub on_fork: bool,
+    pub periphery: Option<PeripheryContracts>,
 }
 
 impl EthDevnet {
@@ -48,19 +62,6 @@ impl EthDevnet {
             anvil.chain_id()
         );
 
-        info!("Deploying RiftExchange & MockToken...");
-        let t = Instant::now();
-        let (rift_exchange, token_contract, verifier_contract, deployment_block_number) =
-            deploy_contracts(
-                &anvil,
-                circuit_verification_key_hash,
-                genesis_mmr_root,
-                tip_block_leaf,
-                on_fork,
-            )
-            .await?;
-        info!("Deployed in {:?}", t.elapsed());
-
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
         let wallet = EthereumWallet::from(signer);
 
@@ -71,6 +72,34 @@ impl EthDevnet {
             .expect("Failed connecting to anvil's WS")
             .erased();
 
+        info!("Deploying RiftExchange & MockToken...");
+        let t = Instant::now();
+        let (rift_exchange, token_contract, verifier_contract, deployment_block_number) =
+            deploy_contracts(
+                funded_provider.clone(),
+                circuit_verification_key_hash,
+                genesis_mmr_root,
+                tip_block_leaf,
+                on_fork,
+            )
+            .await?;
+
+        // Should only need to deploy periphery contracts if we're in interactive mode
+        let periphery = if interactive {
+            let (b3, ga1, raa, pa) =
+                deploy_periphery(funded_provider.clone(), *rift_exchange.address()).await?;
+            (Some(PeripheryContracts {
+                bundler3: b3,
+                general_adapter1: ga1,
+                rift_auction_adapter: raa,
+                paraswap_adapter: pa,
+            }))
+        } else {
+            (None)
+        };
+
+        info!("Deployed in {:?}", t.elapsed());
+
         let devnet = EthDevnet {
             anvil,
             token_contract,
@@ -78,6 +107,7 @@ impl EthDevnet {
             verifier_contract,
             funded_provider,
             on_fork,
+            periphery,
         };
 
         Ok((devnet, deployment_block_number))
@@ -146,6 +176,123 @@ impl EthDevnet {
         }
         Ok(())
     }
+}
+
+/// Deploy all relevant contracts: RiftExchange & MockToken
+/// Return `(RiftExchange, MockToken, deployment_block_number)`.
+pub async fn deploy_contracts(
+    funded_provider: DynProvider,
+    circuit_verification_key_hash: [u8; 32],
+    genesis_mmr_root: [u8; 32],
+    tip_block_leaf: BlockLeaf,
+    on_fork: bool,
+) -> Result<(
+    Arc<RiftExchangeHarnessWebsocket>,
+    Arc<SyntheticBTCWebsocket>,
+    alloy::primitives::Address,
+    u64,
+)> {
+    use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
+
+    use std::str::FromStr;
+
+    let verifier_contract = Address::from_str("0xaeE21CeadF7A03b3034DAE4f190bFE5F861b6ebf")?;
+    // Insert the SP1MockVerifier bytecode
+    funded_provider
+        .anvil_set_code(verifier_contract, SP1MockVerifier::BYTECODE.clone())
+        .await?;
+
+    let token_address = Address::from_str(TOKEN_ADDRESS)?;
+    // Deploy the mock token, this is dependent on if we're on a fork or not
+    let token = if !on_fork {
+        // deploy it
+        let mock_token = SyntheticBTC::deploy(funded_provider.clone()).await?;
+        funded_provider
+            .anvil_set_code(
+                token_address,
+                funded_provider.get_code_at(*mock_token.address()).await?,
+            )
+            .await?;
+        SyntheticBTC::new(token_address, funded_provider.clone().erased())
+    } else {
+        SyntheticBTC::new(token_address, funded_provider.clone().erased())
+    };
+
+    // Record the block number to track from
+    let deployment_block_number = funded_provider.get_block_number().await?;
+
+    let tip_block_leaf_sol: sol_bindings::BlockLeaf = tip_block_leaf.into();
+    // Deploy RiftExchange
+    let exchange = RiftExchangeHarnessInstance::deploy(
+        funded_provider.clone().erased(),
+        genesis_mmr_root.into(),
+        *token.address(),
+        circuit_verification_key_hash.into(),
+        verifier_contract,
+        verifier_contract, // arbitrary address, not used
+        TAKER_FEE_BIPS as u16,
+        tip_block_leaf_sol,
+    )
+    .await?;
+
+    Ok((
+        Arc::new(exchange),
+        Arc::new(token),
+        verifier_contract,
+        deployment_block_number,
+    ))
+}
+
+/// Deploy all periphery contracts: Bundler3, GeneralAdapter1, RiftAuctionAdaptor, ParaswapAdapter
+/// Return `(Bundler3, GeneralAdapter1, RiftAuctionAdaptor, ParaswapAdapter)`.
+pub async fn deploy_periphery(
+    funded_provider: DynProvider,
+    rift_exchange_address: Address,
+) -> Result<(
+    Arc<Bundler3Instance<DynProvider>>,
+    Arc<GeneralAdapter1Instance<DynProvider>>,
+    Arc<RiftAuctionAdaptorInstance<DynProvider>>,
+    Arc<ParaswapAdapterInstance<DynProvider>>,
+)> {
+    use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
+
+    use std::str::FromStr;
+
+    // These theoretically shouldn't be accessed when using devnet, so mock them
+    let mock_morpho_address = Address::from_str("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead")?;
+    let mock_weth_address = Address::from_str("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?;
+    let mock_augustus_registry = Address::from_str("0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef")?;
+
+    let bundler3 = Bundler3Instance::deploy(funded_provider.clone()).await?;
+    let general_adapter1 = GeneralAdapter1Instance::deploy(
+        funded_provider.clone(),
+        *bundler3.address(),
+        mock_morpho_address,
+        mock_weth_address,
+    )
+    .await?;
+
+    let rift_auction_adaptor = RiftAuctionAdaptorInstance::deploy(
+        funded_provider.clone(),
+        *bundler3.address(),
+        rift_exchange_address,
+    )
+    .await?;
+
+    let paraswap_adapter = ParaswapAdapterInstance::deploy(
+        funded_provider.clone(),
+        *bundler3.address(),
+        mock_morpho_address,
+        mock_augustus_registry,
+    )
+    .await?;
+
+    Ok((
+        Arc::new(bundler3),
+        Arc::new(general_adapter1),
+        Arc::new(rift_auction_adaptor),
+        Arc::new(paraswap_adapter),
+    ))
 }
 
 pub struct ForkConfig {

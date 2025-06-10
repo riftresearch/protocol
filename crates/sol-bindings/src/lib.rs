@@ -44,6 +44,38 @@ mod internal_solidity_types {
         "../../contracts/artifacts/RiftExchange.json"
     );
 
+    sol!(
+        #[allow(missing_docs)]
+        #[sol(rpc)]
+        #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+        RiftAuctionAdaptor,
+        "../../contracts/artifacts/RiftAuctionAdaptor.json"
+    );
+
+    sol!(
+        #[allow(missing_docs)]
+        #[sol(rpc)]
+        #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+        Bundler3,
+        "../../contracts/artifacts/Bundler3.json"
+    );
+
+    sol!(
+        #[allow(missing_docs)]
+        #[sol(rpc)]
+        #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+        GeneralAdapter1,
+        "../../contracts/artifacts/GeneralAdapter1.json"
+    );
+
+    sol!(
+        #[allow(missing_docs)]
+        #[sol(rpc)]
+        #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+        ParaswapAdapter,
+        "../../contracts/artifacts/ParaswapAdapter.json"
+    );
+
     /// the following types are not used as public arguments in the RiftExchange contract,
     /// but can be useful for testing
     pub mod nonpublic_types {
@@ -81,3 +113,11 @@ pub use internal_solidity_types::MappingWhitelist::{self, MappingWhitelistInstan
 pub use internal_solidity_types::BitcoinLightClient::BitcoinLightClientInstance;
 
 pub use internal_solidity_types::RiftExchange::RiftExchangeInstance;
+
+pub use internal_solidity_types::RiftAuctionAdaptor;
+
+pub use internal_solidity_types::Bundler3;
+
+pub use internal_solidity_types::GeneralAdapter1;
+
+pub use internal_solidity_types::ParaswapAdapter;

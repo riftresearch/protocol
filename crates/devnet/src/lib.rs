@@ -62,82 +62,6 @@ pub type SyntheticBTCWebsocket = SyntheticBTC::SyntheticBTCInstance<DynProvider>
 
 use alloy::{node_bindings::AnvilInstance, signers::Signer};
 
-/// Deploy all relevant contracts: RiftExchange & MockToken
-/// Return `(RiftExchange, MockToken, deployment_block_number)`.
-pub async fn deploy_contracts(
-    anvil: &AnvilInstance,
-    circuit_verification_key_hash: [u8; 32],
-    genesis_mmr_root: [u8; 32],
-    tip_block_leaf: BlockLeaf,
-    on_fork: bool,
-) -> Result<(
-    Arc<RiftExchangeHarnessWebsocket>,
-    Arc<SyntheticBTCWebsocket>,
-    alloy::primitives::Address,
-    u64,
-)> {
-    use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
-
-    use std::str::FromStr;
-
-    let deployer_signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let deployer_wallet = EthereumWallet::from(deployer_signer.clone());
-    let deployer_address = deployer_wallet.default_signer().address();
-
-    // Build a provider
-    let provider = create_websocket_wallet_provider(
-        &anvil.ws_endpoint(),
-        deployer_signer.credential().to_bytes().try_into().unwrap(),
-    )
-    .await?;
-
-    let verifier_contract = Address::from_str("0xaeE21CeadF7A03b3034DAE4f190bFE5F861b6ebf")?;
-    // Insert the SP1MockVerifier bytecode
-    provider
-        .anvil_set_code(verifier_contract, SP1MockVerifier::BYTECODE.clone())
-        .await?;
-
-    let token_address = EvmAddress::from_str(TOKEN_ADDRESS)?;
-    // Deploy the mock token, this is dependent on if we're on a fork or not
-    let token = if !on_fork {
-        // deploy it
-        let mock_token = SyntheticBTC::deploy(provider.clone()).await?;
-        provider
-            .anvil_set_code(
-                token_address,
-                provider.get_code_at(*mock_token.address()).await?,
-            )
-            .await?;
-        SyntheticBTC::new(token_address, provider.clone().erased())
-    } else {
-        SyntheticBTC::new(token_address, provider.clone().erased())
-    };
-
-    // Record the block number to track from
-    let deployment_block_number = provider.get_block_number().await?;
-
-    let tip_block_leaf_sol: sol_bindings::BlockLeaf = tip_block_leaf.into();
-    // Deploy RiftExchange
-    let exchange = RiftExchangeHarnessInstance::deploy(
-        provider.clone().erased(),
-        genesis_mmr_root.into(),
-        *token.address(),
-        circuit_verification_key_hash.into(),
-        verifier_contract,
-        deployer_address, // e.g. owner
-        TAKER_FEE_BIPS as u16,
-        tip_block_leaf_sol,
-    )
-    .await?;
-
-    Ok((
-        Arc::new(exchange),
-        Arc::new(token),
-        verifier_contract,
-        deployment_block_number,
-    ))
-}
-
 // ================== RiftDevnet ================== //
 
 /// The "combined" Devnet which holds:
@@ -412,44 +336,59 @@ impl RiftDevnetBuilder {
 
         // 10) Log interactive info
         if interactive {
+            let periphery = ethereum_devnet.periphery.as_ref().unwrap();
             println!("---RIFT DEVNET---");
             println!(
-                "Anvil HTTP Url:        http://0.0.0.0:{}",
+                "Anvil HTTP Url:             http://0.0.0.0:{}",
                 ethereum_devnet.anvil.port()
             );
             println!(
-                "Anvil WS Url:          ws://0.0.0.0:{}",
+                "Anvil WS Url:               ws://0.0.0.0:{}",
                 ethereum_devnet.anvil.port()
             );
             println!(
-                "Anvil Chain ID:        {}",
+                "Anvil Chain ID:             {}",
                 ethereum_devnet.anvil.chain_id()
             );
             println!(
-                "Data Engine HTTP URL:  http://0.0.0.0:{}",
+                "Data Engine HTTP URL:       http://0.0.0.0:{}",
                 crate::CONTRACT_DATA_ENGINE_SERVER_PORT
             );
             println!(
-                "Bitcoin RPC URL:       {}",
+                "Bitcoin RPC URL:            {}",
                 bitcoin_devnet.rpc_url_with_cookie
             );
 
             if using_esplora {
                 println!(
-                    "Esplora API URL:       {}",
+                    "Esplora API URL:            {}",
                     bitcoin_devnet.esplora_url.as_ref().unwrap()
                 );
             }
 
             println!(
-                "{} Address:         {}",
+                "{} Address:              {}",
                 crate::TOKEN_SYMBOL,
                 ethereum_devnet.token_contract.address()
             );
             println!(
-                "Rift Exchange Address: {}",
+                "Rift Exchange Address:      {}",
                 ethereum_devnet.rift_exchange_contract.address()
             );
+
+            println!(
+                "Bundler3 Address:           {}",
+                periphery.bundler3.address()
+            );
+            println!(
+                "GeneralAdapter1 Address:    {}",
+                periphery.general_adapter1.address()
+            );
+            println!(
+                "RiftAuctionAdapter Address: {}",
+                periphery.rift_auction_adapter.address()
+            );
+
             println!("---RIFT DEVNET---");
         }
 
