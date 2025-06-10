@@ -436,7 +436,7 @@ impl RiftDevnetBuilder {
 
             if using_esplora {
                 println!(
-                    "Esplora API URL:       http://{}",
+                    "Esplora API URL:       {}",
                     bitcoin_devnet.esplora_url.as_ref().unwrap()
                 );
             }
