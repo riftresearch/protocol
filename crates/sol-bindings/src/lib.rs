@@ -69,8 +69,7 @@ pub mod nonpublic {
     };
 }
 
-/// Provides the core `RiftExchangeHarness` ABI (types, functions, events).
-/// This harness contains the interface used by the circuits + hypernode, independent of deployment details.
+/// BTCDutchAuctionHouse with a createOrder() function that allows bypassing the auction for testing purposes.
 pub use internal_solidity_types::RiftExchangeHarness::*;
 
 pub use internal_solidity_types::BTCDutchAuctionHouse::{

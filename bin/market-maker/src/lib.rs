@@ -1,4 +1,6 @@
 pub mod auction_claimer;
+pub mod db;
+pub mod order_filler;
 
 use std::{sync::Arc, time::Duration};
 
@@ -6,13 +8,18 @@ use alloy::primitives::Address;
 use alloy::providers::Provider;
 use auction_claimer::AuctionClaimer;
 use bitcoin::Network;
+use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use bitcoincore_rpc_async::Auth;
 use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use data_engine::engine::ContractDataEngine;
+use esplora_client::AsyncClient as EsploraClient;
 use eyre::Result;
 use log::error;
+use order_filler::{OrderFiller, OrderFillerConfig};
+use rift_sdk::btc_txn_broadcaster::BitcoinTransactionBroadcasterTrait;
+use rift_sdk::btc_txn_broadcaster::SimpleBitcoinTransactionBroadcaster;
 use rift_sdk::fee_provider::EthFeeOracle;
 use rift_sdk::{
     bitcoin_utils::AsyncBitcoinClient,
@@ -26,6 +33,7 @@ use rift_sdk::{
 };
 use std::str::FromStr;
 use tokio::task::JoinSet;
+use tokio_rusqlite::Connection;
 use tracing::info;
 
 #[derive(Parser, Debug, Clone)]
@@ -110,6 +118,26 @@ pub struct MakerConfig {
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
     pub btc_batch_rpc_size: usize,
+
+    /// Chain ID for the EVM network
+    #[arg(long, env, default_value = "1")]
+    pub chain_id: u64,
+
+    /// OrderFiller: Minimum delay in seconds before processing orders
+    #[arg(long, env, default_value = "30")]
+    pub order_delay_seconds: u64,
+
+    /// OrderFiller: Maximum batch size for processing orders
+    #[arg(long, env, default_value = "10")]
+    pub order_max_batch_size: usize,
+
+    /// OrderFiller: Required Bitcoin confirmations for order completion
+    #[arg(long, env, default_value = "6")]
+    pub order_required_confirmations: u32,
+
+    /// OrderFiller: Timeout in seconds for waiting for confirmations
+    #[arg(long, env, default_value = "86400")]
+    pub order_confirmation_timeout: u64,
 }
 
 fn parse_network(s: &str) -> Result<Network, String> {
@@ -140,8 +168,6 @@ impl MakerConfig {
             .await?,
         );
 
-        let chain_id = wallet_provider.get_chain_id().await?;
-
         let btc_wallet = P2WPKHBitcoinWallet::from_mnemonic(
             &self.btc_mnemonic,
             self.btc_mnemonic_passphrase.as_deref(),
@@ -154,11 +180,11 @@ impl MakerConfig {
 
         let evm_rpc = wallet_provider.clone().erased();
 
-        let eth_fee_oracle = Arc::new(EthFeeOracle::new(evm_rpc.clone(), chain_id));
+        let eth_fee_oracle = Arc::new(EthFeeOracle::new(evm_rpc.clone(), self.chain_id));
         eth_fee_oracle.clone().spawn_updater_in_set(&mut join_set);
         info!(
             "ETH Fee Provider (EthFeeOracle) initialized and updater spawned for chain_id: {}",
-            chain_id
+            self.chain_id
         );
 
         let evm_tx_broadcaster = Arc::new(TransactionBroadcaster::new(
@@ -214,6 +240,79 @@ impl MakerConfig {
             Arc::new(engine)
         };
 
+        let bitcoin_rpc = Arc::new(
+            AsyncBitcoinClient::new(
+                self.btc_rpc.clone(),
+                Auth::UserPass("user".to_string(), "password".to_string()),
+                Duration::from_millis(self.btc_rpc_timeout_ms),
+            )
+            .await?,
+        );
+        info!("Bitcoin RPC client initialized: {}", self.btc_rpc);
+
+        let bitcoin_data_engine = Arc::new(
+            BitcoinDataEngine::new(
+                &self.database_location,
+                bitcoin_rpc.clone(),
+                self.btc_batch_rpc_size,
+                Duration::from_secs(10),
+                &mut join_set,
+            )
+            .await,
+        );
+        info!(
+            "Bitcoin data engine initialized for network: {:?}",
+            self.btc_network
+        );
+
+        let esplora_client = Arc::new(
+            esplora_client::Builder::new(&self.esplora_api_url)
+                .build_async()
+                .map_err(|e| eyre::eyre!("Failed to create Esplora client: {}", e))?,
+        );
+        info!("Esplora client initialized: {}", self.esplora_api_url);
+
+        let bitcoin_broadcaster = Arc::new(
+            SimpleBitcoinTransactionBroadcaster::new(
+                bitcoin_rpc.clone(),
+                esplora_client,
+                btc_wallet,
+                &mut join_set,
+            )
+            .await,
+        );
+        info!("Bitcoin transaction broadcaster initialized");
+
+        let order_filler_db = Arc::new(
+            Connection::open_in_memory()
+                .await
+                .map_err(|e| eyre::eyre!("Failed to create OrderFiller database: {}", e))?,
+        );
+        info!("OrderFiller database initialized");
+
+        let order_filler_config = OrderFillerConfig {
+            market_maker_address: Address::from_str(&self.market_maker_address)
+                .map_err(|e| eyre::eyre!("Invalid market maker address: {}", e))?,
+            rift_exchange_address,
+            delay_seconds: self.order_delay_seconds,
+            max_batch_size: self.order_max_batch_size,
+            database_location: self.database_location.clone(),
+            required_confirmations: self.order_required_confirmations,
+            confirmation_timeout: self.order_confirmation_timeout,
+        };
+
+        OrderFiller::run(
+            evm_rpc.clone(),
+            order_filler_config,
+            bitcoin_broadcaster,
+            bitcoin_rpc,
+            bitcoin_data_engine,
+            order_filler_db,
+            &mut join_set,
+        )
+        .await?;
+        info!("OrderFiller started successfully");
+
         AuctionClaimer::run(
             evm_rpc.clone(),
             auction_claimer_config,
@@ -221,6 +320,7 @@ impl MakerConfig {
             evm_tx_broadcaster.clone(),
             &mut join_set,
         )?;
+        info!("AuctionClaimer started successfully");
 
         handle_background_thread_result(join_set.join_next().await)
     }
