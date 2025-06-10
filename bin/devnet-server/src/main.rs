@@ -11,7 +11,7 @@ use tokio::signal;
 struct Args {
     /// Address to fund with cbBTC and Ether
     #[arg(short, long)]
-    evm_address: Option<String>,
+    fund_address: Vec<String>,
 
     /// RPC URL to fork from, if unset will not fork
     #[arg(short = 'f', long)]
@@ -43,9 +43,10 @@ async fn main() -> Result<()> {
         .using_esplora(true)
         .data_engine_db_location(DatabaseLocation::InMemory);
 
-    if let Some(evm_address) = args.evm_address {
-        devnet_builder = devnet_builder.funded_evm_address(evm_address);
+    for address in args.addresses {
+        devnet_builder = devnet_builder.funded_evm_address(address);
     }
+
     if let Some(fork_config) = fork_config {
         devnet_builder = devnet_builder.fork_config(fork_config);
     }
