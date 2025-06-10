@@ -267,6 +267,7 @@ impl RiftDevnetBuilder {
             funded_bitcoin_addreses,
             using_bitcoin,
             using_esplora,
+            interactive,
             &mut join_set,
         )
         .await
@@ -436,13 +437,7 @@ impl RiftDevnetBuilder {
             if using_esplora {
                 println!(
                     "Esplora API URL:       http://{}",
-                    bitcoin_devnet
-                        .electrsd
-                        .as_ref()
-                        .unwrap()
-                        .esplora_url
-                        .as_ref()
-                        .unwrap()
+                    bitcoin_devnet.esplora_url.as_ref().unwrap()
                 );
             }
 

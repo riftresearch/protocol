@@ -35,6 +35,7 @@ pub struct BitcoinDevnet {
     pub rpc_url_with_cookie: String,
     pub electrsd: Option<Arc<ElectrsD>>,
     pub esplora_client: Option<Arc<EsploraClient>>,
+    pub esplora_url: Option<String>,
     /// If you optionally funded a BTC address upon startup,
     /// we keep track of the satoshis here.
     pub funded_sats: u64,
@@ -49,6 +50,7 @@ impl BitcoinDevnet {
         funded_addresses: Vec<String>,
         using_bitcoin: bool,
         using_esplora: bool,
+        fixed_explora_url: bool,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<(Self, u32)> {
         if !using_bitcoin {
@@ -125,10 +127,17 @@ impl BitcoinDevnet {
         );
 
         let mut conf = electrsd::Conf::default();
-        conf.http_enabled = true;
         // Disable stderr logging to avoid cluttering the console
         // true can be useful for debugging
         conf.view_stderr = false;
+        if fixed_explora_url {
+            // false to prevent the default http server from starting
+            conf.http_enabled = false;
+            conf.args.push("--http-addr");
+            conf.args.push("0.0.0.0:50103");
+        } else {
+            conf.http_enabled = true;
+        }
 
         let electrsd = if using_esplora {
             Some(Arc::new(
@@ -144,15 +153,17 @@ impl BitcoinDevnet {
             None
         };
 
-        let esplora_client = if using_esplora {
-            let esplora_url = electrsd
-                .as_ref()
-                .unwrap()
-                .esplora_url
-                .clone()
-                .expect("Failed to get electrsd esplora url");
-
-            println!("Raw esplora URL: {:#?}", esplora_url);
+        let (esplora_client, esplora_url) = if using_esplora {
+            let esplora_url = if fixed_explora_url {
+                "0.0.0.0:50103".to_string()
+            } else {
+                electrsd
+                    .as_ref()
+                    .unwrap()
+                    .esplora_url
+                    .clone()
+                    .expect("Failed to get electrsd esplora url")
+            };
 
             // Ensure the URL has the proper scheme
             let full_url =
@@ -162,14 +173,15 @@ impl BitcoinDevnet {
                     format!("http://{}", esplora_url)
                 };
 
-            println!("Full esplora URL: {}", full_url);
-
-            Some(Arc::new(
-                EsploraClient::from_builder(esplora_client::Builder::new(&full_url))
-                    .expect("Failed to create esplora client"),
-            ))
+            (
+                Some(Arc::new(
+                    EsploraClient::from_builder(esplora_client::Builder::new(&full_url))
+                        .expect("Failed to create esplora client"),
+                )),
+                Some(full_url),
+            )
         } else {
-            None
+            (None, None)
         };
 
         if let Some(ref client) = esplora_client {
@@ -200,6 +212,7 @@ impl BitcoinDevnet {
             datadir,
             electrsd,
             esplora_client,
+            esplora_url,
         };
 
         Ok((devnet, if using_bitcoin { 101 } else { 1 }))
