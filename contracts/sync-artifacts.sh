@@ -18,8 +18,9 @@ cp out/RiftTest.t.sol/RiftExchangeHarness.json artifacts/
 cp out/MappingWhitelist.sol/MappingWhitelist.json artifacts/
 cp out/BitcoinLightClient.sol/BitcoinLightClient.json artifacts/
 cp out/RiftExchange.sol/RiftExchange.json artifacts/
-
 cp out/RiftAuctionAdaptor.sol/RiftAuctionAdaptor.json artifacts/
 cp out/Bundler3.sol/Bundler3.json artifacts/
 cp out/GeneralAdapter1.sol/GeneralAdapter1.json artifacts/
 cp out/ParaswapAdapter.sol/ParaswapAdapter.json artifacts/
+cp out/ERC20.sol/ERC20.json artifacts/
+cp out/LibExposer.sol/LibExposer.json artifacts/
