@@ -130,6 +130,8 @@ impl BitcoinDevnet {
         // Disable stderr logging to avoid cluttering the console
         // true can be useful for debugging
         conf.view_stderr = false;
+        conf.args.push("--cors");
+        conf.args.push("*");
         if fixed_explora_url {
             // false to prevent the default http server from starting
             conf.http_enabled = false;
@@ -243,6 +245,10 @@ impl BitcoinDevnet {
                 None,
             )
             .await?;
+        // mine the tx
+        self.regtest
+            .client
+            .generate_to_address(1, &self.miner_address)?;
         Ok(full_transaction)
     }
 }
