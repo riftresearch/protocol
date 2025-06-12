@@ -6,6 +6,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy::primitives::Address;
 use alloy::providers::Provider;
+use alloy::providers::WalletProvider;
 use auction_claimer::AuctionClaimer;
 use bitcoin::Network;
 use bitcoin_data_engine::BitcoinDataEngine;
@@ -75,10 +76,6 @@ pub struct MakerConfig {
     #[arg(long, env)]
     pub auction_house_address: String,
 
-    /// Market maker address
-    #[arg(long, env)]
-    pub market_maker_address: String,
-
     /// Spread in basis points
     #[arg(long, env, default_value = "50")]
     pub spread_bps: u64,
@@ -102,10 +99,6 @@ pub struct MakerConfig {
     /// Database location for MMRs one of "memory" or a path to a directory
     #[arg(long, env)]
     pub database_location: DatabaseLocation,
-
-    /// Rift Exchange contract address
-    #[arg(long, env)]
-    pub rift_exchange_address: String,
 
     /// Block number of the deployment of the Rift Exchange contract
     #[arg(long, env)]
@@ -168,6 +161,8 @@ impl MakerConfig {
             .await?,
         );
 
+        let market_maker_address = wallet_provider.default_signer_address();
+
         let btc_wallet = P2WPKHBitcoinWallet::from_mnemonic(
             &self.btc_mnemonic,
             self.btc_mnemonic_passphrase.as_deref(),
@@ -193,20 +188,19 @@ impl MakerConfig {
             &mut join_set,
         ));
 
-        let rift_exchange_address = Address::from_str(&self.rift_exchange_address)?;
-
         let checkpoint_leaves = decompress_checkpoint_file(&self.checkpoint_file)?;
         info!(
             checkpoint_blocks = checkpoint_leaves.len(),
             "Loaded bitcoin blocks from checkpoint file"
         );
 
+        let auction_house_address = Address::from_str(&self.auction_house_address)
+            .map_err(|e| eyre::eyre!("Invalid auction house address: {}", e))?;
+
         // Initialize the auction claimer configuration
         let auction_claimer_config = auction_claimer::AuctionClaimerConfig {
-            auction_house_address: Address::from_str(&self.auction_house_address)
-                .map_err(|e| eyre::eyre!("Invalid auction house address: {}", e))?,
-            market_maker_address: Address::from_str(&self.market_maker_address)
-                .map_err(|e| eyre::eyre!("Invalid market maker address: {}", e))?,
+            auction_house_address,
+            market_maker_address,
             spread_bps: self.spread_bps,
             btc_fee_provider: btc_fee_oracle.clone(),
             eth_fee_provider: eth_fee_oracle.clone(),
@@ -221,7 +215,7 @@ impl MakerConfig {
             let engine = data_engine::engine::ContractDataEngine::start(
                 &self.database_location,
                 evm_rpc.clone(),
-                rift_exchange_address,
+                auction_house_address,
                 self.deploy_block_number,
                 self.evm_log_chunk_size,
                 checkpoint_leaves,
@@ -291,9 +285,8 @@ impl MakerConfig {
         info!("OrderFiller database initialized");
 
         let order_filler_config = OrderFillerConfig {
-            market_maker_address: Address::from_str(&self.market_maker_address)
-                .map_err(|e| eyre::eyre!("Invalid market maker address: {}", e))?,
-            rift_exchange_address,
+            market_maker_address,
+            rift_exchange_address: auction_house_address,
             delay_seconds: self.order_delay_seconds,
             max_batch_size: self.order_max_batch_size,
             database_location: self.database_location.clone(),

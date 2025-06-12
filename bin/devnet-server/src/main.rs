@@ -3,7 +3,7 @@ use devnet::evm_devnet::ForkConfig;
 use devnet::RiftDevnet;
 use eyre::Result;
 use log::info;
-use rift_sdk::DatabaseLocation;
+use rift_sdk::{handle_background_thread_result, DatabaseLocation};
 use tokio::signal;
 
 #[derive(Parser)]
@@ -50,10 +50,21 @@ async fn main() -> Result<()> {
     if let Some(fork_config) = fork_config {
         devnet_builder = devnet_builder.fork_config(fork_config);
     }
-    let (devnet, _funding_sats) = devnet_builder.build().await?;
+    let (mut devnet, _funding_sats) = devnet_builder.build().await?;
 
-    // Wait for Ctrl+C
-    signal::ctrl_c().await?;
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("Ctrl+C received, shutting down...");
+        }
+        _ = async {
+            if let Some(res) = devnet.join_set.join_next().await {
+                handle_background_thread_result(Some(res)).expect("A background service failed");
+            }
+        } => {
+            info!("A background service failed");
+        }
+    }
+
     drop(devnet);
     Ok(())
 }

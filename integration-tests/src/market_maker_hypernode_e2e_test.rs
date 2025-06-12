@@ -15,11 +15,12 @@ use log::{error, info, warn};
 use market_maker::MakerConfig;
 use rift_sdk::{
     create_websocket_wallet_provider, txn_builder::P2WPKHBitcoinWallet, DatabaseLocation,
+    MultichainAccount,
 };
 use sol_bindings::{AuctionUpdated, BTCDutchAuctionHouse, DutchAuctionParams, MappingWhitelist};
 use tokio::time::timeout;
 
-use crate::test_utils::{setup_test_tracing, MultichainAccount};
+use crate::test_utils::setup_test_tracing;
 
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoincore_rpc_async::Auth;
@@ -324,9 +325,7 @@ async fn start_market_maker(
         btc_mnemonic_derivation_path: None,
         btc_network: bitcoin::Network::Regtest,
         auction_house_address: auction_config.auction_house_address.to_string(),
-        market_maker_address: accounts.market_maker.ethereum_address.to_string(),
-        rift_exchange_address: auction_config.auction_house_address.to_string(),
-        spread_bps: 50,
+        spread_bps: 0,
         max_batch_size: 5,
         btc_tx_size_vbytes: None,
         esplora_api_url: esplora_url.clone().map(|url| {

@@ -8,11 +8,11 @@ use rift_sdk::{
         BitcoinTransactionBroadcasterTrait, SimpleBitcoinTransactionBroadcaster,
     },
     txn_builder::P2WPKHBitcoinWallet,
-    DatabaseLocation,
+    DatabaseLocation, MultichainAccount,
 };
 use tokio::task::JoinSet;
 
-use crate::test_utils::{setup_test_tracing, MultichainAccount};
+use crate::test_utils::setup_test_tracing;
 
 /// Test basic functionality of the Bitcoin transaction broadcaster
 #[tokio::test]

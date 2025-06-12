@@ -1,16 +1,17 @@
 pub mod bitcoin_utils;
 pub mod btc_txn_broadcaster;
+pub mod chains;
 pub mod checkpoint_mmr;
 mod errors;
 pub mod fee_provider;
 pub mod indexed_mmr;
 pub mod proof_generator;
 pub mod quote;
-pub mod chains;
 pub mod txn_broadcast;
 pub mod txn_builder;
 
 use alloy::network::EthereumWallet;
+use alloy::primitives::{keccak256, Address};
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller,
 };
@@ -26,6 +27,8 @@ use sol_bindings::RiftExchangeHarnessInstance;
 use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient};
 use std::fmt::Write;
 use std::str::FromStr;
+
+use crate::txn_builder::P2WPKHBitcoinWallet;
 
 pub type WebsocketWalletProvider = FillProvider<
     JoinFill<
@@ -149,5 +152,72 @@ pub fn handle_background_thread_result<T>(
         },
         Some(Err(e)) => Err(eyre::eyre!("Join set failed: {}", e)),
         None => Err(eyre::eyre!("Join set panicked with no result")),
+    }
+}
+
+/// Holds the components of a multichain account including secret bytes and wallets.
+#[derive(Debug)]
+pub struct MultichainAccount {
+    /// The raw secret bytes used to derive wallets
+    pub secret_bytes: [u8; 32],
+    /// The BIP-39 mnemonic phrase for the Bitcoin wallet (seeded from the secret bytes)
+    pub bitcoin_mnemonic: bip39::Mnemonic,
+    /// The Ethereum wallet derived from the secret
+    pub ethereum_wallet: EthereumWallet,
+    /// The Ethereum address associated with the wallet
+    pub ethereum_address: Address,
+    /// The Bitcoin wallet derived from the secret
+    pub bitcoin_wallet: P2WPKHBitcoinWallet,
+}
+
+impl MultichainAccount {
+    /// Creates a new multichain account from the given derivation salt
+    pub fn new(derivation_salt: u32) -> Self {
+        let secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
+
+        let ethereum_wallet =
+            EthereumWallet::new(LocalSigner::from_bytes(&secret_bytes.into()).unwrap());
+
+        let ethereum_address = ethereum_wallet.default_signer().address();
+
+        let bitcoin_mnemonic = bip39::Mnemonic::from_entropy(&secret_bytes).unwrap();
+
+        let bitcoin_wallet = P2WPKHBitcoinWallet::from_mnemonic(
+            &bitcoin_mnemonic.to_string(),
+            None,
+            ::bitcoin::Network::Regtest,
+            None,
+        );
+
+        Self {
+            secret_bytes,
+            ethereum_wallet,
+            ethereum_address,
+            bitcoin_mnemonic,
+            bitcoin_wallet: bitcoin_wallet.unwrap(),
+        }
+    }
+
+    /// Creates a new multichain account with the Bitcoin network explicitly specified
+    pub fn with_network(derivation_salt: u32, network: ::bitcoin::Network) -> Self {
+        let secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
+
+        let ethereum_wallet =
+            EthereumWallet::new(LocalSigner::from_bytes(&secret_bytes.into()).unwrap());
+
+        let ethereum_address = ethereum_wallet.default_signer().address();
+
+        let bitcoin_mnemonic = bip39::Mnemonic::from_entropy(&secret_bytes).unwrap();
+
+        let bitcoin_wallet =
+            P2WPKHBitcoinWallet::from_mnemonic(&bitcoin_mnemonic.to_string(), None, network, None);
+
+        Self {
+            secret_bytes,
+            bitcoin_mnemonic,
+            ethereum_wallet,
+            ethereum_address,
+            bitcoin_wallet: bitcoin_wallet.unwrap(),
+        }
     }
 }

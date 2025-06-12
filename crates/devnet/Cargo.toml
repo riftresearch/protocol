@@ -37,3 +37,5 @@ electrsd = { workspace = true}
 esplora-client = {workspace = true}
 once_cell = {workspace=true}
 fs2 = {workspace = true } 
+hypernode = { workspace = true }
+market-maker = { workspace = true }

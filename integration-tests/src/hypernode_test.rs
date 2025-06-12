@@ -15,12 +15,12 @@ use hypernode::{HypernodeArgs, Provider};
 use rift_sdk::{
     proof_generator::ProofGeneratorType,
     txn_builder::{self, serialize_no_segwit},
-    DatabaseLocation,
+    DatabaseLocation, MultichainAccount,
 };
 use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
 use tokio::signal::{self};
 
-use crate::test_utils::{setup_test_tracing, MultichainAccount};
+use crate::test_utils::setup_test_tracing;
 
 #[tokio::test]
 // Serial anything that uses alot of bitcoin mining

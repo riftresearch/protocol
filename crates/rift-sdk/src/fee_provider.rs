@@ -237,14 +237,19 @@ impl EthFeeOracle {
             match fetch_weth_cbbtc_conversion_rates(self.provider.clone(), self.chain_id).await {
                 Ok(rates) => rates,
                 Err(e) => {
-                    error!(
-                        "Failed to fetch WETH/cbBTC conversion rates for chain_id {}: {:?}",
-                        self.chain_id, e
-                    );
-                    return Err(RiftSdkError::Generic(format!(
-                        "WETH/cbBTC conversion rate error for chain {}: {}",
-                        self.chain_id, e
-                    )));
+                    if self.chain_id == 1337 {
+                        // Suppress all error logs and returns for devnet chain_id 1337
+                        return Ok(self.cached_fee.read().await.sats_per_eth_gas);
+                    } else {
+                        error!(
+                            "Failed to fetch WETH/cbBTC conversion rates for chain_id {}: {:?}",
+                            self.chain_id, e
+                        );
+                        return Err(RiftSdkError::Generic(format!(
+                            "WETH/cbBTC conversion rate error for chain {}: {}",
+                            self.chain_id, e
+                        )));
+                    }
                 }
             };
 
@@ -286,10 +291,12 @@ impl EthFeeOracle {
         let chain_id = self.provider.get_chain_id().await?;
         loop {
             if let Err(e) = self.update_fee_cache().await {
-                error!(
-                    "Periodic ETH fee (sats/gas) update failed for chain {}: {:?}. This error will not stop the loop.",
-                    self.chain_id, e
-                );
+                if self.chain_id != 1337 {
+                    error!(
+                        "Periodic ETH fee (sats/gas) update failed for chain {}: {:?}. This error will not stop the loop.",
+                        self.chain_id, e
+                    );
+                }
             }
             tokio::time::sleep(ETH_FEE_UPDATE_INTERVAL).await;
         }

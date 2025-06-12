@@ -180,8 +180,6 @@ impl ContractDataEngine {
                 .await
                 .create_seed_checkpoint(&checkpoint_leaves)
                 .await?;
-
-            println!("DataEngine seeded with checkpoint leaves.");
         }
         Ok(())
     }

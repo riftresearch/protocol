@@ -236,7 +236,6 @@ impl BitcoinDevnet {
             .client
             .generate_to_address(blocks_to_mine, &self.miner_address)?;
         let txid = self.miner_client.send_to_address(&address, amount)?;
-        println!("TXID: {}", txid.clone().txid().unwrap());
         let full_transaction = self
             .rpc_client
             .get_raw_transaction_info(

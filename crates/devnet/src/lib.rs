@@ -9,6 +9,7 @@ pub use evm_devnet::EthDevnet;
 
 use evm_devnet::ForkConfig;
 use eyre::Result;
+use rift_sdk::proof_generator::ProofGeneratorType;
 use sol_bindings::RiftExchangeHarnessInstance;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
@@ -17,7 +18,7 @@ use tokio::task::JoinSet;
 use data_engine::engine::ContractDataEngine;
 use data_engine_server::DataEngineServer;
 
-use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation};
+use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation, MultichainAccount};
 
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::RpcApi;
@@ -32,7 +33,7 @@ const TOKEN_DECIMALS: u8 = 8;
 const TAKER_FEE_BIPS: u16 = 10;
 const CONTRACT_DATA_ENGINE_SERVER_PORT: u16 = 50100;
 
-use alloy::sol;
+use alloy::{hex, sol};
 
 /// The mock token artifact
 sol!(
@@ -334,7 +335,119 @@ impl RiftDevnetBuilder {
             println!("Token Balance of {} => {:?}", addr_str, token_balance);
         }
 
-        // 10) Log interactive info
+        let hypernode_account = MultichainAccount::new(151);
+        let market_maker_account = MultichainAccount::new(152);
+
+        // 10) Start hypernode and market maker if in interactive mode
+        let (hypernode, market_maker) = if interactive {
+            ethereum_devnet
+                .fund_eth_address(
+                    hypernode_account.ethereum_address,
+                    alloy::primitives::U256::from_str_radix("1000000000000000000000000", 10)?,
+                )
+                .await
+                .map_err(|e| {
+                    eyre::eyre!(
+                        "[devnet builder-hypernode] Failed to fund ETH address: {}",
+                        e
+                    )
+                })?;
+
+            ethereum_devnet
+                .fund_eth_address(
+                    market_maker_account.ethereum_address,
+                    alloy::primitives::U256::from_str_radix("1000000000000000000000000", 10)?,
+                )
+                .await
+                .map_err(|e| {
+                    eyre::eyre!(
+                        "[devnet builder-market_maker] Failed to fund ETH address: {}",
+                        e
+                    )
+                })?;
+
+            bitcoin_devnet
+                .deal_bitcoin(
+                    market_maker_account.bitcoin_wallet.address.clone(),
+                    bitcoin::Amount::from_btc(100.0).unwrap(),
+                )
+                .await
+                .map_err(|e| {
+                    eyre::eyre!(
+                        "[devnet builder-market_maker] Failed to deal bitcoin: {}",
+                        e
+                    )
+                })?;
+
+            // Start hypernode
+            let hypernode_args = hypernode::HypernodeArgs {
+                evm_ws_rpc: ethereum_devnet.anvil.ws_endpoint_url().to_string(),
+                btc_rpc: bitcoin_devnet.rpc_url_with_cookie.clone(),
+                private_key: hex::encode(hypernode_account.secret_bytes),
+                checkpoint_file: output_file_path.clone(),
+                database_location: data_engine_db_location.clone(),
+                rift_exchange_address: ethereum_devnet.rift_exchange_contract.address().to_string(),
+                deploy_block_number: deployment_block_number,
+                log_chunk_size,
+                btc_batch_rpc_size: 100,
+                proof_generator: ProofGeneratorType::Execute,
+            };
+
+            let hypernode_handle = join_set.spawn(async move {
+                hypernode_args
+                    .run()
+                    .await
+                    .map_err(|e| eyre::eyre!("Hypernode failed: {}", e))
+            });
+
+            // Start market maker if mnemonic is provided
+            let market_maker_handle = {
+                let maker_config = market_maker::MakerConfig {
+                    evm_ws_rpc: ethereum_devnet.anvil.ws_endpoint_url().to_string(),
+                    btc_rpc: bitcoin_devnet.rpc_url_with_cookie.clone(),
+                    btc_rpc_timeout_ms: 10000,
+                    evm_private_key: hex::encode(hypernode_account.secret_bytes),
+                    btc_mnemonic: market_maker_account.bitcoin_mnemonic.to_string(),
+                    btc_mnemonic_passphrase: None,
+                    btc_mnemonic_derivation_path: None,
+                    btc_network: bitcoin::Network::Regtest,
+                    auction_house_address: ethereum_devnet
+                        .rift_exchange_contract
+                        .address()
+                        .to_string(),
+                    spread_bps: 0,
+                    max_batch_size: 5,
+                    btc_tx_size_vbytes: None,
+                    esplora_api_url: bitcoin_devnet
+                        .esplora_url
+                        .clone()
+                        .expect("Esplora URL is required for market maker"),
+                    checkpoint_file: output_file_path.clone(),
+                    database_location: data_engine_db_location.clone(),
+                    deploy_block_number: deployment_block_number,
+                    evm_log_chunk_size: log_chunk_size,
+                    btc_batch_rpc_size: 100,
+                    chain_id: ethereum_devnet.anvil.chain_id(),
+                    order_delay_seconds: 5,
+                    order_max_batch_size: 5,
+                    order_required_confirmations: 2,
+                    order_confirmation_timeout: 300,
+                };
+
+                Some(join_set.spawn(async move {
+                    maker_config
+                        .run()
+                        .await
+                        .map_err(|e| eyre::eyre!("Market Maker failed: {}", e))
+                }))
+            };
+
+            (Some(hypernode_handle), market_maker_handle)
+        } else {
+            (None, None)
+        };
+
+        // 11) Log interactive info
         if interactive {
             let periphery = ethereum_devnet.periphery.as_ref().unwrap();
             println!("---RIFT DEVNET---");
@@ -389,10 +502,22 @@ impl RiftDevnetBuilder {
                 periphery.rift_auction_adapter.address()
             );
 
+            println!(
+                "MM Bitcoin Address:         {}",
+                market_maker_account.bitcoin_wallet.address
+            );
+
+            if hypernode.is_some() {
+                println!("Hypernode:                  Running");
+            }
+            if market_maker.is_some() {
+                println!("Market Maker:               Running");
+            }
+
             println!("---RIFT DEVNET---");
         }
 
-        // 11) Return the final devnet
+        // 12) Return the final devnet
         let devnet = crate::RiftDevnet {
             bitcoin: bitcoin_devnet,
             ethereum: ethereum_devnet,

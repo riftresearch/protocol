@@ -4,7 +4,7 @@ use alloy::{
     signers::local::LocalSigner,
 };
 use once_cell::sync::OnceCell;
-use rift_sdk::txn_builder::P2WPKHBitcoinWallet;
+use rift_sdk::{txn_builder::P2WPKHBitcoinWallet, MultichainAccount};
 
 use std::sync::Arc;
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
@@ -21,60 +21,6 @@ use rift_sdk::{create_websocket_wallet_provider, txn_builder, DatabaseLocation};
 use sol_bindings::{
     BaseCreateOrderParams, BlockLeaf as ContractBlockLeaf, CreateOrderParams, Order,
 };
-
-/// Holds the components of a multichain account including secret bytes and wallets.
-#[derive(Debug)]
-pub struct MultichainAccount {
-    /// The raw secret bytes used to derive wallets
-    pub secret_bytes: [u8; 32],
-    /// The Ethereum wallet derived from the secret
-    pub ethereum_wallet: EthereumWallet,
-    /// The Ethereum address associated with the wallet
-    pub ethereum_address: Address,
-    /// The Bitcoin wallet derived from the secret
-    pub bitcoin_wallet: P2WPKHBitcoinWallet,
-}
-
-impl MultichainAccount {
-    /// Creates a new multichain account from the given derivation salt
-    pub fn new(derivation_salt: u32) -> Self {
-        let secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
-
-        let ethereum_wallet =
-            EthereumWallet::new(LocalSigner::from_bytes(&secret_bytes.into()).unwrap());
-
-        let ethereum_address = ethereum_wallet.default_signer().address();
-
-        let bitcoin_wallet =
-            P2WPKHBitcoinWallet::from_secret_bytes(&secret_bytes, ::bitcoin::Network::Regtest);
-
-        Self {
-            secret_bytes,
-            ethereum_wallet,
-            ethereum_address,
-            bitcoin_wallet,
-        }
-    }
-
-    /// Creates a new multichain account with the Bitcoin network explicitly specified
-    pub fn with_network(derivation_salt: u32, network: ::bitcoin::Network) -> Self {
-        let secret_bytes: [u8; 32] = keccak256(derivation_salt.to_le_bytes()).into();
-
-        let ethereum_wallet =
-            EthereumWallet::new(LocalSigner::from_bytes(&secret_bytes.into()).unwrap());
-
-        let ethereum_address = ethereum_wallet.default_signer().address();
-
-        let bitcoin_wallet = P2WPKHBitcoinWallet::from_secret_bytes(&secret_bytes, network);
-
-        Self {
-            secret_bytes,
-            ethereum_wallet,
-            ethereum_address,
-            bitcoin_wallet,
-        }
-    }
-}
 
 pub async fn create_deposit(
     using_bitcoin: bool,

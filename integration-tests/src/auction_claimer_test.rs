@@ -1,5 +1,3 @@
-use crate::test_utils::MultichainAccount;
-
 use alloy::eips::eip6110::DEPOSIT_REQUEST_TYPE;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
@@ -18,7 +16,7 @@ use market_maker::auction_claimer::{
     PendingAuction,
 };
 use rift_sdk::fee_provider::{BtcFeeOracle, BtcFeeProvider, EthFeeOracle, EthFeeProvider};
-use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation};
+use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation, MultichainAccount};
 use sol_bindings::{
     AuctionUpdated, BTCDutchAuctionHouse, BTCDutchAuctionHouseInstance, DutchAuction,
     DutchAuctionParams, MappingWhitelist, MappingWhitelistInstance, RiftExchangeInstance,
