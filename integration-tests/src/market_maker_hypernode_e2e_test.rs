@@ -325,7 +325,7 @@ async fn start_market_maker(
         btc_mnemonic_derivation_path: None,
         btc_network: bitcoin::Network::Regtest,
         auction_house_address: auction_config.auction_house_address.to_string(),
-        spread_bps: 0,
+        spread_bps: 1,
         max_batch_size: 5,
         btc_tx_size_vbytes: None,
         esplora_api_url: esplora_url.clone().map(|url| {

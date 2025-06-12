@@ -20,7 +20,7 @@ test: | build test-contracts test-crates
 	@echo "All tests passed"
 
 ntest-crates: | build
-	cargo nextest run --release --workspace --exclude rift-program --exclude test_market_maker_hypernode_end_to_end
+	cargo nextest run --release --workspace --exclude rift-program -- --skip market_maker_hypernode_end_to_end
 
 ntest: | build test-contracts ntest-crates
 	@echo "All tests passed"

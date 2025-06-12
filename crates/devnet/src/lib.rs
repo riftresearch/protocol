@@ -415,7 +415,7 @@ impl RiftDevnetBuilder {
                         .rift_exchange_contract
                         .address()
                         .to_string(),
-                    spread_bps: 0,
+                    spread_bps: 1, // TODO: make this zero once the market maker doesnt break
                     max_batch_size: 5,
                     btc_tx_size_vbytes: None,
                     esplora_api_url: bitcoin_devnet
