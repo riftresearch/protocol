@@ -173,6 +173,7 @@ struct TipProofResponse {
     leaf: BlockLeaf,
     siblings: Vec<Digest>,
     peaks: Vec<Digest>,
+    mmr_root: Digest,
 }
 
 #[axum::debug_handler]
@@ -185,10 +186,17 @@ async fn get_tip_proof(
             format!("Failed to get tip proof: {}", e),
         )
     })?;
+    let mmr_root = data_engine.get_mmr_root().await.map_err(|e| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("Failed to get MMR root: {}", e),
+        )
+    })?;
     Ok(Json(TipProofResponse {
         leaf,
         siblings,
         peaks,
+        mmr_root,
     }))
 }
 
