@@ -16,7 +16,7 @@ use futures::{
 use rift_sdk::RiftExchangeHarnessClient;
 use sol_bindings::{RiftExchangeHarnessInstance, SettleOrderParams};
 use tokio::{sync::watch, task::JoinSet};
-use tracing::{info, info_span, Instrument};
+use tracing::{debug, info, info_span, Instrument};
 
 use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster};
 
@@ -117,7 +117,7 @@ async fn search_for_releases(
     contract_data_engine: Arc<ContractDataEngine>,
     block_timestamp: u64,
 ) -> eyre::Result<()> {
-    info!(
+    debug!(
         "Searching for releases at evm block timestamp {}",
         block_timestamp
     );
