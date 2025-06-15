@@ -18,6 +18,8 @@ use futures::stream::TryStreamExt;
 use futures::Future;
 use futures::StreamExt;
 use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use reqwest::{Client as ReqwestClient, Url};
@@ -189,7 +191,11 @@ where
         ..Default::default()
     };
 
-    retry(backoff, || async {
+    let attempt_count = Arc::new(AtomicUsize::new(0));
+    let attempt_count_clone = attempt_count.clone();
+    
+    let result = retry(backoff, || async {
+        let current_attempt = attempt_count_clone.fetch_add(1, Ordering::SeqCst) + 1;
         let res = operation().await;
         match res {
             Ok(val) => Ok(val),
@@ -197,23 +203,36 @@ where
                 bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
                 ) if rpcerr.code == -32603 => {
-                    info!("Retrying RPC call due to error: {:?}", rpcerr);
+                    info!("Retrying RPC call (attempt {}) due to error: {:?}", current_attempt, rpcerr);
                     Err(BackoffError::transient(e))
                 }
                 bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
                 ) if rpcerr.code == TRANSPORT_ERROR_CODE => {
-                    tracing::error!("Caught transport error: {:?}", rpcerr);
+                    tracing::error!("Caught transport error on attempt {}: {:?}", current_attempt, rpcerr);
                     Err(BackoffError::permanent(e))
                 }
                 _ => {
-                    info!("RPC error: {:?}", e);
+                    info!("RPC error on attempt {}: {:?}", current_attempt, e);
                     Err(BackoffError::permanent(e))
                 }
             },
         }
     })
-    .await
+    .await;
+
+    let final_attempt_count = attempt_count.load(Ordering::SeqCst);
+    match &result {
+        Err(ref e) => {
+            tracing::error!("RPC operation failed after {} attempts: {}", final_attempt_count, e);
+        }
+        Ok(_) if final_attempt_count > 1 => {
+            info!("RPC operation succeeded after {} attempts", final_attempt_count);
+        }
+        _ => {} // Success on first attempt, no need to log
+    }
+
+    result
 }
 
 // wrapper over the bitcoincore_rpc_async client w/ explicit timeout and retry logic

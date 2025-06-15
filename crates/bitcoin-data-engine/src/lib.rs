@@ -150,7 +150,18 @@ async fn block_watchtower(
         // Use the helper function to get local tip information
         let (local_best_block_hash, local_leaf_count) = get_local_tip(&indexed_mmr).await?;
 
-        let chain_tips = bitcoin_rpc.get_chain_tips().await?;
+        let chain_tips = bitcoin_rpc.get_chain_tips().await.map_err(|e| {
+            eyre::eyre!(
+                "Bitcoin RPC failed to download data: Error getting chain tips: {} \
+                \nThis typically indicates:\
+                \n- Bitcoin node at the RPC URL is not responding (may have crashed or stopped)\
+                \n- Network connectivity issues between client and Bitcoin node\
+                \n- Bitcoin node is overloaded or experiencing high latency\
+                \n- RPC authentication/authorization issues\
+                \nCheck that your Bitcoin node is still running and accessible.", 
+                e
+            )
+        })?;
 
         let best_block = match chain_tips
             .iter()
