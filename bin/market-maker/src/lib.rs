@@ -1,6 +1,7 @@
 pub mod auction_claimer;
 pub mod db;
 pub mod order_filler;
+pub mod synthetic_btc_redeemer;
 
 use std::{sync::Arc, time::Duration};
 
@@ -33,6 +34,10 @@ use rift_sdk::{
     DatabaseLocation,
 };
 use std::str::FromStr;
+use synthetic_btc_redeemer::{
+    create_redeemer_actor, trigger_redemption_on_order_settled, SyntheticBtcRedeemerConfig,
+};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_rusqlite::Connection;
 use tracing::info;
@@ -131,6 +136,26 @@ pub struct MakerConfig {
     /// OrderFiller: Timeout in seconds for waiting for confirmations
     #[arg(long, env, default_value = "86400")]
     pub order_confirmation_timeout: u64,
+
+    /// Coinbase API Key for cbBTC redemption
+    #[arg(long, env)]
+    pub coinbase_api_key: Option<String>,
+
+    /// Coinbase API Secret for cbBTC redemption
+    #[arg(long, env)]
+    pub coinbase_api_secret: Option<String>,
+
+    /// Address for receiving redeemed BTC
+    #[arg(long, env)]
+    pub market_maker_btc_address: Option<String>,
+
+    /// cbBTC ERC20 contract address
+    #[arg(long, env)]
+    pub cbbtc_contract_address: Option<String>,
+
+    /// Minimum amount of cbBTC in sats to trigger redemption
+    #[arg(long, env, default_value = "1000000")]
+    pub minimum_redeem_threshold_sats: u64,
 }
 
 fn parse_network(s: &str) -> Result<Network, String> {
@@ -284,6 +309,48 @@ impl MakerConfig {
         );
         info!("OrderFiller database initialized");
 
+        let redeemer_trigger_sender = match (
+            &self.coinbase_api_key,
+            &self.coinbase_api_secret,
+            &self.market_maker_btc_address,
+            &self.cbbtc_contract_address,
+        ) {
+            (Some(api_key), Some(api_secret), Some(btc_address), Some(cbbtc_address)) => {
+                let cbbtc_contract_address = Address::from_str(cbbtc_address)
+                    .map_err(|e| eyre::eyre!("Invalid cbBTC contract address: {}", e))?;
+
+                let redeemer_config = SyntheticBtcRedeemerConfig {
+                    coinbase_api_key: api_key.clone(),
+                    coinbase_api_secret: api_secret.clone(),
+                    market_maker_btc_address: btc_address.clone(),
+                    cbbtc_contract_address,
+                    market_maker_address,
+                    minimum_redeem_threshold_sats: self.minimum_redeem_threshold_sats,
+                };
+
+                let redeemer_actor = create_redeemer_actor(redeemer_config, evm_rpc.clone())?;
+
+                let trigger_sender = redeemer_actor.get_trigger_sender();
+
+                join_set.spawn(async move {
+                    match redeemer_actor.run().await {
+                        Ok(()) => Ok(()),
+                        Err(e) => {
+                            error!("Synthetic Bitcoin Redeemer crashed: {:?}", e);
+                            Err(e)
+                        }
+                    }
+                });
+
+                info!("Synthetic Bitcoin Redeemer started successfully");
+                Some(trigger_sender)
+            }
+            _ => {
+                info!("Synthetic Bitcoin Redeemer disabled (missing configuration)");
+                None
+            }
+        };
+
         let order_filler_config = OrderFillerConfig {
             market_maker_address,
             rift_exchange_address: auction_house_address,
@@ -301,6 +368,7 @@ impl MakerConfig {
             bitcoin_rpc,
             bitcoin_data_engine,
             order_filler_db,
+            redeemer_trigger_sender,
             &mut join_set,
         )
         .await?;

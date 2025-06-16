@@ -30,6 +30,7 @@ use crate::db::{
     update_order_status, ORDER_STATUS_CONFIRMED, ORDER_STATUS_FAILED,
     ORDER_STATUS_SENT,
 };
+use crate::synthetic_btc_redeemer::RedemptionTrigger;
 
 #[derive(Clone)]
 pub struct OrderFillerConfig {
@@ -100,6 +101,7 @@ pub struct OrderFiller {
     delay_queue: Arc<Mutex<DelayQueue<PendingOrder>>>,
     processed_orders_db: Arc<Connection>,
     pending_transactions: Arc<Mutex<HashMap<Txid, PendingTransaction>>>,
+    redeemer_trigger_sender: Option<mpsc::Sender<RedemptionTrigger>>,
 }
 
 impl OrderFiller {
@@ -109,6 +111,7 @@ impl OrderFiller {
         bitcoin_rpc: Arc<AsyncBitcoinClient>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         processed_orders_db: Arc<Connection>,
+        redeemer_trigger_sender: Option<mpsc::Sender<RedemptionTrigger>>,
     ) -> Self {
         Self {
             config,
@@ -118,6 +121,7 @@ impl OrderFiller {
             delay_queue: Arc::new(Mutex::new(DelayQueue::new())),
             processed_orders_db,
             pending_transactions: Arc::new(Mutex::new(HashMap::new())),
+            redeemer_trigger_sender,
         }
     }
 
@@ -128,6 +132,7 @@ impl OrderFiller {
         bitcoin_rpc: Arc<AsyncBitcoinClient>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         processed_orders_db: Arc<Connection>,
+        redeemer_trigger_sender: Option<mpsc::Sender<RedemptionTrigger>>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<()> {
         info!(
@@ -146,6 +151,7 @@ impl OrderFiller {
             bitcoin_rpc,
             bitcoin_data_engine,
             processed_orders_db,
+            redeemer_trigger_sender,
         ));
 
 
@@ -659,6 +665,28 @@ impl OrderFiller {
                 info!("Added transaction {} to confirmation monitoring (tracking {} transactions)", 
                         broadcast_txid, pending_txs.len());
                 
+                if let Some(ref trigger_sender) = self.redeemer_trigger_sender {
+                    let total_cbbtc_amount: u64 = order_structs.iter()
+                        .map(|order| {
+                            order.amount.try_into().unwrap_or(u64::MAX)
+                        })
+                        .sum();
+                    
+                    if total_cbbtc_amount > 0 {
+                        info!("Triggering cbBTC redemption for {} sats from {} orders", 
+                              total_cbbtc_amount, order_structs.len());
+                        
+                        if let Err(e) = crate::synthetic_btc_redeemer::trigger_redemption_on_order_settled(
+                            trigger_sender.clone(),
+                            total_cbbtc_amount,
+                            format!("batch_tx_{}", broadcast_txid),
+                        ).await {
+                            log::error!("Failed to trigger cbBTC redemption: {:?}", e);
+                        } else {
+                            info!("Successfully triggered cbBTC redemption check");
+                        }
+                    }
+                }
                 
                 Ok(())
             }
