@@ -76,6 +76,14 @@ mod internal_solidity_types {
         "../../contracts/artifacts/ParaswapAdapter.json"
     );
 
+    sol!(
+        #[allow(missing_docs)]
+        #[sol(rpc)]
+        #[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+        ERC20,
+        "../../contracts/artifacts/ERC20.json"
+    );
+
     /// the following types are not used as public arguments in the RiftExchange contract,
     /// but can be useful for testing
     pub mod nonpublic_types {
@@ -121,3 +129,5 @@ pub use internal_solidity_types::Bundler3;
 pub use internal_solidity_types::GeneralAdapter1;
 
 pub use internal_solidity_types::ParaswapAdapter;
+
+pub use internal_solidity_types::ERC20::{self, ERC20Instance};
