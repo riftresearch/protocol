@@ -100,10 +100,6 @@ pub async fn calculate_optimal_claim_block(
     current_block: u64,
     btc_tx_size_vbytes: Option<u64>,
 ) -> Option<u64> {
-    if spread_bps == 0 {
-        debug!("Invalid spread bps: #{}", spread_bps);
-        return None;
-    }
 
     let btc_fee_sats = btc_fee_provider.get_fee_rate_sats_per_vb().await;
     let eth_sats_per_gas = eth_fee_provider.get_fee_rate_sats_per_eth_gas().await;
