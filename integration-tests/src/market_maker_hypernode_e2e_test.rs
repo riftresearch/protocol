@@ -346,6 +346,11 @@ async fn start_market_maker(
         order_max_batch_size: 5,
         order_required_confirmations: 2,
         order_confirmation_timeout: 300,
+        coinbase_api_key: None,
+        coinbase_api_secret: None,
+        market_maker_btc_address: None,
+        cbbtc_contract_address: None,
+        minimum_redeem_threshold_sats: 1000000,
     };
 
     let handle = tokio::spawn(async move {
