@@ -62,6 +62,7 @@ impl DataEngineServer {
 
         let app = Router::new()
             .route("/swaps", get(get_swaps_for_address))
+            .route("/order", get(get_order))
             .route("/tip-proof", get(get_tip_proof))
             .route("/contract-bitcoin-tip", get(get_latest_contract_block))
             .route("/health", get(health))
@@ -151,6 +152,11 @@ struct VirtualSwapQuery {
     page: u32,
 }
 
+#[derive(Deserialize, Serialize)]
+struct OrderQuery {
+    order_index: u64,
+}
+
 #[axum::debug_handler]
 async fn get_swaps_for_address(
     State(data_engine): State<Arc<ContractDataEngine>>,
@@ -166,6 +172,23 @@ async fn get_swaps_for_address(
             )
         })?;
     Ok(Json(swaps))
+}
+
+#[axum::debug_handler]
+async fn get_order(
+    State(data_engine): State<Arc<ContractDataEngine>>,
+    axum::extract::Query(query): axum::extract::Query<OrderQuery>,
+) -> Result<Json<Option<OTCSwap>>, (axum::http::StatusCode, String)> {
+    let otc_swap = data_engine
+        .get_otc_swap_by_order_index(query.order_index)
+        .await
+        .map_err(|e| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Failed to get order: {:?}", e),
+            )
+        })?;
+    Ok(Json(otc_swap))
 }
 
 #[derive(Deserialize, Serialize)]
