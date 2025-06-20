@@ -6,12 +6,13 @@ import {HelperTypes} from "../utils/HelperTypes.t.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {BitcoinScriptLib} from "../../src/libraries/BitcoinScriptLib.sol";
 import {HashLib} from "../../src/libraries/HashLib.sol";
-import {PeriodLib} from "../../src/libraries/PeriodLib.sol";
+import {ChallengePeriodLib} from "../../src/libraries/ChallengePeriodLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {RiftTest} from "../utils/RiftTest.t.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import {FeeLib} from "../../src/libraries/FeeLib.sol";
 import {OrderValidationLib} from "../../src/libraries/OrderValidationLib.sol";
+import {OrderLockupLib} from "../../src/libraries/OrderLockupLib.sol";
 
 import "forge-std/src/console.sol";
 
@@ -117,7 +118,7 @@ contract RiftExchangeUnitTest is RiftTest {
         uint256 initialBalance = tokenizedBTC.balanceOf(address(this));
 
         // [2] warp to future time after lockup period
-        vm.warp(block.timestamp + PeriodLib.calculateDepositLockupPeriod(confirmationBlocks) + 1);
+        vm.warp(block.timestamp + OrderLockupLib.calculateLockupPeriod(confirmationBlocks, exchange.blockFinalityTime()) + 1);
 
         // [3] withdraw and capture updated vault from logs
         vm.recordLogs();
@@ -310,7 +311,7 @@ contract RiftExchangeUnitTest is RiftTest {
         );
 
         // Warp past challenge period
-        vm.warp(block.timestamp + PeriodLib.calculateChallengePeriod(params.confirmationBlocks) + 2);
+        vm.warp(block.timestamp + ChallengePeriodLib.calculateChallengePeriod(params.confirmationBlocks, exchange.blockFinalityTime()) + 2);
 
         // Release liquidity
         console.log("[1] release liquidity");

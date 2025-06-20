@@ -2,23 +2,23 @@
 
 pragma solidity =0.8.28;
 
-import "./interfaces/IRiftExchange.sol";
 import {ISP1Verifier} from "sp1-contracts/contracts/src/ISP1Verifier.sol";
 import {EfficientHashLib} from "solady/src/utils/EfficientHashLib.sol";
 import {SafeTransferLib} from "solady/src/utils/SafeTransferLib.sol";
-
 import {EIP712} from "solady/src/utils/EIP712.sol";
 import {ERC20} from "solady/src/tokens/ERC20.sol";
 import {Ownable} from "solady/src/auth/Ownable.sol";
 
+import "./interfaces/IRiftExchange.sol";
 import {HashLib} from "./libraries/HashLib.sol";
-import {PeriodLib} from "./libraries/PeriodLib.sol";
+import {ChallengePeriodLib} from "./libraries/ChallengePeriodLib.sol";
 import {BitcoinLightClient} from "./BitcoinLightClient.sol";
 import {DataIntegrityLib} from "./libraries/DataIntegrityLib.sol";
 import {FeeLib} from "./libraries/FeeLib.sol";
 import {MMRProofLib} from "./libraries/MMRProof.sol";
 import {BitcoinScriptLib} from "./libraries/BitcoinScriptLib.sol";
 import {OrderValidationLib} from "./libraries/OrderValidationLib.sol";
+import {OrderLockupLib} from "./libraries/OrderLockupLib.sol";
 
 /**
  * @title Rift Exchange
@@ -36,6 +36,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     address public immutable tokenizedBitcoin;
     bytes32 public immutable circuitVerificationKey;
     address public immutable verifier;
+    uint32 public immutable blockFinalityTime;
 
     bytes32[] public orderHashes;
     bytes32[] public paymentHashes;
@@ -281,7 +282,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
             index: orderIndex,
             timestamp: uint64(block.timestamp),
             unlockTimestamp: uint64(
-                block.timestamp + PeriodLib.calculateDepositLockupPeriod(params.base.confirmationBlocks)
+                block.timestamp + OrderLockupLib.calculateLockupPeriod(params.base.confirmationBlocks, blockFinalityTime)
             ),
             amount: params.depositAmount - takerFee,
             takerFee: takerFee,
@@ -334,10 +335,11 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
                 paymentBitcoinBlockLeaf: params.paymentBitcoinBlockLeaf,
                 challengeExpiryTimestamp: uint64(
                     block.timestamp +
-                        PeriodLib.calculateChallengePeriod(
+                        ChallengePeriodLib.calculateChallengePeriod(
                             // The challenge period is based on the worst case reorg which would be to the
                             // order creator's originally attested bitcoin block height
-                            proposedLightClientHeight - params.order.safeBitcoinBlockHeight
+                            proposedLightClientHeight - params.order.safeBitcoinBlockHeight,
+                            blockFinalityTime
                         )
                 ),
                 state: PaymentState.Proved

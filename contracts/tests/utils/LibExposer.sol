@@ -4,13 +4,14 @@ pragma solidity ^0.8.28;
 import {BitcoinScriptLib} from "src/libraries/BitcoinScriptLib.sol";
 import {HashLib} from "src/libraries/HashLib.sol";
 import {FeeLib} from "src/libraries/FeeLib.sol";
-import {PeriodLib} from "src/libraries/PeriodLib.sol";
+import {ChallengePeriodLib} from "src/libraries/ChallengePeriodLib.sol";
 import {DutchDecayLib} from "src/libraries/DutchDecayLib.sol";
 import {MMRProofLib} from "src/libraries/MMRProof.sol";
 import {OrderValidationLib} from "src/libraries/OrderValidationLib.sol";
 import {Order, Payment} from "src/interfaces/IRiftExchange.sol";
 import {BlockLeaf} from "src/interfaces/IBitcoinLightClient.sol";
 import {DutchAuction} from "src/interfaces/IBTCDutchAuctionHouse.sol";
+import {OrderLockupLib} from "src/libraries/OrderLockupLib.sol";
 
 contract LibExposer {
     // =============================================================================
@@ -76,52 +77,27 @@ contract LibExposer {
     }
     
     // =============================================================================
-    //                              PERIOD CALCULATIONS
+    //                              CHALLENGE PERIOD CALCULATIONS
     // =============================================================================
     
-    /// @notice Gets the deposit lockup period scalar constant
-    /// @return uint32 The deposit lockup period scalar (2 hours)
-    function getDepositLockupPeriodScalar() public pure returns (uint32) {
-        return PeriodLib.DEPOSIT_LOCKUP_PERIOD_SCALAR;
-    }
-    
-    /// @notice Gets the challenge period buffer constant
-    /// @return uint32 The challenge period buffer (5 minutes)
-    function getChallengePeriodBuffer() public pure returns (uint32) {
-        return PeriodLib.CHALLENGE_PERIOD_BUFFER;
-    }
-    
-    /// @notice Gets the scaled proof generation slope constant
-    /// @return uint32 The scaled proof generation slope
-    function getScaledProofGenSlope() public pure returns (uint32) {
-        return PeriodLib.SCALED_PROOF_GEN_SLOPE;
-    }
-    
-    /// @notice Gets the scaled proof generation intercept constant
-    /// @return uint32 The scaled proof generation intercept
-    function getScaledProofGenIntercept() public pure returns (uint32) {
-        return PeriodLib.SCALED_PROOF_GEN_INTERCEPT;
-    }
-    
-    /// @notice Gets the proof generation scaling factor constant
-    /// @return uint32 The proof generation scaling factor
-    function getProofGenScalingFactor() public pure returns (uint32) {
-        return PeriodLib.PROOF_GEN_SCALING_FACTOR;
-    }
     
     /// @notice Calculates challenge period for elapsed bitcoin blocks
     /// @param blocksElapsed Number of elapsed bitcoin blocks
+    /// @param blockFinalityTime finality time of the the chain the contract is deployed on
     /// @return challengePeriod The challenge period in seconds
-    function calculateChallengePeriod(uint64 blocksElapsed) public pure returns (uint256 challengePeriod) {
-        return PeriodLib.calculateChallengePeriod(blocksElapsed);
+    function calculateChallengePeriod(uint64 blocksElapsed, uint64 blockFinalityTime) public pure returns (uint256 challengePeriod) {
+        return ChallengePeriodLib.calculateChallengePeriod(blocksElapsed, blockFinalityTime);
+    }
+
+
+    /// @notice Calculates lockup period for a given number of confirmations
+    /// @param confirmations Number of confirmations
+    /// @param blockFinalityTime finality time of the the chain the contract is deployed on
+    /// @return lockupPeriod The lockup period in seconds
+    function calculateLockupPeriod(uint8 confirmations, uint64 blockFinalityTime) public pure returns (uint64) {
+        return OrderLockupLib.calculateLockupPeriod(confirmations, blockFinalityTime);
     }
     
-    /// @notice Calculates deposit lockup period for confirmations
-    /// @param confirmations Number of confirmations required
-    /// @return depositLockupPeriod The deposit lockup period in seconds
-    function calculateDepositLockupPeriod(uint8 confirmations) public pure returns (uint64 depositLockupPeriod) {
-        return PeriodLib.calculateDepositLockupPeriod(confirmations);
-    }
     
     // =============================================================================
     //                              DUTCH DECAY CALCULATIONS
