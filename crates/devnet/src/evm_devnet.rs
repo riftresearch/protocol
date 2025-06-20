@@ -23,7 +23,7 @@ use alloy::{
 };
 
 use crate::{
-    RiftExchangeHarnessWebsocket, SP1MockVerifier, SyntheticBTC, SyntheticBTCWebsocket,
+    RiftExchangeHarnessWebsocket, SP1MockVerifier, TokenizedBTC, TokenizedBTCWebsocket,
     TAKER_FEE_BIPS, TOKEN_ADDRESS,
 };
 
@@ -37,7 +37,7 @@ pub struct PeripheryContracts {
 /// Holds all Ethereum-related devnet state.
 pub struct EthDevnet {
     pub anvil: AnvilInstance,
-    pub token_contract: Arc<SyntheticBTCWebsocket>,
+    pub token_contract: Arc<TokenizedBTCWebsocket>,
     pub rift_exchange_contract: Arc<RiftExchangeHarnessWebsocket>,
     pub verifier_contract: Address,
     pub funded_provider: DynProvider,
@@ -188,7 +188,7 @@ pub async fn deploy_contracts(
     on_fork: bool,
 ) -> Result<(
     Arc<RiftExchangeHarnessWebsocket>,
-    Arc<SyntheticBTCWebsocket>,
+    Arc<TokenizedBTCWebsocket>,
     alloy::primitives::Address,
     u64,
 )> {
@@ -206,16 +206,16 @@ pub async fn deploy_contracts(
     // Deploy the mock token, this is dependent on if we're on a fork or not
     let token = if !on_fork {
         // deploy it
-        let mock_token = SyntheticBTC::deploy(funded_provider.clone()).await?;
+        let mock_token = TokenizedBTC::deploy(funded_provider.clone()).await?;
         funded_provider
             .anvil_set_code(
                 token_address,
                 funded_provider.get_code_at(*mock_token.address()).await?,
             )
             .await?;
-        SyntheticBTC::new(token_address, funded_provider.clone().erased())
+        TokenizedBTC::new(token_address, funded_provider.clone().erased())
     } else {
-        SyntheticBTC::new(token_address, funded_provider.clone().erased())
+        TokenizedBTC::new(token_address, funded_provider.clone().erased())
     };
 
     // Record the block number to track from

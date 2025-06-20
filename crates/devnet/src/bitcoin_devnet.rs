@@ -21,7 +21,7 @@ use esplora_client::AsyncClient as EsploraClient;
 
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 
-use crate::SyntheticBTC::configureMinterCall;
+use crate::TokenizedBTC::configureMinterCall;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {

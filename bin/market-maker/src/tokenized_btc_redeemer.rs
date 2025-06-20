@@ -17,13 +17,13 @@ use tokio::task::JoinSet;
 use tokio::time::sleep;
 
 #[async_trait]
-pub trait SyntheticBtcRedeemer: Send + Sync {
+pub trait TokenizedBTCRedeemer: Send + Sync {
     async fn redeem(&self, amount_sats: u64) -> Result<String>;
     async fn can_redeem(&self, amount_sats: u64) -> Result<bool>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SyntheticBtcRedeemerConfig {
+pub struct TokenizedBTCRedeemerConfig {
     pub coinbase_api_key: String,
     pub coinbase_api_secret: String,
     pub market_maker_btc_address: String,
@@ -32,7 +32,7 @@ pub struct SyntheticBtcRedeemerConfig {
     pub minimum_redeem_threshold_sats: u64,
 }
 
-impl Default for SyntheticBtcRedeemerConfig {
+impl Default for TokenizedBTCRedeemerConfig {
     fn default() -> Self {
         Self {
             coinbase_api_key: String::new(),
@@ -244,11 +244,11 @@ pub struct CoinbaseCbBtcProcessor {
     coinbase_client: CoinbaseClient,
     evm_provider: DynProvider,
     cbbtc_contract: Arc<ERC20Instance<DynProvider>>,
-    config: SyntheticBtcRedeemerConfig,
+    config: TokenizedBTCRedeemerConfig,
 }
 
 impl CoinbaseCbBtcProcessor {
-    pub fn new(config: SyntheticBtcRedeemerConfig, evm_provider: DynProvider) -> Result<Self> {
+    pub fn new(config: TokenizedBTCRedeemerConfig, evm_provider: DynProvider) -> Result<Self> {
         let coinbase_client = CoinbaseClient::new(
             config.coinbase_api_key.clone(),
             config.coinbase_api_secret.clone(),
@@ -336,7 +336,7 @@ impl CoinbaseCbBtcProcessor {
 }
 
 #[async_trait]
-impl SyntheticBtcRedeemer for CoinbaseCbBtcProcessor {
+impl TokenizedBTCRedeemer for CoinbaseCbBtcProcessor {
     async fn redeem(&self, amount_sats: u64) -> Result<String> {
         info!("Starting cbBTC redemption for {} sats", amount_sats);
 
@@ -380,14 +380,14 @@ impl SyntheticBtcRedeemer for CoinbaseCbBtcProcessor {
 }
 
 pub struct RedeemerActor {
-    config: SyntheticBtcRedeemerConfig,
+    config: TokenizedBTCRedeemerConfig,
     processor: Arc<CoinbaseCbBtcProcessor>,
     trigger_rx: mpsc::Receiver<RedemptionTrigger>,
     trigger_tx: mpsc::Sender<RedemptionTrigger>,
 }
 
 impl RedeemerActor {
-    pub fn new(config: SyntheticBtcRedeemerConfig, evm_provider: DynProvider) -> Result<Self> {
+    pub fn new(config: TokenizedBTCRedeemerConfig, evm_provider: DynProvider) -> Result<Self> {
         let processor = Arc::new(CoinbaseCbBtcProcessor::new(config.clone(), evm_provider)?);
         let (trigger_tx, trigger_rx) = mpsc::channel(100);
 
@@ -479,7 +479,7 @@ impl RedeemerActor {
 
     async fn listen_for_cbbtc_transfers(
         provider: DynProvider,
-        config: SyntheticBtcRedeemerConfig,
+        config: TokenizedBTCRedeemerConfig,
         trigger_tx: mpsc::Sender<RedemptionTrigger>,
     ) -> Result<()> {
         let cbbtc_contract_address = config.cbbtc_contract_address;
@@ -582,7 +582,7 @@ impl RedeemerActor {
 }
 
 pub fn create_redeemer_actor(
-    config: SyntheticBtcRedeemerConfig,
+    config: TokenizedBTCRedeemerConfig,
     evm_provider: DynProvider,
 ) -> Result<RedeemerActor> {
     RedeemerActor::new(config, evm_provider)

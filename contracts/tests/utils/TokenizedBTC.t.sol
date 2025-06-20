@@ -4,9 +4,9 @@ pragma solidity ^0.8.0;
 import {ERC20} from "solady/src/tokens/ERC20.sol";
 
 // Mock Token contract (with interop with the canonical cbBTC contract)
-contract SyntheticBTC is ERC20 {
+contract TokenizedBTC is ERC20 {
     function name() public view virtual override returns (string memory) {
-        return "Synthetic BTC";
+        return "Tokenized BTC";
     }
 
     /// @dev Returns the symbol of the token.

@@ -10,7 +10,7 @@ mkdir -p artifacts
 rm -rf artifacts/*
 
 # Copy compiled artifacts
-cp out/SyntheticBTC.t.sol/SyntheticBTC.json artifacts/
+cp out/TokenizedBTC.t.sol/TokenizedBTC.json artifacts/
 cp out/SP1MockVerifier.sol/SP1MockVerifier.json artifacts/
 cp out/BTCDutchAuctionHouse.sol/BTCDutchAuctionHouse.json artifacts/
 cp out/HelperTypes.t.sol/HelperTypes.json artifacts/

@@ -15,7 +15,7 @@ import {IRiftWhitelist} from "./interfaces/IRiftWhitelist.sol";
 
 /**
  * @title BTCDutchAuctionHouse
- * @notice A Dutch auction for Synthetic BTC -> BTC swaps, utilizes the RiftExchange to create orders
+ * @notice A Dutch auction for Tokenized BTC -> BTC swaps, utilizes the RiftExchange to create orders
  */
 contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     using HashLib for DutchAuction;
@@ -26,7 +26,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
 
     constructor(
         bytes32 _mmrRoot,
-        address _syntheticBitcoin,
+        address _tokenizedBitcoin,
         bytes32 _circuitVerificationKey,
         address _verifier,
         address _feeRouter,
@@ -35,7 +35,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
     )
         RiftExchange(
             _mmrRoot,
-            _syntheticBitcoin,
+            _tokenizedBitcoin,
             _circuitVerificationKey,
             _verifier,
             _feeRouter,
@@ -74,7 +74,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
 
         auctionHashes.push(auction.hash());
 
-        syntheticBitcoin.safeTransferFrom(msg.sender, address(this), depositAmount);
+        tokenizedBitcoin.safeTransferFrom(msg.sender, address(this), depositAmount);
 
         emit AuctionUpdated(auction);
     }
@@ -144,7 +144,7 @@ contract BTCDutchAuctionHouse is IBTCDutchAuctionHouse, RiftExchange {
         auction.state = DutchAuctionState.Refunded;
         auctionHashes[auction.index] = auction.hash();
 
-        syntheticBitcoin.safeTransfer(auction.baseCreateOrderParams.owner, auction.depositAmount);
+        tokenizedBitcoin.safeTransfer(auction.baseCreateOrderParams.owner, auction.depositAmount);
 
         emit AuctionUpdated(auction);
     }

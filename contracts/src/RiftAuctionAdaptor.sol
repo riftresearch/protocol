@@ -20,12 +20,12 @@ contract RiftAuctionAdaptor is IRiftAuctionAdaptor, CoreAdapter {
     using SafeTransferLib for address;
     using FixedPointMathLib for uint256;
 
-    address public immutable syntheticBitcoin;
+    address public immutable tokenizedBitcoin;
     address public immutable btcAuctionHouse;
 
     constructor(address _bundler3, address _btcAuctionHouse) CoreAdapter(_bundler3) {
         btcAuctionHouse = _btcAuctionHouse;
-        syntheticBitcoin = BTCDutchAuctionHouse(_btcAuctionHouse).syntheticBitcoin();
+        tokenizedBitcoin = BTCDutchAuctionHouse(_btcAuctionHouse).tokenizedBitcoin();
     }
 
     /// @inheritdoc IRiftAuctionAdaptor
@@ -37,21 +37,21 @@ contract RiftAuctionAdaptor is IRiftAuctionAdaptor, CoreAdapter {
         address fillerWhitelistContract,
         BaseCreateOrderParams calldata baseParams
     ) external onlyBundler3 {
-        address _syntheticBitcoin = syntheticBitcoin;
+        address _tokenizedBitcoin = tokenizedBitcoin;
         address _btcAuctionHouse = btcAuctionHouse;
-        uint256 syntheticBitcoinBalance = _syntheticBitcoin.balanceOf(address(this));
+        uint256 tokenizedBitcoinBalance = _tokenizedBitcoin.balanceOf(address(this));
 
         (uint256 startAmount, uint256 endAmount) = _computeAuctionRange(
             startsBTCperBTCRate,
             endcbsBTCperBTCRate,
-            syntheticBitcoinBalance
+            tokenizedBitcoinBalance
         );
 
-        _syntheticBitcoin.safeApprove(_btcAuctionHouse, syntheticBitcoinBalance);
+        _tokenizedBitcoin.safeApprove(_btcAuctionHouse, tokenizedBitcoinBalance);
 
         // Start the auction
         BTCDutchAuctionHouse(_btcAuctionHouse).startAuction(
-            syntheticBitcoinBalance,
+            tokenizedBitcoinBalance,
             DutchAuctionParams({
                 startBtcOut: startAmount,
                 endBtcOut: endAmount,

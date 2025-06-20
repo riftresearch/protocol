@@ -7,16 +7,16 @@ import {BaseCreateOrderParams} from "./IRiftExchange.sol";
  * @title Interface for the RiftAuctionAdaptor contract
  */
 interface IRiftAuctionAdaptor {
-    /// @notice Returns the address of the synthetic BTC token contract used by the adaptor.
-    /// @return address of the syntheticBitcoin token.
-    function syntheticBitcoin() external view returns (address);
+    /// @notice Returns the address of the tokenized BTC token contract used by the adaptor.
+    /// @return address of the tokenizedBitcoin token.
+    function tokenizedBitcoin() external view returns (address);
 
     /// @notice Returns the address of the BTC Dutch Auction House contract targeted by the adaptor.
     /// @return address of the BTCDutchAuctionHouse.
     function btcAuctionHouse() external view returns (address);
 
-    /// @notice Creates a Dutch auction on the BTCDutchAuctionHouse using the adaptor's syntheticBitcoin balance.
-    /// @dev Assumes syntheticBitcoin (sBTC) has already been transferred to this contract.
+    /// @notice Creates a Dutch auction on the BTCDutchAuctionHouse using the adaptor's tokenizedBitcoin balance.
+    /// @dev Assumes tokenizedBitcoin (sBTC) has already been transferred to this contract.
     /// @param startsBTCperBTCRate The starting sBTC per BTC rate (WAD 1e18).
     /// @param endcbsBTCperBTCRate The ending sBTC per BTC rate (WAD 1e18).
     /// @param decayBlocks The number of blocks over which the auction price decays.

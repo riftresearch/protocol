@@ -30,14 +30,14 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
     BTCDutchAuctionHouse internal auctionHouse;
 
     function setUp() public virtual override {
-        super.setUp(); // deploy SyntheticBTC & verifier helpers from RiftTest
+        super.setUp(); // deploy TokenizedBTC & verifier helpers from RiftTest
 
         // Use a fresh light‑client checkpoint for this instance
         HelperTypes.MMRProof memory initialProof = _generateFakeBlockMMRProofFFI(0);
 
         auctionHouse = new BTCDutchAuctionHouse({
             _mmrRoot: initialProof.mmrRoot,
-            _syntheticBitcoin: address(syntheticBTC),
+            _tokenizedBitcoin: address(tokenizedBTC),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),
@@ -81,7 +81,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         );
 
         /* 2. Give this test contract sBTC and approve the AuctionHouse */
-        _mintAndApproveSyntheticBTC(depositAmount);
+        _mintAndApproveTokenizedBTC(depositAmount);
 
         /* 3. Create BaseCreateOrderParams + initial MMR proof in isolation */
         {
@@ -96,7 +96,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
             });
 
             /* 4. Call contract & capture emitted Auction */
-            uint256 preBalance = syntheticBTC.balanceOf(address(this));
+            uint256 preBalance = tokenizedBTC.balanceOf(address(this));
             uint256 startBlock = block.number;
             uint64 startTime = uint64(block.timestamp);
 
@@ -150,9 +150,9 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
     }
 
     /** Mints `amount` sBTC to this contract and approves the AuctionHouse. */
-    function _mintAndApproveSyntheticBTC(uint256 amount) private {
-        syntheticBTC.mint(address(this), amount);
-        syntheticBTC.approve(address(auctionHouse), amount);
+    function _mintAndApproveTokenizedBTC(uint256 amount) private {
+        tokenizedBTC.mint(address(this), amount);
+        tokenizedBTC.approve(address(auctionHouse), amount);
     }
 
     /**
@@ -187,8 +187,8 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         uint64 startTime
     ) private view {
         // [1] token flow
-        assertEq(syntheticBTC.balanceOf(address(this)), 0);
-        assertEq(syntheticBTC.balanceOf(address(auctionHouse)), depositAmount);
+        assertEq(tokenizedBTC.balanceOf(address(this)), 0);
+        assertEq(tokenizedBTC.balanceOf(address(auctionHouse)), depositAmount);
 
         // [2] hash stored
         bytes32 storedHash = auctionHouse.auctionHashes(0);
@@ -209,7 +209,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         assertEq(storedHash, expected.hash(), "storage vs expected");
 
         // [4] spent tokens check
-        assertEq(preBalance - depositAmount, syntheticBTC.balanceOf(address(this)));
+        assertEq(preBalance - depositAmount, tokenizedBTC.balanceOf(address(this)));
     }
 
     /**
@@ -290,7 +290,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
         HelperTypes.MMRProof memory fillProof = _generateFakeBlockMMRProofFFI(startProof.blockLeaf.height);
 
         // Snapshot state before fill
-        uint256 preclaimAuctionHouseBalance = syntheticBTC.balanceOf(address(auctionHouse));
+        uint256 preclaimAuctionHouseBalance = tokenizedBTC.balanceOf(address(auctionHouse));
         vm.recordLogs();
 
         /* ── Act: Fill Auction ───────────────────────────────────── */
@@ -314,7 +314,7 @@ contract BTCDutchAuctionHouseUnitTest is RiftTest {
 
         // [4] Token balance check (should remain unchanged as tokens are now in a vault)
         assertEq(
-            syntheticBTC.balanceOf(address(auctionHouse)),
+            tokenizedBTC.balanceOf(address(auctionHouse)),
             preclaimAuctionHouseBalance,
             "Auction house balance changed unexpectedly on fill"
         );

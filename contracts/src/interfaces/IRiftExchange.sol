@@ -180,8 +180,8 @@ interface IRiftExchange is IBitcoinLightClient {
     /// @param payments Array of payments settling the orders, where each payment at index i settles the order at index i
     event OrdersSettled(Order[] orders, Payment[] payments);
 
-    /// @notice The address of the synthetic Bitcoin token
-    function syntheticBitcoin() external view returns (address);
+    /// @notice The address of the tokenized Bitcoin token
+    function tokenizedBitcoin() external view returns (address);
 
     /// @notice The circuit verification key
     function circuitVerificationKey() external view returns (bytes32);

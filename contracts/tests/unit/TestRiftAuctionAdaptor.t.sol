@@ -54,14 +54,14 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /*                                Setup                                  */
     /*───────────────────────────────────────────────────────────────────────*/
     function setUp() public virtual override {
-        super.setUp(); // Deploy syntheticBTC, verifier & helpers from RiftTest
+        super.setUp(); // Deploy TokenizedBTC, verifier & helpers from RiftTest
 
         // Create a fresh light‑client checkpoint for the AuctionHouse instance
         HelperTypes.MMRProof memory initProof = _generateFakeBlockMMRProofFFI(0);
 
         auctionHouse = new BTCDutchAuctionHouse({
             _mmrRoot: initProof.mmrRoot,
-            _syntheticBitcoin: address(syntheticBTC),
+            _tokenizedBitcoin: address(tokenizedBTC),
             _circuitVerificationKey: bytes32("cvk"),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),
@@ -78,7 +78,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /// @notice Non‑bundler3 callers MUST be rejected.
     function test_onlyBundler3Reverts() public {
         // Arrange ‑ give adaptor some tokens so that revert (if any) is due to access control
-        syntheticBTC.mint(address(adaptor), 1e10);
+        tokenizedBTC.mint(address(adaptor), 1e10);
 
         BaseCreateOrderParams memory baseParams;
         vm.expectRevert();
@@ -100,7 +100,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
         uint256 endRateWad = 8e17; // 0.8 sBTC / BTC (WAD)
 
         // Give the adaptor the sBTC it will auction
-        syntheticBTC.mint(address(adaptor), deposit);
+        tokenizedBTC.mint(address(adaptor), deposit);
 
         HelperTypes.MMRProof memory safeProof = _generateFakeBlockMMRProofFFI(0);
         BaseCreateOrderParams memory baseParams = BaseCreateOrderParams({
@@ -111,8 +111,8 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
             safeBlockLeaf: safeProof.blockLeaf
         });
 
-        uint256 preAdaptorBal = syntheticBTC.balanceOf(address(adaptor));
-        uint256 preAuctionBal = syntheticBTC.balanceOf(address(auctionHouse));
+        uint256 preAdaptorBal = tokenizedBTC.balanceOf(address(adaptor));
+        uint256 preAuctionBal = tokenizedBTC.balanceOf(address(auctionHouse));
         uint256 startAmount = (deposit * startRateWad) / 1e18;
         uint256 endAmount = (deposit * endRateWad) / 1e18;
 
@@ -130,9 +130,9 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
 
         /* ‑‑ Assert ‑‑ */
         // [1] Token flow
-        assertEq(syntheticBTC.balanceOf(address(adaptor)), 0, "Adaptor should have no tokens left");
+        assertEq(tokenizedBTC.balanceOf(address(adaptor)), 0, "Adaptor should have no tokens left");
         assertEq(
-            syntheticBTC.balanceOf(address(auctionHouse)),
+            tokenizedBTC.balanceOf(address(auctionHouse)),
             preAuctionBal + deposit,
             "AuctionHouse token balance incorrect"
         );
@@ -155,7 +155,7 @@ contract RiftAuctionAdaptorUnitTest is RiftTest {
     /*───────────────────────────────────────────────────────────────────────*/
     function test_createAuction_revertsInvalidRates() public {
         uint256 deposit = FeeLib.calculateMinDepositAmount(auctionHouse.takerFeeBips()) * 10;
-        syntheticBTC.mint(address(adaptor), deposit);
+        tokenizedBTC.mint(address(adaptor), deposit);
 
         BaseCreateOrderParams memory baseParams;
         vm.prank(BUNDLER3);

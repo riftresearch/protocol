@@ -15,7 +15,7 @@ import {HashLib} from "../../src/libraries/HashLib.sol";
 import {RiftExchange} from "../../src/RiftExchange.sol";
 import {BitcoinLightClient} from "../../src/BitcoinLightClient.sol";
 import {BTCDutchAuctionHouse} from "../../src/BTCDutchAuctionHouse.sol";
-import {SyntheticBTC} from "./SyntheticBTC.t.sol";
+import {TokenizedBTC} from "./TokenizedBTC.t.sol";
 
 contract RiftExchangeHarness is BTCDutchAuctionHouse {
     using SafeTransferLib for address;
@@ -43,7 +43,7 @@ contract RiftExchangeHarness is BTCDutchAuctionHouse {
     /// Test method to test just the core escrow logic (no auction)
     function createOrder(CreateOrderParams memory params) external {
         super._createOrder(params);
-        syntheticBitcoin.safeTransferFrom(msg.sender, address(this), params.depositAmount);
+        tokenizedBitcoin.safeTransferFrom(msg.sender, address(this), params.depositAmount);
     }
 }
 
@@ -52,19 +52,19 @@ contract RiftTest is Test, PRNG {
     using HashLib for Payment;
     address exchangeOwner = address(0xbeef);
     RiftExchangeHarness public exchange;
-    SyntheticBTC public syntheticBTC;
+    TokenizedBTC public tokenizedBTC;
     SP1MockVerifier public verifier;
     event SetupSuccess();
 
     function setUp() public virtual {
-        syntheticBTC = new SyntheticBTC();
+        tokenizedBTC = new TokenizedBTC();
         verifier = new SP1MockVerifier();
 
         HelperTypes.MMRProof memory initial_mmr_proof = _generateFakeBlockMMRProofFFI(0);
 
         exchange = new RiftExchangeHarness({
             _mmrRoot: initial_mmr_proof.mmrRoot,
-            _depositToken: address(syntheticBTC),
+            _depositToken: address(tokenizedBTC),
             _circuitVerificationKey: bytes32(keccak256("circuit verification key")),
             _verifier: address(verifier),
             _feeRouter: address(0xfee),
@@ -72,7 +72,7 @@ contract RiftTest is Test, PRNG {
             _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
-        syntheticBTC = SyntheticBTC(address(exchange.syntheticBitcoin()));
+        tokenizedBTC = TokenizedBTC(address(exchange.tokenizedBitcoin()));
         emit SetupSuccess();
     }
 
@@ -195,8 +195,8 @@ contract RiftTest is Test, PRNG {
         uint8 confirmationBlocks
     ) internal returns (Order memory) {
         // [1] mint and approve deposit token
-        syntheticBTC.mint(address(this), depositAmount);
-        syntheticBTC.approve(address(exchange), depositAmount);
+        tokenizedBTC.mint(address(this), depositAmount);
+        tokenizedBTC.approve(address(exchange), depositAmount);
 
         // [2] generate a scriptPubKey starting with a valid P2WPKH prefix (0x0014)
         bytes memory btcPayoutScriptPubKey = _generateBtcPayoutScriptPubKey();
@@ -238,7 +238,7 @@ contract RiftTest is Test, PRNG {
             assertEq(createdOrder.index, orderIndex, "Order index should match");
 
             // [7] verify caller has no balance left
-            assertEq(syntheticBTC.balanceOf(address(this)), 0, "Caller should have no balance left");
+            assertEq(tokenizedBTC.balanceOf(address(this)), 0, "Caller should have no balance left");
 
             // [8] verify owner address
             assertEq(createdOrder.owner, address(this), "Owner address should match");

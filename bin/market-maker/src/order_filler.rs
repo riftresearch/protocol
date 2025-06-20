@@ -30,7 +30,7 @@ use crate::db::{
     update_order_status, ORDER_STATUS_CONFIRMED, ORDER_STATUS_FAILED,
     ORDER_STATUS_SENT,
 };
-use crate::synthetic_btc_redeemer::RedemptionTrigger;
+use crate::tokenized_btc_redeemer::RedemptionTrigger;
 
 #[derive(Clone)]
 pub struct OrderFillerConfig {
@@ -676,7 +676,7 @@ impl OrderFiller {
                         info!("Triggering cbBTC redemption for {} sats from {} orders", 
                               total_cbbtc_amount, order_structs.len());
                         
-                        if let Err(e) = crate::synthetic_btc_redeemer::trigger_redemption_on_order_settled(
+                        if let Err(e) = crate::tokenized_btc_redeemer::trigger_redemption_on_order_settled(
                             trigger_sender.clone(),
                             total_cbbtc_amount,
                             format!("batch_tx_{}", broadcast_txid),

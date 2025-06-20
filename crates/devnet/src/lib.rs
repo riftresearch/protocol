@@ -39,8 +39,8 @@ use alloy::{hex, sol};
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
-    SyntheticBTC,
-    "../../contracts/artifacts/SyntheticBTC.json"
+    TokenizedBTC,
+    "../../contracts/artifacts/TokenizedBTC.json"
 );
 
 /// The SP1 mock verifier
@@ -57,7 +57,7 @@ use alloy::providers::{DynProvider, Provider};
 
 pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>;
 
-pub type SyntheticBTCWebsocket = SyntheticBTC::SyntheticBTCInstance<DynProvider>;
+pub type TokenizedBTCWebsocket = TokenizedBTC::TokenizedBTCInstance<DynProvider>;
 
 // ================== Deploy Function ================== //
 
@@ -458,19 +458,22 @@ impl RiftDevnetBuilder {
             let bitcoin_rpc_url = bitcoin_devnet.regtest.rpc_url_with_wallet("alice");
             let cookie = bitcoin_devnet.cookie.clone();
             let miner_address = bitcoin_devnet.miner_address.clone();
-            
+
             join_set.spawn(async move {
                 use bitcoincore_rpc_async::{Auth, Client as AsyncBitcoinRpcClient, RpcApi};
-                
+
                 // Create dedicated RPC client for mining
-                let mining_client = match AsyncBitcoinRpcClient::new(bitcoin_rpc_url, Auth::CookieFile(cookie)).await {
-                    Ok(client) => client,
-                    Err(e) => {
-                        log::error!("Failed to create mining RPC client: {}", e);
-                        return Ok(());
-                    }
-                };
-                
+                let mining_client =
+                    match AsyncBitcoinRpcClient::new(bitcoin_rpc_url, Auth::CookieFile(cookie))
+                        .await
+                    {
+                        Ok(client) => client,
+                        Err(e) => {
+                            log::error!("Failed to create mining RPC client: {}", e);
+                            return Ok(());
+                        }
+                    };
+
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
                 loop {
                     interval.tick().await;

@@ -114,7 +114,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // [1] create initial deposit and get vault
         Order memory order = _createOrderWithAssertions(depositAmount, expectedSats, confirmationBlocks);
-        uint256 initialBalance = syntheticBTC.balanceOf(address(this));
+        uint256 initialBalance = tokenizedBTC.balanceOf(address(this));
 
         // [2] warp to future time after lockup period
         vm.warp(block.timestamp + PeriodLib.calculateDepositLockupPeriod(confirmationBlocks) + 1);
@@ -134,7 +134,7 @@ contract RiftExchangeUnitTest is RiftTest {
         assertEq(updatedOrder.index, order.index, "Order index should remain unchanged");
 
         // [6] verify tokens were transferred correctly
-        assertEq(syntheticBTC.balanceOf(address(this)), initialBalance + depositAmount, "Incorrect withdrawal amount");
+        assertEq(tokenizedBTC.balanceOf(address(this)), initialBalance + depositAmount, "Incorrect withdrawal amount");
     }
 
     function testFuzz_submitPaymentProofs(
@@ -262,7 +262,7 @@ contract RiftExchangeUnitTest is RiftTest {
     ) internal view {
         // Verify funds were transferred correctly
         assertEq(
-            syntheticBTC.balanceOf(address(this)),
+            tokenizedBTC.balanceOf(address(this)),
             initialBalance + totalSwapOutput,
             "Incorrect amount transferred to recipient"
         );
@@ -299,12 +299,12 @@ contract RiftExchangeUnitTest is RiftTest {
         ) = _setupVaultsAndSubmitSwap(params);
 
         // Record initial balances
-        uint256 initialBalance = syntheticBTC.balanceOf(address(this));
+        uint256 initialBalance = tokenizedBTC.balanceOf(address(this));
         uint256 initialFeeBalance = exchange.accumulatedFees();
 
         // validate the erc20 balance of the contract is equal to the amount sent params.depositAmount
         assertEq(
-            syntheticBTC.balanceOf(address(exchange)),
+            tokenizedBTC.balanceOf(address(exchange)),
             params.depositAmount,
             "Contract should have the correct balance"
         );
@@ -341,7 +341,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         // Verify fee router balance and payout
         uint256 accountedFeeRouterBalancePrePayout = exchange.accumulatedFees();
-        uint256 feeRouterBalancePrePayout = syntheticBTC.balanceOf(address(exchange));
+        uint256 feeRouterBalancePrePayout = tokenizedBTC.balanceOf(address(exchange));
 
         console.log("accountedFeeRouterBalancePrePayout", accountedFeeRouterBalancePrePayout);
         console.log("feeRouterBalancePrePayout", feeRouterBalancePrePayout);
@@ -354,7 +354,7 @@ contract RiftExchangeUnitTest is RiftTest {
 
         exchange.withdrawFees();
         assertEq(
-            syntheticBTC.balanceOf(exchange.feeRouter()),
+            tokenizedBTC.balanceOf(exchange.feeRouter()),
             feeRouterBalancePrePayout,
             "Fee router should have received all fees"
         );

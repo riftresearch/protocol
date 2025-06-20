@@ -276,14 +276,14 @@ async fn setup_devnet(accounts: &TestAccounts) -> Result<DevnetConfig> {
     let token_address = *devnet.ethereum.token_contract.address();
     let auction_house = *devnet.ethereum.rift_exchange_contract.address();
 
-    devnet::SyntheticBTC::new(token_address, mm_provider.erased())
+    devnet::TokenizedBTC::new(token_address, mm_provider.erased())
         .approve(auction_house, U256::MAX)
         .send()
         .await?
         .get_receipt()
         .await?;
 
-    devnet::SyntheticBTC::new(token_address, ac_provider.erased())
+    devnet::TokenizedBTC::new(token_address, ac_provider.erased())
         .approve(auction_house, U256::MAX)
         .send()
         .await?

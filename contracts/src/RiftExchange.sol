@@ -22,7 +22,7 @@ import {OrderValidationLib} from "./libraries/OrderValidationLib.sol";
 
 /**
  * @title Rift Exchange
- * @notice A trustless exchange for cross-chain Bitcoin<>Synthetic Bitcoin swaps
+ * @notice A trustless exchange for cross-chain Bitcoin<>Tokenized Bitcoin swaps
  * @dev Uses a Bitcoin light client and zero-knowledge proofs for verification of payment
  */
 abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightClient {
@@ -33,7 +33,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     using DataIntegrityLib for Payment;
     using OrderValidationLib for CreateOrderParams;
 
-    address public immutable syntheticBitcoin;
+    address public immutable tokenizedBitcoin;
     bytes32 public immutable circuitVerificationKey;
     address public immutable verifier;
 
@@ -56,7 +56,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         /// @dev Checks within the contract assume that the token has 8 decimals
         uint8 depositTokenDecimals = ERC20(_depositToken).decimals();
         if (depositTokenDecimals != 8) revert InvalidDecimals(depositTokenDecimals, 8);
-        syntheticBitcoin = _depositToken;
+        tokenizedBitcoin = _depositToken;
         circuitVerificationKey = _circuitVerificationKey;
         verifier = _verifier;
         feeRouter = _feeRouter;
@@ -84,7 +84,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         uint256 feeBalance = accumulatedFees;
         if (feeBalance == 0) revert NoFeeToWithdraw();
         accumulatedFees = 0;
-        syntheticBitcoin.safeTransfer(feeRouter, feeBalance);
+        tokenizedBitcoin.safeTransfer(feeRouter, feeBalance);
     }
 
     /// @notice Creates a new order for Bitcoin<>Tokenized Bitcoin swap
@@ -118,7 +118,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         orderHashes[updatedOrder.index] = updatedOrder.hash();
 
         // Refund order
-        syntheticBitcoin.safeTransfer(order.owner, order.amount + order.takerFee);
+        tokenizedBitcoin.safeTransfer(order.owner, order.amount + order.takerFee);
 
         emit OrderRefunded(updatedOrder);
     }
@@ -222,7 +222,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
             localFees += settleOrderParams[i].order.takerFee;
 
-            syntheticBitcoin.safeTransfer(
+            tokenizedBitcoin.safeTransfer(
                 settleOrderParams[i].order.designatedReceiver,
                 settleOrderParams[i].order.amount
             );

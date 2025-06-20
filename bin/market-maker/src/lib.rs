@@ -1,7 +1,7 @@
 pub mod auction_claimer;
 pub mod db;
 pub mod order_filler;
-pub mod synthetic_btc_redeemer;
+pub mod tokenized_btc_redeemer;
 
 use std::{sync::Arc, time::Duration};
 
@@ -34,8 +34,8 @@ use rift_sdk::{
     DatabaseLocation,
 };
 use std::str::FromStr;
-use synthetic_btc_redeemer::{
-    create_redeemer_actor, trigger_redemption_on_order_settled, SyntheticBtcRedeemerConfig,
+use tokenized_btc_redeemer::{
+    create_redeemer_actor, trigger_redemption_on_order_settled, TokenizedBTCRedeemerConfig,
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -319,7 +319,7 @@ impl MakerConfig {
                 let cbbtc_contract_address = Address::from_str(cbbtc_address)
                     .map_err(|e| eyre::eyre!("Invalid cbBTC contract address: {}", e))?;
 
-                let redeemer_config = SyntheticBtcRedeemerConfig {
+                let redeemer_config = TokenizedBTCRedeemerConfig {
                     coinbase_api_key: api_key.clone(),
                     coinbase_api_secret: api_secret.clone(),
                     market_maker_btc_address: btc_address.clone(),
@@ -336,17 +336,17 @@ impl MakerConfig {
                     match redeemer_actor.run().await {
                         Ok(()) => Ok(()),
                         Err(e) => {
-                            error!("Synthetic Bitcoin Redeemer crashed: {:?}", e);
+                            error!("Tokenized Bitcoin Redeemer crashed: {:?}", e);
                             Err(e)
                         }
                     }
                 });
 
-                info!("Synthetic Bitcoin Redeemer started successfully");
+                info!("Tokenized Bitcoin Redeemer started successfully");
                 Some(trigger_sender)
             }
             _ => {
-                info!("Synthetic Bitcoin Redeemer disabled (missing configuration)");
+                info!("Tokenized Bitcoin Redeemer disabled (missing configuration)");
                 None
             }
         };

@@ -134,8 +134,8 @@ pub async fn calculate_optimal_claim_block(
     let eth_gas_fee_sats_f64 = eth_gas_fee_sats as f64;
     let redemption_fee_f64 = 0.0; // 0 for cbBTC
     
-    // Synthetic BTC is deposit amount
-    let synthetic_btc_f64 = deposit_amount_f64;
+    // Tokenized BTC is deposit amount
+    let tokenized_btc_f64 = deposit_amount_f64;
 
     // Calculate max BTC we'd send
     // sentSats_max = (sBTC - 2f_btc - f_eth - r(sBTC)) / (1 + s/10^4)
@@ -150,7 +150,7 @@ pub async fn calculate_optimal_claim_block(
     );
 
     let numerator_f64 =
-        synthetic_btc_f64 - total_btc_fee_f64 - eth_gas_fee_sats_f64 - redemption_fee_f64;
+        tokenized_btc_f64 - total_btc_fee_f64 - eth_gas_fee_sats_f64 - redemption_fee_f64;
 
     let spread_factor_f64 = spread_bps_f64 / 10000.0;
     let denominator_f64 = 1.0 + spread_factor_f64;

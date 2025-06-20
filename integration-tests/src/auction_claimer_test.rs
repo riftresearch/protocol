@@ -654,7 +654,7 @@ async fn test_auction_claimer_end_to_end() {
             .await
             .expect("Failed to watch mint transaction");
 
-        let token_with_owner = devnet::SyntheticBTC::new(
+        let token_with_owner = devnet::TokenizedBTC::new(
             *devnet.ethereum.token_contract.address(),
             provider_owner.clone().erased(),
         );
