@@ -17,7 +17,9 @@ use tokio::{
         oneshot,
     },
     task::JoinSet,
+    time::{sleep, Duration},
 };
+use tracing;
 
 #[derive(Debug, Clone)]
 pub struct RevertInfo {
@@ -87,6 +89,32 @@ pub struct TransactionBroadcaster {
 }
 
 impl TransactionBroadcaster {
+    // Helper function to check if an error is nonce-related
+    fn is_nonce_error(error: &RpcError<alloy::transports::TransportErrorKind>) -> bool {
+        match error {
+            RpcError::ErrorResp(error_payload) => {
+                let message = error_payload.message.to_lowercase();
+                message.contains("nonce too low")
+                    || message.contains("replacement transaction underpriced")
+            }
+            _ => false,
+        }
+    }
+
+    // Helper function to bump gas prices for replacement transactions
+    fn bump_gas_prices(tx_request: &mut AlloyTransactionRequest) {
+        // Bump gas prices by 10% for replacement transactions
+        if let Some(gas_price) = tx_request.gas_price {
+            tx_request.gas_price = Some(gas_price + gas_price / 10);
+        }
+        if let Some(max_fee_per_gas) = tx_request.max_fee_per_gas {
+            tx_request.max_fee_per_gas = Some(max_fee_per_gas + max_fee_per_gas / 10);
+        }
+        if let Some(max_priority_fee_per_gas) = tx_request.max_priority_fee_per_gas {
+            tx_request.max_priority_fee_per_gas =
+                Some(max_priority_fee_per_gas + max_priority_fee_per_gas / 10);
+        }
+    }
     pub fn new(
         wallet_rpc: Arc<WebsocketWalletProvider>,
         debug_rpc_url: String,
@@ -172,7 +200,7 @@ impl TransactionBroadcaster {
     ) -> eyre::Result<()> {
         let signer_address = wallet_rpc.default_signer_address();
         loop {
-            let request = match request_receiver.recv().await {
+            let mut request = match request_receiver.recv().await {
                 Some(req) => req,
                 None => {
                     return Err(eyre::eyre!("TransactionBroadcaster channel closed"));
@@ -229,30 +257,73 @@ impl TransactionBroadcaster {
                 PreflightCheck::None => {}
             }
 
-            // Send TXN
-            let txn_result = wallet_rpc
-                .send_transaction(request.transaction_request)
-                .await;
-
+            // Send TXN with retry logic for nonce errors
+            const MAX_RETRIES: u32 = 10;
+            let mut retry_count = 0;
             let mut tx_hash = FixedBytes::<32>::default();
 
-            let txn_result = match txn_result {
-                Ok(tx_broadcast) => {
-                    tx_hash = *tx_broadcast.tx_hash();
+            let txn_result = loop {
+                let txn_result = wallet_rpc
+                    .send_transaction(request.transaction_request.clone())
+                    .await;
 
-                    let tx_receipt = tx_broadcast.get_receipt().await;
+                match txn_result {
+                    Ok(tx_broadcast) => {
+                        tx_hash = *tx_broadcast.tx_hash();
 
-                    match tx_receipt {
-                        Ok(tx_receipt) => TransactionExecutionResult::Success(Box::new(tx_receipt)),
-                        Err(e) => TransactionExecutionResult::UnknownError(e.to_string()),
+                        let tx_receipt = tx_broadcast.get_receipt().await;
+
+                        match tx_receipt {
+                            Ok(tx_receipt) => {
+                                break TransactionExecutionResult::Success(Box::new(tx_receipt));
+                            }
+                            Err(e) => {
+                                break TransactionExecutionResult::UnknownError(e.to_string());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Check if this is a nonce error and we should retry
+                        if Self::is_nonce_error(&e) && retry_count < MAX_RETRIES {
+                            retry_count += 1;
+
+                            // Log the retry attempt
+                            tracing::warn!(
+                                "Nonce error detected (attempt {}/{}): {:?}. Retrying with gas bump...",
+                                retry_count,
+                                MAX_RETRIES,
+                                e
+                            );
+
+                            // Bump gas prices for replacement transaction
+                            Self::bump_gas_prices(&mut request.transaction_request);
+
+                            // For nonce too low errors, clear the nonce to let the provider refetch it
+                            if let RpcError::ErrorResp(error_payload) = &e {
+                                if error_payload
+                                    .message
+                                    .to_lowercase()
+                                    .contains("nonce too low")
+                                {
+                                    request.transaction_request.nonce = None;
+                                }
+                            }
+
+                            continue;
+                        }
+
+                        // Not a nonce error or max retries reached - classify the error for the caller
+                        break match e {
+                            RpcError::ErrorResp(error_payload) => {
+                                TransactionExecutionResult::Revert(RevertInfo::new(
+                                    error_payload.to_owned(),
+                                    debug_cli_command,
+                                ))
+                            }
+                            _ => TransactionExecutionResult::UnknownError(e.to_string()),
+                        };
                     }
                 }
-                Err(e) => match e {
-                    RpcError::ErrorResp(error_payload) => TransactionExecutionResult::Revert(
-                        RevertInfo::new(error_payload.to_owned(), debug_cli_command),
-                    ),
-                    _ => TransactionExecutionResult::UnknownError(e.to_string()),
-                },
             };
 
             let _ = status_broadcaster.send(TransactionStatusUpdate {
@@ -265,6 +336,5 @@ impl TransactionBroadcaster {
                 .send(txn_result)
                 .map_err(|_| eyre::eyre!("Failed to send transaction execution result"))?;
         }
-        Ok(())
     }
 }
