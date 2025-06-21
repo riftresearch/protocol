@@ -5,6 +5,9 @@ import "forge-std/src/Script.sol";
 import "forge-std/src/console.sol";
 import "../src/RiftExchange.sol";
 import {HelperTypes} from "../tests/utils/HelperTypes.t.sol";
+// createx salts scoped to alpinevm.eth as caller
+// 0x42563cb907629373eb1f507c30577d49483128e100326c9fe07f07341e90b1f7 => 0x0000000000adbf8023e814b527dbb11fecbffbdc (5 / 5)
+
 
 contract DeployRiftExchange is Script {
     function stringToUint(string memory s) internal pure returns (uint256) {
