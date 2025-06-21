@@ -1,4 +1,5 @@
 pub mod fork_watchtower;
+pub mod light_client_update_watchtower;
 pub mod release_watchtower;
 pub mod swap_watchtower;
 
@@ -9,6 +10,7 @@ use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use eyre::Result;
 use fork_watchtower::ForkWatchtower;
+use light_client_update_watchtower::{LightClientUpdateWatchtower, LightClientUpdateWatchtowerConfig};
 use release_watchtower::ReleaseWatchtower;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_broadcast::TransactionBroadcaster;
@@ -69,6 +71,18 @@ pub struct HypernodeArgs {
         default_value = "prove-network"
     )]
     pub proof_generator: ProofGeneratorType,
+
+    /// Enable the light client update watchtower
+    #[arg(long, env, default_value = "false")]
+    pub enable_light_client_update_watchtower: bool,
+
+    /// Number of blocks behind Bitcoin tip before triggering a light client update
+    #[arg(long, env, default_value = "6")]
+    pub light_client_update_block_lag_threshold: u32,
+
+    /// Interval in seconds between checking for light client lag
+    #[arg(long, env, default_value = "30")]
+    pub light_client_update_check_interval_secs: u64,
 }
 
 const BITCOIN_RPC_TIMEOUT: Duration = Duration::from_secs(1);
@@ -196,6 +210,24 @@ impl HypernodeArgs {
         .await?;
 
         ForkWatchtower::run(
+            contract_data_engine.clone(),
+            bitcoin_data_engine.clone(),
+            btc_rpc.clone(),
+            evm_rpc.clone(),
+            rift_exchange_address,
+            transaction_broadcaster.clone(),
+            self.btc_batch_rpc_size,
+            proof_generator.clone(),
+            &mut join_set,
+        )
+        .await?;
+
+        LightClientUpdateWatchtower::run(
+            LightClientUpdateWatchtowerConfig {
+                enabled: self.enable_light_client_update_watchtower,
+                block_lag_threshold: self.light_client_update_block_lag_threshold,
+                check_interval: Duration::from_secs(self.light_client_update_check_interval_secs),
+            },
             contract_data_engine.clone(),
             bitcoin_data_engine.clone(),
             btc_rpc.clone(),

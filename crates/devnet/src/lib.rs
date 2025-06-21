@@ -391,6 +391,9 @@ impl RiftDevnetBuilder {
                 log_chunk_size,
                 btc_batch_rpc_size: 100,
                 proof_generator: ProofGeneratorType::Execute,
+                enable_light_client_update_watchtower: false,
+                light_client_update_block_lag_threshold: 6,
+                light_client_update_check_interval_secs: 30,
             };
 
             let hypernode_handle = join_set.spawn(async move {
