@@ -72,6 +72,10 @@ contract RiftTest is Test, PRNG {
             _tipBlockLeaf: initial_mmr_proof.blockLeaf
         });
 
+        // Add the test contract itself as an authorized hypernode
+        // Note: address(this) is the owner since it deployed the contract
+        exchange.addHypernode(address(this));
+
         tokenizedBTC = TokenizedBTC(address(exchange.tokenizedBitcoin()));
         emit SetupSuccess();
     }

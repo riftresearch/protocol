@@ -43,6 +43,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     uint256 public accumulatedFees;
     address public feeRouter;
     uint16 public takerFeeBips;
+    mapping(address => bool) public hypernodes;
 
     constructor(
         bytes32 _mmrRoot,
@@ -68,6 +69,23 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
         name = "RiftExchange";
         version = "0.0.1";
+    }
+
+    modifier onlyHypernode() {
+        if (!hypernodes[msg.sender]) revert NotHypernode();
+        _;
+    }
+
+    /// @notice Adds a hypernode to the exchange
+    /// @param _hypernode The address of the hypernode to add
+    function addHypernode(address _hypernode) external onlyOwner {
+        hypernodes[_hypernode] = true;
+    }
+
+    /// @notice Removes a hypernode from the exchange
+    /// @param _hypernode The address of the hypernode to remove
+    function removeHypernode(address _hypernode) external onlyOwner {
+        hypernodes[_hypernode] = false;
     }
 
     /// @inheritdoc IRiftExchange
@@ -129,7 +147,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
         SubmitPaymentProofParams[] calldata paymentParams,
         BlockProofParams calldata blockProofParams,
         bytes calldata proof
-    ) external {
+    ) external  onlyHypernode {
         // optimistically update root, needed b/c we validate current inclusion in the chain for each payment
         _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
 
@@ -159,7 +177,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     }
 
     /// @inheritdoc IRiftExchange
-    function submitPaymentProofsOnly(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external {
+    function submitPaymentProofsOnly(SubmitPaymentProofParams[] calldata paymentParams, bytes calldata proof) external onlyHypernode {
         uint32 currentLightClientHeight = lightClientHeight();
         (Payment[] memory payments, PaymentPublicInput[] memory paymentPublicInputs) = _validatePayments(
             currentLightClientHeight,
@@ -184,7 +202,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     }
 
     /// @inheritdoc IRiftExchange
-    function settleOrders(SettleOrderParams[] calldata settleOrderParams) external {
+    function settleOrders(SettleOrderParams[] calldata settleOrderParams) external onlyHypernode {
         Payment[] memory updatedPayments = new Payment[](settleOrderParams.length);
         Order[] memory updatedOrders = new Order[](settleOrderParams.length);
 
@@ -237,7 +255,7 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
     }
 
     /// @inheritdoc IRiftExchange
-    function updateLightClient(BlockProofParams calldata blockProofParams, bytes calldata proof) external {
+    function updateLightClient(BlockProofParams calldata blockProofParams, bytes calldata proof) external onlyHypernode {
         _updateRoot(blockProofParams.priorMmrRoot, blockProofParams.newMmrRoot, blockProofParams.tipBlockLeaf);
 
         bytes32 compressedLeavesHash = EfficientHashLib.hash(blockProofParams.compressedBlockLeaves);

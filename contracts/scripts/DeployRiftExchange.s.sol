@@ -94,6 +94,10 @@ contract DeployRiftExchange is Script {
         
 
         console.log("RiftExchange deployed at address:", address(riftExchange));
+        
+        // TODO: Add authorized hypernodes after deployment
+        // riftExchange.addHypernode(hypernodeAddress1);
+        // riftExchange.addHypernode(hypernodeAddress2);
         */
 
         vm.stopBroadcast();

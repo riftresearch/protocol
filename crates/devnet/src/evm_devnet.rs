@@ -235,6 +235,34 @@ pub async fn deploy_contracts(
     )
     .await?;
 
+    // Add common hypernode addresses used in tests and devnet
+    use rift_sdk::MultichainAccount;
+    use alloy::signers::local::LocalSigner;
+    
+    // Add test hypernode accounts as authorized hypernodes
+    let mut test_hypernodes = vec![
+        MultichainAccount::new(2).ethereum_address,  // Used in hypernode_test.rs
+        MultichainAccount::new(3).ethereum_address,  // Used in market_maker_hypernode_e2e_test.rs  
+        MultichainAccount::new(151).ethereum_address, // Used in devnet interactive mode
+    ];
+    
+    // Add addresses from devnet_test.rs that submit payment proofs
+    let maker_secret_bytes: [u8; 32] = [0x01; 32];
+    let taker_secret_bytes: [u8; 32] = [0x02; 32];
+    let maker_signer = LocalSigner::from_bytes(&maker_secret_bytes.into()).unwrap();
+    let taker_signer = LocalSigner::from_bytes(&taker_secret_bytes.into()).unwrap();
+    test_hypernodes.push(maker_signer.address());  // Used in test_simulated_swap_end_to_end
+    test_hypernodes.push(taker_signer.address());  // Used in test_simulated_swap_end_to_end
+    
+    for hypernode_address in test_hypernodes {
+        let add_hypernode_call = exchange.addHypernode(hypernode_address);
+        funded_provider
+            .send_transaction(add_hypernode_call.into_transaction_request())
+            .await?
+            .get_receipt()
+            .await?;
+    }
+
     Ok((
         Arc::new(exchange),
         Arc::new(token),
