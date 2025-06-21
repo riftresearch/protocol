@@ -7,7 +7,6 @@ use bitcoincore_rpc_async::json::GetRawTransactionResult;
 use corepc_node::Conf;
 use eyre::{eyre, Result};
 use log::info;
-use reqwest::Url;
 use rift_sdk::DatabaseLocation;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -15,20 +14,16 @@ use tokio::time::Instant;
 use bitcoin::{Address as BitcoinAddress, Amount};
 use bitcoincore_rpc_async::Auth;
 use bitcoincore_rpc_async::RpcApi;
-use corepc_node::{Client as BitcoinClient, Node as BitcoinRegtest};
-use electrsd::{downloaded_exe_path, Conf as ElectrsConf, ElectrsD};
+use corepc_node::Node as BitcoinRegtest;
+use electrsd::ElectrsD;
 use esplora_client::AsyncClient as EsploraClient;
 
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
-
-use crate::TokenizedBTC::configureMinterCall;
 
 /// Holds all Bitcoin-related devnet state.
 pub struct BitcoinDevnet {
     pub data_engine: Arc<BitcoinDataEngine>,
     pub rpc_client: Arc<AsyncBitcoinClient>,
-    pub regtest: BitcoinRegtest,
-    pub miner_client: BitcoinClient,
     pub miner_address: BitcoinAddress,
     pub cookie: PathBuf,
     pub datadir: PathBuf,
@@ -39,6 +34,9 @@ pub struct BitcoinDevnet {
     /// If you optionally funded a BTC address upon startup,
     /// we keep track of the satoshis here.
     pub funded_sats: u64,
+    /// The bitcoin regtest node instance.
+    /// This must be kept alive for the lifetime of the devnet.
+    _regtest: Arc<BitcoinRegtest>,
 }
 
 impl BitcoinDevnet {
@@ -63,23 +61,56 @@ impl BitcoinDevnet {
         let t = Instant::now();
         let mut conf = Conf::default();
         conf.args.push("-txindex");
-        let bitcoin_regtest =
-            BitcoinRegtest::from_downloaded_with_conf(&conf).map_err(|e| eyre!(e))?;
+        let bitcoin_regtest = Arc::new(
+            tokio::task::spawn_blocking(move || BitcoinRegtest::from_downloaded_with_conf(&conf))
+                .await
+                .map_err(|e| eyre!("Failed to spawn blocking task: {}", e))?
+                .map_err(|e| eyre!(e))?,
+        );
         info!("Instantiated Bitcoin Regtest in {:?}", t.elapsed());
+
+        let datadir = bitcoin_regtest.workdir().join("regtest");
 
         let cookie = bitcoin_regtest.params.cookie_file.clone();
 
+        let cookie_str = tokio::fs::read_to_string(cookie.clone()).await.unwrap();
+        // http://<user>:<password>@<host>:<port>/
+        let rpc_url_with_cookie = format!(
+            "http://{}@{}:{}/wallet/alice",
+            cookie_str,
+            bitcoin_regtest.params.rpc_socket.ip(),
+            bitcoin_regtest.params.rpc_socket.port()
+        );
+
         // Create wallet "alice" for mining
-        let alice = bitcoin_regtest
-            .create_wallet("alice")
-            .map_err(|e| eyre!(e))?;
-        let alice_address = alice.new_address()?;
+        let alice_address = {
+            let regtest_clone = bitcoin_regtest.clone();
+            tokio::task::spawn_blocking(move || regtest_clone.create_wallet("alice"))
+                .await
+                .map_err(|e| eyre!("Failed to spawn blocking task: {}", e))?
+                .map_err(|e| eyre!(e))?
+                .new_address()?
+        };
+
+        info!(
+            "Creating async Bitcoin RPC client at {}",
+            rpc_url_with_cookie
+        );
+
+        let bitcoin_rpc_client: Arc<AsyncBitcoinClient> = Arc::new(
+            AsyncBitcoinClient::new(
+                rpc_url_with_cookie.clone(),
+                Auth::CookieFile(cookie.clone()),
+                Duration::from_millis(1000),
+            )
+            .await?,
+        );
 
         let mine_time = Instant::now();
-        // Mine 101 blocks to get initial coinbase BTC
-        bitcoin_regtest
-            .client
-            .generate_to_address(if using_bitcoin { 101 } else { 1 }, &alice_address)?;
+
+        bitcoin_rpc_client
+            .generate_to_address(if using_bitcoin { 101 } else { 1 }, &alice_address)
+            .await?;
 
         info!(
             "Mined {} blocks in {:?}",
@@ -92,21 +123,20 @@ impl BitcoinDevnet {
         for addr_str in funded_addresses {
             let amount = 4_995_000_000; // for example, ~49.95 BTC in sats
             let external_address = BitcoinAddress::from_str(&addr_str)?.assume_checked();
-            alice.send_to_address(&external_address, Amount::from_sat(amount))?;
+            bitcoin_rpc_client
+                .send_to_address(
+                    &external_address,
+                    Amount::from_sat(amount),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
             funded_sats += amount;
         }
-
-        let bitcoin_rpc_url = bitcoin_regtest.rpc_url_with_wallet("alice");
-        info!("Creating async Bitcoin RPC client at {}", bitcoin_rpc_url);
-
-        let bitcoin_rpc_client: Arc<AsyncBitcoinClient> = Arc::new(
-            AsyncBitcoinClient::new(
-                bitcoin_rpc_url,
-                Auth::CookieFile(cookie.clone()),
-                Duration::from_millis(250),
-            )
-            .await?,
-        );
 
         let bitcoin_data_engine = BitcoinDataEngine::new(
             &DatabaseLocation::InMemory,
@@ -142,14 +172,18 @@ impl BitcoinDevnet {
         }
 
         let electrsd = if using_esplora {
+            let exe_path = electrsd::exe_path()
+                .expect("Failed to get electrs executable path, maybe it's not installed?");
+            let conf_clone = conf.clone();
+            let regtest_clone = bitcoin_regtest.clone();
+
             Some(Arc::new(
-                ElectrsD::with_conf(
-                    electrsd::exe_path()
-                        .expect("Failed to get electrs executable path, maybe it's not installed?"),
-                    &bitcoin_regtest,
-                    &conf,
-                )
-                .expect("Failed to create electrsd instance"),
+                tokio::task::spawn_blocking(move || {
+                    ElectrsD::with_conf(exe_path, &regtest_clone, &conf_clone)
+                })
+                .await
+                .map_err(|e| eyre!("Failed to spawn blocking task: {}", e))?
+                .map_err(|e| eyre!("Failed to create electrsd instance: {}", e))?,
             ))
         } else {
             None
@@ -193,37 +227,27 @@ impl BitcoinDevnet {
             }
         }
 
-        let cookie_str = std::fs::read_to_string(cookie.clone()).unwrap();
-        // http://<user>:<password>@<host>:<port>/
-        let rpc_url_with_cookie = format!(
-            "http://{}@{}:{}",
-            cookie_str,
-            bitcoin_regtest.params.rpc_socket.ip(),
-            bitcoin_regtest.params.rpc_socket.port()
-        );
-        let datadir = bitcoin_regtest.workdir().join("regtest");
         let devnet = BitcoinDevnet {
             data_engine,
             rpc_client: bitcoin_rpc_client,
-            regtest: bitcoin_regtest,
-            miner_client: alice,
             miner_address: alice_address,
             cookie,
-            rpc_url_with_cookie,
+            rpc_url_with_cookie: rpc_url_with_cookie.clone(),
             funded_sats,
             datadir,
             electrsd,
             esplora_client,
             esplora_url,
+            _regtest: bitcoin_regtest,
         };
 
         Ok((devnet, if using_bitcoin { 101 } else { 1 }))
     }
 
-    pub async fn mine_blocks(&self, blocks: usize) -> Result<()> {
-        self.regtest
-            .client
-            .generate_to_address(blocks, &self.miner_address)?;
+    pub async fn mine_blocks(&self, blocks: u64) -> Result<()> {
+        self.rpc_client
+            .generate_to_address(blocks, &self.miner_address)
+            .await?;
         Ok(())
     }
 
@@ -234,21 +258,17 @@ impl BitcoinDevnet {
         amount: Amount,
     ) -> Result<GetRawTransactionResult> {
         let blocks_to_mine = (amount.to_btc() / 50.0).ceil() as usize;
-        self.regtest
-            .client
-            .generate_to_address(blocks_to_mine, &self.miner_address)?;
-        let txid = self.miner_client.send_to_address(&address, amount)?;
+        self.mine_blocks(blocks_to_mine as u64).await?;
+        let txid = self
+            .rpc_client
+            .send_to_address(&address, amount, None, None, None, None, None, None)
+            .await?;
         let full_transaction = self
             .rpc_client
-            .get_raw_transaction_info(
-                &Txid::from_str(&txid.txid().unwrap().to_string()).unwrap(),
-                None,
-            )
+            .get_raw_transaction_info(&Txid::from_str(&txid.to_string()).unwrap(), None)
             .await?;
         // mine the tx
-        self.regtest
-            .client
-            .generate_to_address(1, &self.miner_address)?;
+        self.mine_blocks(1).await?;
         Ok(full_transaction)
     }
 }

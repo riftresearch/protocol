@@ -387,6 +387,9 @@ async fn start_hypernode(
         log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: rift_sdk::proof_generator::ProofGeneratorType::Execute,
+        enable_auto_light_client_update: false,
+        auto_light_client_update_block_lag_threshold: 6,
+        auto_light_client_update_check_interval_secs: 30,
     };
 
     let handle = tokio::spawn(async move {

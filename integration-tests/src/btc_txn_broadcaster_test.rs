@@ -35,11 +35,7 @@ async fn test_btc_txn_broadcaster_basic() {
     .unwrap();
 
     // Mine a block to confirm the funding transaction
-    devnet
-        .regtest
-        .client
-        .generate_to_address(1, &test_account.bitcoin_wallet.address)
-        .unwrap();
+    devnet.mine_blocks(1).await.unwrap();
 
     // Create the transaction broadcaster
     let broadcaster = SimpleBitcoinTransactionBroadcaster::new(
@@ -66,11 +62,7 @@ async fn test_btc_txn_broadcaster_basic() {
             println!("Successfully broadcast transaction: {}", txid);
 
             // Mine a block to confirm the transaction
-            devnet
-                .regtest
-                .client
-                .generate_to_address(1, &recipient_wallet.bitcoin_wallet.address)
-                .unwrap();
+            devnet.mine_blocks(1).await.unwrap();
         }
         Err(e) => {
             panic!("Transaction broadcast failed: {}", e);
@@ -99,11 +91,7 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
     .unwrap();
 
     // Mine a block to confirm the funding transaction
-    devnet
-        .regtest
-        .client
-        .generate_to_address(1, &test_account.bitcoin_wallet.address)
-        .unwrap();
+    devnet.mine_blocks(1).await.unwrap();
 
     // Wait a bit for Esplora to index the transaction
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -140,11 +128,7 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
             println!("Successfully broadcast multi-output transaction: {}", txid);
 
             // Mine a block to confirm the transaction
-            devnet
-                .regtest
-                .client
-                .generate_to_address(1, &recipient1.bitcoin_wallet.address)
-                .unwrap();
+            devnet.mine_blocks(1).await.unwrap();
         }
         Err(e) => {
             panic!("Multi-output transaction broadcast failed: {}", e);
@@ -220,11 +204,7 @@ async fn test_btc_txn_broadcaster_can_fund() {
     .unwrap();
 
     // Mine a block to confirm the funding transaction
-    devnet
-        .regtest
-        .client
-        .generate_to_address(1, &test_account.bitcoin_wallet.address)
-        .unwrap();
+    devnet.mine_blocks(1).await.unwrap();
 
     // Wait a bit for Esplora to index the transaction
     tokio::time::sleep(Duration::from_secs(2)).await;

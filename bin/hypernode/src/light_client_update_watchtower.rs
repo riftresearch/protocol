@@ -51,43 +51,18 @@ impl From<eyre::Report> for LightClientUpdateWatchtowerError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LightClientUpdateWatchtowerConfig {
-    /// Enable the light client update watchtower
-    pub enabled: bool,
-    /// Number of blocks behind Bitcoin tip before triggering an update
-    pub block_lag_threshold: u32,
-    /// Interval between checking for light client lag
-    pub check_interval: Duration,
-}
-
-impl Default for LightClientUpdateWatchtowerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            block_lag_threshold: 6, // Default to 6 blocks behind
-            check_interval: LIGHT_CLIENT_UPDATE_CHECK_INTERVAL,
-        }
-    }
-}
-
 #[derive(Debug)]
 enum LightClientUpdateEvent {
     CheckLag,
     UpdateRequired(u32), // blocks behind
 }
 
-pub struct LightClientUpdateWatchtower {
-    config: LightClientUpdateWatchtowerConfig,
-}
+pub struct LightClientUpdateWatchtower;
 
 impl LightClientUpdateWatchtower {
-    pub fn new(config: LightClientUpdateWatchtowerConfig) -> Self {
-        Self { config }
-    }
-
     pub async fn run(
-        config: LightClientUpdateWatchtowerConfig,
+        block_lag_threshold: u32,
+        check_interval: Duration,
         contract_data_engine: Arc<ContractDataEngine>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         btc_rpc: Arc<AsyncBitcoinClient>,
@@ -98,14 +73,9 @@ impl LightClientUpdateWatchtower {
         proof_generator: Arc<RiftProofGenerator>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> eyre::Result<Self> {
-        if !config.enabled {
-            info!("Light client update watchtower is disabled");
-            return Ok(Self::new(config));
-        }
-
         info!(
-            block_lag_threshold = config.block_lag_threshold,
-            check_interval_secs = config.check_interval.as_secs(),
+            block_lag_threshold,
+            check_interval_secs = check_interval.as_secs(),
             "Starting light client update watchtower"
         );
 
@@ -116,7 +86,6 @@ impl LightClientUpdateWatchtower {
 
         // Periodic lag check task
         let event_sender_timer = event_sender.clone();
-        let check_interval = config.check_interval;
         join_set.spawn(
             async move {
                 let mut interval = time::interval(check_interval);
@@ -140,7 +109,6 @@ impl LightClientUpdateWatchtower {
         );
 
         // Main event processing task
-        let config_clone = config.clone();
         join_set.spawn(
             async move {
                 while let Some(event) = event_receiver.recv().await {
@@ -149,14 +117,14 @@ impl LightClientUpdateWatchtower {
                             match Self::check_light_client_lag(
                                 &contract_data_engine,
                                 &bitcoin_data_engine,
-                                config_clone.block_lag_threshold,
+                                block_lag_threshold,
                             )
                             .await
                             {
                                 Ok(Some(blocks_behind)) => {
                                     info!(
                                         blocks_behind,
-                                        threshold = config_clone.block_lag_threshold,
+                                        threshold = block_lag_threshold,
                                         "Light client is behind Bitcoin tip - triggering update"
                                     );
                                     if event_sender
@@ -200,7 +168,7 @@ impl LightClientUpdateWatchtower {
             .instrument(info_span!("Light Client Update Event Handler")),
         );
 
-        Ok(Self::new(config))
+        Ok(Self)
     }
 
     /// Check if the light client is lagging behind Bitcoin tip by more than the threshold
@@ -212,22 +180,20 @@ impl LightClientUpdateWatchtower {
     ) -> Result<Option<u32>, LightClientUpdateWatchtowerError> {
         // Get current light client tip from contract data engine
         let light_client_mmr_guard = contract_data_engine.checkpointed_block_tree.read().await;
-        let light_client_leaf_count = light_client_mmr_guard
-            .get_leaf_count()
-            .await
-            .map_err(|e| {
+        let light_client_leaf_count =
+            light_client_mmr_guard.get_leaf_count().await.map_err(|e| {
                 LightClientUpdateWatchtowerError::LagCheckError(format!(
                     "Failed to get light client leaf count: {}",
                     e
                 ))
             })?;
-        
+
         if light_client_leaf_count == 0 {
             return Err(LightClientUpdateWatchtowerError::LagCheckError(
                 "Light client MMR has no leaves".to_string(),
             ));
         }
-        
+
         let light_client_tip = light_client_mmr_guard
             .get_leaf_by_leaf_index(light_client_leaf_count - 1)
             .await
@@ -246,22 +212,19 @@ impl LightClientUpdateWatchtower {
 
         // Get current Bitcoin tip from bitcoin data engine
         let bitcoin_mmr_guard = bitcoin_data_engine.indexed_mmr.read().await;
-        let bitcoin_leaf_count = bitcoin_mmr_guard
-            .get_leaf_count()
-            .await
-            .map_err(|e| {
-                LightClientUpdateWatchtowerError::LagCheckError(format!(
-                    "Failed to get bitcoin leaf count: {}",
-                    e
-                ))
-            })?;
-        
+        let bitcoin_leaf_count = bitcoin_mmr_guard.get_leaf_count().await.map_err(|e| {
+            LightClientUpdateWatchtowerError::LagCheckError(format!(
+                "Failed to get bitcoin leaf count: {}",
+                e
+            ))
+        })?;
+
         if bitcoin_leaf_count == 0 {
             return Err(LightClientUpdateWatchtowerError::LagCheckError(
                 "Bitcoin MMR has no leaves".to_string(),
             ));
         }
-        
+
         let bitcoin_tip = bitcoin_mmr_guard
             .get_leaf_by_leaf_index(bitcoin_leaf_count - 1)
             .await
@@ -272,9 +235,7 @@ impl LightClientUpdateWatchtower {
                 ))
             })?
             .ok_or_else(|| {
-                LightClientUpdateWatchtowerError::LagCheckError(
-                    "Bitcoin tip not found".to_string(),
-                )
+                LightClientUpdateWatchtowerError::LagCheckError("Bitcoin tip not found".to_string())
             })?;
         drop(bitcoin_mmr_guard);
 
@@ -307,10 +268,7 @@ impl LightClientUpdateWatchtower {
         proof_generator: &Arc<RiftProofGenerator>,
         blocks_behind: u32,
     ) -> Result<(), LightClientUpdateWatchtowerError> {
-        info!(
-            blocks_behind,
-            "Starting light client update process"
-        );
+        info!(blocks_behind, "Starting light client update process");
 
         // Build chain transition for light client update
         let light_client_mmr = contract_data_engine.checkpointed_block_tree.read().await;
@@ -336,12 +294,13 @@ impl LightClientUpdateWatchtower {
         );
 
         // Generate proof for the chain transition
-        let proof = Self::generate_light_client_update_proof(&chain_transition, proof_generator)
-            .await?;
+        let proof =
+            Self::generate_light_client_update_proof(&chain_transition, proof_generator).await?;
 
         // Generate auxiliary data from chain transition for the proof
-        let (public_input, auxiliary_data_option) = chain_transition.verify::<Keccak256Hasher>(true);
-        
+        let (public_input, auxiliary_data_option) =
+            chain_transition.verify::<Keccak256Hasher>(true);
+
         let auxiliary_data = auxiliary_data_option.ok_or_else(|| {
             LightClientUpdateWatchtowerError::ChainTransitionBuildError(
                 "Failed to generate auxiliary data from chain transition".to_string(),
@@ -365,10 +324,7 @@ impl LightClientUpdateWatchtower {
         )
         .await?;
 
-        info!(
-            blocks_behind,
-            "Successfully submitted light client update"
-        );
+        info!(blocks_behind, "Successfully submitted light client update");
 
         Ok(())
     }
@@ -384,15 +340,12 @@ impl LightClientUpdateWatchtower {
             order_filling_transaction_input: None,
         };
 
-        let proof = proof_generator
-            .prove(&input)
-            .await
-            .map_err(|e| {
-                LightClientUpdateWatchtowerError::ProofGenerationError(format!(
-                    "Failed to generate light client update proof: {}",
-                    e
-                ))
-            })?;
+        let proof = proof_generator.prove(&input).await.map_err(|e| {
+            LightClientUpdateWatchtowerError::ProofGenerationError(format!(
+                "Failed to generate light client update proof: {}",
+                e
+            ))
+        })?;
 
         Ok(proof)
     }

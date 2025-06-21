@@ -1,11 +1,12 @@
 use crate::test_utils::setup_test_tracing;
 use alloy::providers::Provider;
 use bitcoincore_rpc_async::RpcApi;
+use data_engine::engine::ContractDataEngine;
 use devnet::RiftDevnet;
 use hypernode::HypernodeArgs;
 use rift_sdk::{
-    proof_generator::ProofGeneratorType, txn_broadcast::TransactionBroadcaster,
-    create_websocket_wallet_provider, DatabaseLocation, MultichainAccount,
+    create_websocket_wallet_provider, proof_generator::ProofGeneratorType,
+    txn_broadcast::TransactionBroadcaster, DatabaseLocation, MultichainAccount,
 };
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -29,7 +30,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
     println!("Devnet setup complete");
 
     // Get initial state
-    let initial_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
+    let initial_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap() as u32;
     let initial_light_client_height = devnet
         .ethereum
         .rift_exchange_contract
@@ -68,13 +69,13 @@ async fn test_light_client_update_watchtower_automatic_update() {
         checkpoint_file: devnet.checkpoint_file_path.clone(),
         database_location: DatabaseLocation::InMemory,
         rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
-        deploy_block_number: deploy_block_number,
+        deploy_block_number,
         log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: ProofGeneratorType::Execute,
-        enable_light_client_update_watchtower: true,
-        light_client_update_block_lag_threshold: block_lag_threshold,
-        light_client_update_check_interval_secs: check_interval_secs,
+        enable_auto_light_client_update: true,
+        auto_light_client_update_block_lag_threshold: block_lag_threshold,
+        auto_light_client_update_check_interval_secs: check_interval_secs,
     };
 
     // Start hypernode in background task
@@ -90,14 +91,14 @@ async fn test_light_client_update_watchtower_automatic_update() {
     // Mine enough blocks to exceed the threshold
     let blocks_to_mine = block_lag_threshold + 2; // Mine 5 blocks (3 threshold + 2 extra)
     println!("Mining {} blocks to trigger watchtower", blocks_to_mine);
-    
+
     devnet
         .bitcoin
-        .mine_blocks(blocks_to_mine as usize)
+        .mine_blocks(blocks_to_mine as u64)
         .await
         .expect("Failed to mine blocks");
 
-    let new_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
+    let new_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap() as u32;
     println!("New Bitcoin height: {}", new_bitcoin_height);
 
     // Wait for the watchtower to detect the lag and update the light client
@@ -152,13 +153,13 @@ async fn test_light_client_update_watchtower_automatic_update() {
                 .call()
                 .await
                 .unwrap();
-            
+
             panic!(
                 "❌ Test failed: Light client update watchtower did not update within timeout. \
                  Bitcoin height: {}, Light client height: {}, Lag: {}",
                 new_bitcoin_height,
                 final_light_client_height,
-                new_bitcoin_height - final_light_client_height
+                new_bitcoin_height.saturating_sub(final_light_client_height)
             );
         }
     }
@@ -174,10 +175,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
 
     let data_engine_mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
 
-    println!(
-        "Final contract MMR root: {}",
-        hex::encode(final_mmr_root)
-    );
+    println!("Final contract MMR root: {}", hex::encode(final_mmr_root));
     println!(
         "Data engine MMR root: {}",
         hex::encode(data_engine_mmr_root)
@@ -185,8 +183,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
 
     // The contract MMR root should match the data engine MMR root after the update
     assert_eq!(
-        final_mmr_root,
-        data_engine_mmr_root.into(),
+        final_mmr_root.0, data_engine_mmr_root,
         "Contract MMR root should match data engine MMR root after light client update"
     );
 
@@ -214,7 +211,7 @@ async fn test_light_client_update_watchtower_disabled() {
     println!("Devnet setup complete");
 
     // Get initial state
-    let initial_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
+    let initial_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap() as u32;
     let initial_light_client_height = devnet
         .ethereum
         .rift_exchange_contract
@@ -228,20 +225,6 @@ async fn test_light_client_update_watchtower_disabled() {
         initial_bitcoin_height, initial_light_client_height
     );
 
-    // Create hypernode with light client update watchtower DISABLED
-    let evm_provider = create_websocket_wallet_provider(
-        devnet.ethereum.anvil.ws_endpoint_url().as_str(),
-        hypernode_account.secret_bytes,
-    )
-    .await
-    .expect("Failed to create EVM provider");
-
-    let _transaction_broadcaster = TransactionBroadcaster::new(
-        std::sync::Arc::new(evm_provider),
-        devnet.ethereum.anvil.endpoint().to_string(),
-        &mut devnet.join_set,
-    );
-
     let hypernode_args = HypernodeArgs {
         evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
         btc_rpc: devnet.bitcoin.rpc_url_with_cookie.clone(),
@@ -249,13 +232,13 @@ async fn test_light_client_update_watchtower_disabled() {
         checkpoint_file: devnet.checkpoint_file_path.clone(),
         database_location: DatabaseLocation::InMemory,
         rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
-        deploy_block_number: deploy_block_number,
+        deploy_block_number,
         log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: ProofGeneratorType::Execute,
-        enable_light_client_update_watchtower: false, // DISABLED
-        light_client_update_block_lag_threshold: 3,
-        light_client_update_check_interval_secs: 1,
+        enable_auto_light_client_update: false, // DISABLED
+        auto_light_client_update_block_lag_threshold: 3,
+        auto_light_client_update_check_interval_secs: 1,
     };
 
     // Start hypernode in background task
@@ -270,14 +253,14 @@ async fn test_light_client_update_watchtower_disabled() {
     // Mine blocks that would exceed the threshold
     let blocks_to_mine = 10;
     println!("Mining {} blocks (watchtower disabled)", blocks_to_mine);
-    
+
     devnet
         .bitcoin
         .mine_blocks(blocks_to_mine)
         .await
         .expect("Failed to mine blocks");
 
-    let new_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
+    let new_bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap() as u32;
     println!("New Bitcoin height: {}", new_bitcoin_height);
 
     // Wait a reasonable amount of time
@@ -302,7 +285,7 @@ async fn test_light_client_update_watchtower_disabled() {
         "Light client height should not change when watchtower is disabled"
     );
 
-    let lag = new_bitcoin_height - final_light_client_height;
+    let lag = new_bitcoin_height.saturating_sub(final_light_client_height);
     assert!(
         lag >= blocks_to_mine as u32,
         "Light client should be significantly behind Bitcoin tip when watchtower is disabled"

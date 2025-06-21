@@ -10,7 +10,7 @@ use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
 use eyre::Result;
 use fork_watchtower::ForkWatchtower;
-use light_client_update_watchtower::{LightClientUpdateWatchtower, LightClientUpdateWatchtowerConfig};
+use light_client_update_watchtower::LightClientUpdateWatchtower;
 use release_watchtower::ReleaseWatchtower;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_broadcast::TransactionBroadcaster;
@@ -72,17 +72,17 @@ pub struct HypernodeArgs {
     )]
     pub proof_generator: ProofGeneratorType,
 
-    /// Enable the light client update watchtower
+    /// Enable automatic light client updates
     #[arg(long, env, default_value = "false")]
-    pub enable_light_client_update_watchtower: bool,
+    pub enable_auto_light_client_update: bool,
 
     /// Number of blocks behind Bitcoin tip before triggering a light client update
-    #[arg(long, env, default_value = "6")]
-    pub light_client_update_block_lag_threshold: u32,
+    #[arg(long, env, default_value = "144")]
+    pub auto_light_client_update_block_lag_threshold: u32,
 
     /// Interval in seconds between checking for light client lag
     #[arg(long, env, default_value = "30")]
-    pub light_client_update_check_interval_secs: u64,
+    pub auto_light_client_update_check_interval_secs: u64,
 }
 
 const BITCOIN_RPC_TIMEOUT: Duration = Duration::from_secs(1);
@@ -222,23 +222,22 @@ impl HypernodeArgs {
         )
         .await?;
 
-        LightClientUpdateWatchtower::run(
-            LightClientUpdateWatchtowerConfig {
-                enabled: self.enable_light_client_update_watchtower,
-                block_lag_threshold: self.light_client_update_block_lag_threshold,
-                check_interval: Duration::from_secs(self.light_client_update_check_interval_secs),
-            },
-            contract_data_engine.clone(),
-            bitcoin_data_engine.clone(),
-            btc_rpc.clone(),
-            evm_rpc.clone(),
-            rift_exchange_address,
-            transaction_broadcaster.clone(),
-            self.btc_batch_rpc_size,
-            proof_generator.clone(),
-            &mut join_set,
-        )
-        .await?;
+        if self.enable_auto_light_client_update {
+            LightClientUpdateWatchtower::run(
+                self.auto_light_client_update_block_lag_threshold,
+                Duration::from_secs(self.auto_light_client_update_check_interval_secs),
+                contract_data_engine.clone(),
+                bitcoin_data_engine.clone(),
+                btc_rpc.clone(),
+                evm_rpc.clone(),
+                rift_exchange_address,
+                transaction_broadcaster.clone(),
+                self.btc_batch_rpc_size,
+                proof_generator.clone(),
+                &mut join_set,
+            )
+            .await?;
+        }
 
         // Wait for one of the background threads to complete or fail. (Ideally never happens, but we want to crash the program if it does)
         handle_background_thread_result(join_set.join_next().await)

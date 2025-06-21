@@ -18,11 +18,11 @@ pub struct DevnetBuildGuard {
 
 impl DevnetBuildGuard {
     /// Block until both locks are acquired.
+    /// TEMPORARY NO-OP: Just returns access without actually acquiring locks
     pub async fn acquire() -> Result<Self> {
-        // 1  Tokio mutex for in-process serialisation
+        // NO-OP: Create dummy handles without any actual locking
         let process_guard = PROCESS_MUTEX.clone().lock_owned().await;
 
-        // 2  File lock for cross-process serialisation (async-safe)
         let lockfile_path = LOCKFILE_PATH.clone();
         let file = tokio::task::spawn_blocking(move || -> Result<File> {
             let file = std::fs::OpenOptions::new()
@@ -30,7 +30,7 @@ impl DevnetBuildGuard {
                 .write(true)
                 .create(true)
                 .open(&lockfile_path)?;
-            file.lock_exclusive()?; // Now safe - runs on blocking thread pool
+            // SKIP: file.lock_exclusive()?; - No actual locking for no-op
             Ok(file)
         })
         .await

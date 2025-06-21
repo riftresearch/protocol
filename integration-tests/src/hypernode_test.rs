@@ -307,6 +307,9 @@ async fn test_hypernode_simple_swap() {
             btc_batch_rpc_size: 100,
             log_chunk_size: 10000,
             proof_generator: ProofGeneratorType::Execute,
+            enable_auto_light_client_update: false,
+            auto_light_client_update_block_lag_threshold: 6,
+            auto_light_client_update_check_interval_secs: 30,
         };
         hypernode.run().await.expect("Hypernode crashed");
     });
