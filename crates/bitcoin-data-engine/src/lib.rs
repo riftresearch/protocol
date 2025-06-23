@@ -16,7 +16,7 @@ use rift_sdk::bitcoin_utils::{AsyncBitcoinClient, ChainTipStatus};
 
 use rift_sdk::indexed_mmr::IndexedMMR;
 use rift_sdk::DatabaseLocation;
-use tracing::{error, info, info_span, warn, Instrument}; // assumed to be defined in your code base
+use tracing::{error, info, info_span, warn, Instrument};
 
 /// Our async Bitcoin Data Engine.
 /// This struct spawns its own tasks:

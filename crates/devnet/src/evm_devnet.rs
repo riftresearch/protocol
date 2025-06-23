@@ -5,21 +5,18 @@ use eyre::{eyre, Result};
 use log::info;
 use rift_sdk::create_websocket_wallet_provider;
 use sol_bindings::{
-    Bundler3::{self, Bundler3Instance},
-    GeneralAdapter1::GeneralAdapter1Instance,
-    ParaswapAdapter::ParaswapAdapterInstance,
-    RiftAuctionAdaptor::RiftAuctionAdaptorInstance,
+    Bundler3::Bundler3Instance, GeneralAdapter1::GeneralAdapter1Instance,
+    ParaswapAdapter::ParaswapAdapterInstance, RiftAuctionAdaptor::RiftAuctionAdaptorInstance,
     RiftExchangeHarnessInstance,
 };
 use tokio::time::Instant;
 
 use alloy::{
-    network::{EthereumWallet, TransactionBuilder},
+    network::TransactionBuilder,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
-    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder, WsConnect},
+    providers::{ext::AnvilApi, DynProvider, Provider, ProviderBuilder},
     rpc::types::TransactionRequest,
-    signers::local::PrivateKeySigner,
 };
 
 use crate::{
