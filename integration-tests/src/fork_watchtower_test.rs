@@ -1,4 +1,4 @@
-use crate::test_utils::{create_deposit, setup_test_tracing};
+use crate::test_utils::create_deposit;
 use alloy::rpc::json_rpc::ErrorPayload;
 use alloy::sol_types::SolError;
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
@@ -18,8 +18,6 @@ use sol_bindings::{ChainworkTooLow, CheckpointNotEstablished};
 /// Tests that the fork watchtower correctly identifies when there is no fork
 #[tokio::test]
 async fn test_fork_watchtower_no_fork_detection() {
-    setup_test_tracing();
-
     let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
@@ -46,8 +44,6 @@ async fn test_fork_watchtower_no_fork_detection() {
 /// Tests that the fork watchtower correctly identifies a stale chain
 #[tokio::test]
 async fn test_fork_watchtower_stale_chain_detection() {
-    setup_test_tracing();
-
     let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
@@ -144,8 +140,6 @@ async fn test_fork_watchtower_stale_chain_detection() {
 /// Tests that the fork watchtower correctly handles error conditions
 #[tokio::test]
 async fn test_fork_watchtower_error_handling() {
-    setup_test_tracing();
-
     let create_raw_value = |hex_data: &[u8]| -> Option<Box<RawValue>> {
         let hex_string = format!("\"0x{}\"", hex::encode(hex_data));
         RawValue::from_string(hex_string).ok()
@@ -188,8 +182,6 @@ async fn test_fork_watchtower_error_handling() {
 /// Tests that the fork watchtower correctly detects and resolves a simulated fork
 #[tokio::test]
 async fn test_fork_watchtower_fork_detection_and_resolution() {
-    setup_test_tracing();
-
     let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
@@ -520,8 +512,6 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 
 #[tokio::test]
 async fn test_fork_watchtower_light_client_tip_not_in_bde() {
-    setup_test_tracing();
-
     let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
@@ -754,8 +744,6 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 
 #[tokio::test]
 async fn test_fork_watchtower_equal_chainwork() {
-    setup_test_tracing();
-
     let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();

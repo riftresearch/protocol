@@ -29,8 +29,6 @@ use sol_bindings::{
 };
 use tokio::signal;
 
-use crate::test_utils::setup_test_tracing;
-
 /// Test the end-to-end swap flow, fully simulated:
 ///  1) Create bitcoin and EVM devnets
 ///  2) Deploy the RiftExchange + MockToken (done in `RiftDevnet::setup`)
@@ -41,7 +39,6 @@ use crate::test_utils::setup_test_tracing;
 ///  7) Check final on-chain state
 #[tokio::test]
 async fn test_simulated_swap_end_to_end() {
-    setup_test_tracing();
     // ---1) Spin up devnet with default config---
     //    Interactive = false => no local HTTP servers / Docker containers
     //    No pre-funded EVM or Bitcoin address => we can do that ourselves below

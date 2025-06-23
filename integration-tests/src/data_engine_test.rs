@@ -1,5 +1,3 @@
-use crate::test_utils::setup_test_tracing;
-
 use bitcoin_light_client_core::{
     leaves::{create_new_leaves, get_genesis_leaf, BlockLeaf},
     light_client::{calculate_cumulative_work, Header},
@@ -27,17 +25,18 @@ fn get_test_data() -> Vec<BlockLeaf> {
 // * cargo test --release test_data_engine_file_db -- --nocapture
 #[tokio::test]
 async fn test_data_engine_file_db() {
-    setup_test_tracing();
-
     let temp_dir = tempfile::tempdir().unwrap();
     let dir_str = temp_dir.path().to_str().unwrap().to_string();
 
     let leaves = get_test_data();
 
     // Seed the database
-    ContractDataEngine::seed(&DatabaseLocation::Directory(dir_str.clone()), leaves.clone())
-        .await
-        .unwrap();
+    ContractDataEngine::seed(
+        &DatabaseLocation::Directory(dir_str.clone()),
+        leaves.clone(),
+    )
+    .await
+    .unwrap();
 
     // Re-open using the same database location
     let engine = ContractDataEngine::seed(&DatabaseLocation::Directory(dir_str), Vec::new())
@@ -59,8 +58,6 @@ async fn test_data_engine_file_db() {
 
 #[tokio::test]
 async fn test_data_engine_in_memory_db() {
-    setup_test_tracing();
-
     let leaves = get_test_data();
 
     // Initial seeding

@@ -30,8 +30,6 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::timeout;
 
-use crate::test_utils::setup_test_tracing;
-
 fn create_test_auction(
     index: u64,
     deposit_amount: u64,
@@ -306,7 +304,6 @@ async fn test_auction_log_extraction() {
 
 #[tokio::test]
 async fn test_whitelist_verification() {
-    setup_test_tracing();
     info!("Starting test_whitelist_verification");
 
     let whitelisted_maker = MultichainAccount::new(1);

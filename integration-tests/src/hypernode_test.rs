@@ -21,12 +21,9 @@ use rift_sdk::{
 use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
 use tokio::signal::{self};
 
-use crate::test_utils::setup_test_tracing;
-
 #[tokio::test]
 // Serial anything that uses alot of bitcoin mining
 async fn test_hypernode_simple_swap() {
-    setup_test_tracing();
     // ---1) Spin up devnet with default config---
 
     let maker = MultichainAccount::new(1);

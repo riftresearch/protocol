@@ -12,13 +12,9 @@ use rift_sdk::{
 };
 use tokio::task::JoinSet;
 
-use crate::test_utils::setup_test_tracing;
-
 /// Test basic functionality of the Bitcoin transaction broadcaster
 #[tokio::test]
 async fn test_btc_txn_broadcaster_basic() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     let test_account = MultichainAccount::with_network(42, Network::Regtest);
@@ -73,8 +69,6 @@ async fn test_btc_txn_broadcaster_basic() {
 /// Test transaction broadcasting with multiple outputs
 #[tokio::test]
 async fn test_btc_txn_broadcaster_multiple_outputs() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     let test_account = MultichainAccount::with_network(44, Network::Regtest);
@@ -139,8 +133,6 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
 /// Test insufficient funds scenario
 #[tokio::test]
 async fn test_btc_txn_broadcaster_insufficient_funds() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     // Create a test wallet (don't fund it)
@@ -186,8 +178,6 @@ async fn test_btc_txn_broadcaster_insufficient_funds() {
 /// Test the can_fund_transaction method
 #[tokio::test]
 async fn test_btc_txn_broadcaster_can_fund() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     let test_account = MultichainAccount::with_network(49, Network::Regtest);

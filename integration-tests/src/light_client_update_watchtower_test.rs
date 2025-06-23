@@ -1,4 +1,3 @@
-use crate::test_utils::setup_test_tracing;
 use alloy::providers::Provider;
 use bitcoincore_rpc_async::RpcApi;
 use data_engine::engine::ContractDataEngine;
@@ -15,8 +14,6 @@ use tokio::time::{sleep, timeout};
 /// when it falls behind the Bitcoin tip by more than the configured threshold.
 #[tokio::test]
 async fn test_light_client_update_watchtower_automatic_update() {
-    setup_test_tracing();
-
     // Setup devnet with Bitcoin enabled
     let hypernode_account = MultichainAccount::new(151);
     let (mut devnet, deploy_block_number) = RiftDevnet::builder()
@@ -192,8 +189,6 @@ async fn test_light_client_update_watchtower_automatic_update() {
 /// Tests that the light client update watchtower remains idle when disabled
 #[tokio::test]
 async fn test_light_client_update_watchtower_disabled() {
-    setup_test_tracing();
-
     // Setup devnet with Bitcoin enabled
     let hypernode_account = MultichainAccount::new(151);
     let (mut devnet, deploy_block_number) = RiftDevnet::builder()

@@ -20,8 +20,6 @@ use rift_sdk::{
 use sol_bindings::{AuctionUpdated, BTCDutchAuctionHouse, DutchAuctionParams, MappingWhitelist};
 use tokio::time::timeout;
 
-use crate::test_utils::setup_test_tracing;
-
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoincore_rpc_async::Auth;
 use hypernode::{
@@ -45,7 +43,6 @@ use tokio::task::JoinSet;
 
 #[tokio::test]
 async fn test_market_maker_hypernode_end_to_end() {
-    setup_test_tracing();
     info!("=== Starting E2E Test ===");
 
     let result = timeout(Duration::from_secs(300), run_e2e_test()).await;
