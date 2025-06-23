@@ -63,6 +63,8 @@ pub type TokenizedBTCWebsocket = TokenizedBTC::TokenizedBTCInstance<DynProvider>
 
 use alloy::{node_bindings::AnvilInstance, signers::Signer};
 
+use crate::evm_devnet::Mode;
+
 // ================== RiftDevnet ================== //
 
 /// The "combined" Devnet which holds:
@@ -238,6 +240,12 @@ impl RiftDevnetBuilder {
         .map_err(|e| eyre::eyre!("[devnet builder] Failed to seed data engine: {}", e))?;
         log::info!("Data engine seeded in {:?}", t.elapsed());
 
+        let deploy_mode = if interactive {
+            Mode::Fork(fork_config.unwrap())
+        } else {
+            Mode::Local
+        };
+
         // 5) Ethereum side
         let circuit_verification_key_hash = rift_sdk::get_rift_program_hash();
         let (ethereum_devnet, deployment_block_number) = crate::evm_devnet::EthDevnet::setup(
@@ -247,8 +255,7 @@ impl RiftDevnetBuilder {
                 .await
                 .map_err(|e| eyre::eyre!("[devnet builder] Failed to get MMR root: {}", e))?,
             tip_block_leaf,
-            fork_config,
-            interactive,
+            deploy_mode,
         )
         .await
         .map_err(|e| eyre::eyre!("[devnet builder] Failed to setup Ethereum devnet: {}", e))?;
@@ -505,7 +512,7 @@ impl RiftDevnetBuilder {
                 ethereum_devnet.anvil.port()
             );
             println!(
-                "Anvil Chain ID:             {}",
+                "Forked Chain ID:             {}",
                 ethereum_devnet.anvil.chain_id()
             );
             println!(
@@ -534,14 +541,6 @@ impl RiftDevnetBuilder {
                 ethereum_devnet.rift_exchange_contract.address()
             );
 
-            println!(
-                "Bundler3 Address:           {}",
-                periphery.bundler3.address()
-            );
-            println!(
-                "GeneralAdapter1 Address:    {}",
-                periphery.general_adapter1.address()
-            );
             println!(
                 "RiftAuctionAdapter Address: {}",
                 periphery.rift_auction_adapter.address()

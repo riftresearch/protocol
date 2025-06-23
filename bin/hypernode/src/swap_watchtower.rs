@@ -759,14 +759,6 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                 tx_hash,
             );
 
-            if hex::encode(block_merkle_root) != block_info.merkle_root {
-                tracing::error!(
-                    "Merkle root mismatch: {} != {}, proof will fail",
-                    hex::encode(block_merkle_root),
-                    block_info.merkle_root
-                );
-            }
-
             let rift_transaction_input = OrderFillingTransaction {
                 txn: serialize_no_segwit(&txn).unwrap(),
                 paid_orders: pending_swap.paid_orders.clone(),
@@ -934,6 +926,11 @@ pub async fn build_chain_transition_for_light_client_update<'a>(
                 hex::encode(parent_leaf_hash)
             );
         }
+        info!("Parent leaf index: {}", parent_leaf_index);
+        info!(
+            "Getting peaks for element count: {}",
+            map_leaf_index_to_element_index(parent_leaf_index) + 1
+        );
 
         // get the peaks of the light client mmr as if the parent leaf was the tip of the MMR
         let parent_leaf_peaks = light_client_mmr

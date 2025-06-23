@@ -12,6 +12,7 @@ use sol_bindings::{
 use tokio::time::Instant;
 
 use alloy::{
+    eips::eip7251::ConsolidationRequest,
     network::TransactionBuilder,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
@@ -25,10 +26,7 @@ use crate::{
 };
 
 pub struct PeripheryContracts {
-    pub bundler3: Arc<Bundler3Instance<DynProvider>>,
-    pub general_adapter1: Arc<GeneralAdapter1Instance<DynProvider>>,
     pub rift_auction_adapter: Arc<RiftAuctionAdaptorInstance<DynProvider>>,
-    pub paraswap_adapter: Arc<ParaswapAdapterInstance<DynProvider>>,
 }
 
 /// Holds all Ethereum-related devnet state.
@@ -38,8 +36,14 @@ pub struct EthDevnet {
     pub rift_exchange_contract: Arc<RiftExchangeHarnessWebsocket>,
     pub verifier_contract: Address,
     pub funded_provider: DynProvider,
-    pub on_fork: bool,
+    pub deploy_mode: Mode,
     pub periphery: Option<PeripheryContracts>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Mode {
+    Fork(ForkConfig),
+    Local,
 }
 
 impl EthDevnet {
@@ -48,11 +52,9 @@ impl EthDevnet {
         circuit_verification_key_hash: [u8; 32],
         genesis_mmr_root: [u8; 32],
         tip_block_leaf: BlockLeaf,
-        fork_config: Option<ForkConfig>,
-        interactive: bool,
+        deploy_mode: Mode,
     ) -> Result<(Self, u64)> {
-        let on_fork = fork_config.is_some();
-        let anvil = spawn_anvil(interactive, fork_config).await?;
+        let anvil = spawn_anvil(deploy_mode.clone()).await?;
         info!(
             "Anvil spawned at {}, chain_id={}",
             anvil.endpoint(),
@@ -68,7 +70,6 @@ impl EthDevnet {
         .await?
         .erased();
 
-        info!("Deploying RiftExchange & MockToken...");
         let t = Instant::now();
         let (rift_exchange, token_contract, verifier_contract, deployment_block_number) =
             deploy_contracts(
@@ -76,22 +77,24 @@ impl EthDevnet {
                 circuit_verification_key_hash,
                 genesis_mmr_root,
                 tip_block_leaf,
-                on_fork,
+                deploy_mode.clone(),
             )
             .await?;
 
         // Should only need to deploy periphery contracts if we're in interactive mode
-        let periphery = if interactive {
-            let (b3, ga1, raa, pa) =
-                deploy_periphery(funded_provider.clone(), *rift_exchange.address()).await?;
-            (Some(PeripheryContracts {
-                bundler3: b3,
-                general_adapter1: ga1,
-                rift_auction_adapter: raa,
-                paraswap_adapter: pa,
-            }))
-        } else {
-            (None)
+        let periphery = match deploy_mode.clone() {
+            Mode::Fork(fork_config) => {
+                let rift_auction_adaptor = deploy_periphery(
+                    funded_provider.clone(),
+                    fork_config.bundler3_address,
+                    *rift_exchange.address(),
+                )
+                .await?;
+                Some(PeripheryContracts {
+                    rift_auction_adapter: rift_auction_adaptor,
+                })
+            }
+            Mode::Local => None,
         };
 
         info!("Deployed in {:?}", t.elapsed());
@@ -102,7 +105,7 @@ impl EthDevnet {
             rift_exchange_contract: rift_exchange,
             verifier_contract,
             funded_provider,
-            on_fork,
+            deploy_mode,
             periphery,
         };
 
@@ -121,7 +124,7 @@ impl EthDevnet {
     pub async fn mint_token(&self, address: Address, amount: U256) -> Result<()> {
         let impersonate_provider = ProviderBuilder::new()
             .on_http(format!("http://localhost:{}", self.anvil.port()).parse()?);
-        if self.on_fork {
+        if matches!(self.deploy_mode, Mode::Fork(_)) {
             // 1. Get the master minter address
             let master_minter = self.token_contract.masterMinter().call().await?;
 
@@ -181,7 +184,7 @@ pub async fn deploy_contracts(
     circuit_verification_key_hash: [u8; 32],
     genesis_mmr_root: [u8; 32],
     tip_block_leaf: BlockLeaf,
-    on_fork: bool,
+    mode: Mode,
 ) -> Result<(
     Arc<RiftExchangeHarnessWebsocket>,
     Arc<TokenizedBTCWebsocket>,
@@ -200,7 +203,7 @@ pub async fn deploy_contracts(
 
     let token_address = Address::from_str(TOKEN_ADDRESS)?;
     // Deploy the mock token, this is dependent on if we're on a fork or not
-    let token = if !on_fork {
+    let token = if matches!(mode, Mode::Fork(_)) {
         // deploy it
         let mock_token = TokenizedBTC::deploy(funded_provider.clone()).await?;
         funded_provider
@@ -271,61 +274,27 @@ pub async fn deploy_contracts(
 /// Return `(Bundler3, GeneralAdapter1, RiftAuctionAdaptor, ParaswapAdapter)`.
 pub async fn deploy_periphery(
     funded_provider: DynProvider,
+    bundler3_address: Address,
     rift_exchange_address: Address,
-) -> Result<(
-    Arc<Bundler3Instance<DynProvider>>,
-    Arc<GeneralAdapter1Instance<DynProvider>>,
-    Arc<RiftAuctionAdaptorInstance<DynProvider>>,
-    Arc<ParaswapAdapterInstance<DynProvider>>,
-)> {
-    use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
-
-    use std::str::FromStr;
-
-    // These theoretically shouldn't be accessed when using devnet, so mock them
-    let mock_morpho_address = Address::from_str("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead")?;
-    let mock_weth_address = Address::from_str("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")?;
-    let mock_augustus_registry = Address::from_str("0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef")?;
-
-    let bundler3 = Bundler3Instance::deploy(funded_provider.clone()).await?;
-    let general_adapter1 = GeneralAdapter1Instance::deploy(
-        funded_provider.clone(),
-        *bundler3.address(),
-        mock_morpho_address,
-        mock_weth_address,
-    )
-    .await?;
-
+) -> Result<Arc<RiftAuctionAdaptorInstance<DynProvider>>> {
     let rift_auction_adaptor = RiftAuctionAdaptorInstance::deploy(
         funded_provider.clone(),
-        *bundler3.address(),
+        bundler3_address,
         rift_exchange_address,
     )
     .await?;
-
-    let paraswap_adapter = ParaswapAdapterInstance::deploy(
-        funded_provider.clone(),
-        *bundler3.address(),
-        mock_morpho_address,
-        mock_augustus_registry,
-    )
-    .await?;
-
-    Ok((
-        Arc::new(bundler3),
-        Arc::new(general_adapter1),
-        Arc::new(rift_auction_adaptor),
-        Arc::new(paraswap_adapter),
-    ))
+    Ok(Arc::new(rift_auction_adaptor))
 }
 
+#[derive(Clone, Debug)]
 pub struct ForkConfig {
     pub url: String,
     pub block_number: Option<u64>,
+    pub bundler3_address: Address,
 }
 
 /// Spawns Anvil in a blocking task.
-async fn spawn_anvil(interactive: bool, fork_config: Option<ForkConfig>) -> Result<AnvilInstance> {
+async fn spawn_anvil(mode: Mode) -> Result<AnvilInstance> {
     tokio::task::spawn_blocking(move || {
         let mut anvil = Anvil::new()
             .arg("--host")
@@ -335,14 +304,15 @@ async fn spawn_anvil(interactive: bool, fork_config: Option<ForkConfig>) -> Resu
             .arg("--steps-tracing")
             .arg("--timestamp")
             .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string());
-        if let Some(fork_config) = fork_config {
-            anvil = anvil.fork(fork_config.url);
-            if let Some(block_number) = fork_config.block_number {
-                anvil = anvil.fork_block_number(block_number);
+        match mode {
+            Mode::Fork(fork_config) => {
+                anvil = anvil.port(50101_u16);
+                anvil = anvil.fork(fork_config.url);
+                if let Some(block_number) = fork_config.block_number {
+                    anvil = anvil.fork_block_number(block_number);
+                }
             }
-        }
-        if interactive {
-            anvil = anvil.port(50101_u16);
+            Mode::Local => {}
         }
         anvil.try_spawn().map_err(|e| eyre!(e))
     })

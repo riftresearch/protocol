@@ -17,3 +17,4 @@ log = { workspace = true}
 rift-sdk = { workspace = true}
 tokio = { workspace = true}
 env_logger = { workspace = true}
+alloy = {workspace = true}
