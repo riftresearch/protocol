@@ -3,7 +3,6 @@ use alloy::{
     primitives::{keccak256, Address},
     signers::local::LocalSigner,
 };
-use ctor::ctor;
 use rift_sdk::{txn_builder::P2WPKHBitcoinWallet, MultichainAccount};
 
 use std::sync::Arc;
@@ -220,18 +219,4 @@ pub async fn send_bitcoin_for_deposit(
 
     // now mine enough blocks for confirmations (1 + 1 additional)
     devnet.bitcoin.mine_blocks(2).await.unwrap();
-}
-
-#[ctor]
-fn init_test_tracing() {
-    // Only init tracing if --nocapture is passed
-    let has_nocapture = std::env::args().any(|arg| arg == "--nocapture");
-    if has_nocapture {
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-            )
-            .try_init()
-            .ok(); // Ignore errors if already initialized
-    }
 }

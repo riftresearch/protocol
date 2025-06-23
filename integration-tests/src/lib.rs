@@ -22,3 +22,20 @@ mod quote_test;
 mod test_utils;
 #[cfg(test)]
 mod txn_broadcast_test;
+
+use ctor::ctor;
+use tracing_subscriber::EnvFilter;
+
+#[ctor]
+fn init_test_tracing() {
+    // Only init tracing if --nocapture is passed
+    let has_nocapture = std::env::args().any(|arg| arg == "--nocapture" || arg == "--show-output");
+    if has_nocapture {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
+            .try_init()
+            .ok(); // Ignore errors if already initialized
+    }
+}
