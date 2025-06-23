@@ -30,7 +30,7 @@ impl DevnetBuildGuard {
                 .write(true)
                 .create(true)
                 .open(&lockfile_path)?;
-            // SKIP: file.lock_exclusive()?; - No actual locking for no-op
+            file.lock_exclusive()?;
             Ok(file)
         })
         .await

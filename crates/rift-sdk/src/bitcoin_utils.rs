@@ -2,7 +2,7 @@ use bitcoincore_rpc_async::bitcoin::block::Header;
 use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{Block, BlockHash};
-use bitcoincore_rpc_async::json::GetBlockHeaderResult;
+use bitcoincore_rpc_async::json::GetBlockHeaderVerbose;
 use serde_json::value::RawValue;
 use tracing::{error, info, warn};
 
@@ -470,10 +470,10 @@ impl HeaderChainValidator for Vec<Header> {
     }
 }
 
-impl HeaderChainValidator for Vec<GetBlockHeaderResult> {
+impl HeaderChainValidator for Vec<GetBlockHeaderVerbose> {
     fn validate_header_chain(&self) -> Result<(), RiftSdkError> {
         for i in 1..self.len() {
-            if self[i].previous_block_hash.unwrap() != self[i - 1].hash {
+            if self[i].previous_block_hash.as_ref().unwrap() != &self[i - 1].hash {
                 return Err(RiftSdkError::HeaderChainValidationFailed);
             }
         }
@@ -553,7 +553,7 @@ pub trait BitcoinClientExt {
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
-    ) -> crate::errors::Result<GetBlockHeaderResult>;
+    ) -> crate::errors::Result<GetBlockHeaderVerbose>;
 
     async fn find_oldest_block_before_timestamp(
         &self,
@@ -572,7 +572,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
-    ) -> crate::errors::Result<GetBlockHeaderResult> {
+    ) -> crate::errors::Result<GetBlockHeaderVerbose> {
         let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!(
                 "Error getting block hash for height {}: {}",
@@ -580,12 +580,15 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             ))
         })?;
 
-        let header = self.get_block_header_info(&block_hash).await.map_err(|e| {
-            RiftSdkError::BitcoinRpcError(format!(
-                "Error getting block header info for height {}: {}",
-                height, e
-            ))
-        })?;
+        let header = self
+            .get_block_header_verbose(&block_hash)
+            .await
+            .map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!(
+                    "Error getting block header info for height {}: {}",
+                    height, e
+                ))
+            })?;
 
         Ok(header)
     }
@@ -606,9 +609,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         while left < right {
             let mid = left + (right - left) / 2;
             let block = self.get_block_header_info_by_height(mid as u32).await?;
-            let block_time = block.median_time.ok_or_else(|| {
-                RiftSdkError::BitcoinRpcError(format!("Block {} has no median time", mid))
-            })? as u64;
+            let block_time = block.median_time as u64;
 
             if block_time >= target_timestamp {
                 right = mid;
@@ -622,9 +623,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         // Verify we found a valid block
         let found_block = self.get_block_header_info_by_height(left as u32).await?;
-        let found_block_time = found_block.median_time.ok_or_else(|| {
-            RiftSdkError::BitcoinRpcError(format!("Block {} has no median time", left))
-        })? as u64;
+        let found_block_time = found_block.median_time as u64;
 
         if found_block_time >= target_timestamp {
             return Err(RiftSdkError::BitcoinRpcError(format!(
@@ -774,11 +773,10 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             .map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!("Error getting block hashes: {}", e))
             })?;
-
         // ===============================================================
         // Batch 2: For each block hash, get the block header info.
         // ===============================================================
-        let header_requests: Vec<BitcoinCoreJsonRpcRequest<GetBlockHeaderResult>> = block_hashes
+        let header_requests: Vec<BitcoinCoreJsonRpcRequest<GetBlockHeaderVerbose>> = block_hashes
             .iter()
             .map(|block_hash| BitcoinCoreJsonRpcRequest {
                 method: "getblockheader",
@@ -788,7 +786,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             })
             .collect();
 
-        let header_results: Vec<GetBlockHeaderResult> = self
+        let header_results: Vec<GetBlockHeaderVerbose> = self
             .send_batch(&header_requests, Some(concurrency_limit))
             .await
             .map_err(|e| {
@@ -809,11 +807,17 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             explorer_block_hash.reverse();
 
             // Extract chainwork from header (expecting exactly 32 bytes)
-            let chainwork: [u8; 32] = header
-                .chainwork
-                .as_slice()
+            let chainwork: [u8; 32] = hex::decode(header.chain_work.as_bytes())
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!("Error decoding chainwork: {}", e))
+                })?
                 .try_into()
-                .expect("Chainwork is not 32 bytes");
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!(
+                        "Error converting chainwork to array: {:?}",
+                        e
+                    ))
+                })?;
 
             let leaf = BlockLeaf::new(explorer_block_hash, height, chainwork);
             // Note: if GetHeaderResult isn't Copy, you may need to clone it.
@@ -822,28 +826,35 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         // Sort by height (if necessary)
         results.sort_by_key(|(height, _, _)| *height);
-
         // Unzip into separate vectors (if you need headers for validation)
-        let (leaves, headers): (Vec<BlockLeaf>, Vec<GetBlockHeaderResult>) = results
+        let (leaves, headers): (Vec<BlockLeaf>, Vec<GetBlockHeaderVerbose>) = results
             .into_iter()
             .map(|(_height, leaf, header)| (leaf, header))
             .unzip();
-
         // ===============================================================
         // Validation: Check the expected parent, if provided.
         // ===============================================================
         if let Some(expected_parent) = expected_parent {
-            let first_prev = headers[0]
-                .previous_block_hash
-                .as_ref()
-                .ok_or_else(|| {
+            let first_prev: [u8; 32] =
+                hex::decode(headers[0].previous_block_hash.as_ref().ok_or_else(|| {
                     RiftSdkError::ParentValidationFailed("Missing previous block hash".to_string())
+                })?)
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!(
+                        "Error decoding previous block hash: {}",
+                        e
+                    ))
                 })?
-                .as_raw_hash()
-                .to_byte_array();
+                .try_into()
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!(
+                        "Error converting previous block hash to array: {:?}",
+                        e
+                    ))
+                })?;
 
             // Reverse the byte order
-            let first_prev_rev: Vec<u8> = first_prev.iter().rev().copied().collect();
+            let first_prev_rev: Vec<u8> = first_prev.to_vec();
 
             if first_prev_rev != expected_parent {
                 return Err(RiftSdkError::ParentValidationFailed(format!(

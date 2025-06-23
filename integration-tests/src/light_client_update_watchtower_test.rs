@@ -60,7 +60,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
 
     // Configure watchtower with aggressive settings for testing
     let block_lag_threshold = 3u32; // Trigger after 3 blocks behind
-    let check_interval_secs = 2u64; // Check every 2 seconds
+    let check_interval_secs = 1u64; // Check every 1 second
 
     let hypernode_args = HypernodeArgs {
         evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
@@ -83,10 +83,6 @@ async fn test_light_client_update_watchtower_automatic_update() {
         println!("Starting hypernode with light client update watchtower enabled");
         hypernode_args.run().await
     });
-
-    // Give hypernode time to initialize
-    sleep(Duration::from_secs(5)).await;
-    println!("Hypernode initialization complete");
 
     // Mine enough blocks to exceed the threshold
     let blocks_to_mine = block_lag_threshold + 2; // Mine 5 blocks (3 threshold + 2 extra)

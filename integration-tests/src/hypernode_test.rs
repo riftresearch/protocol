@@ -225,7 +225,8 @@ async fn test_hypernode_simple_swap() {
     let txid = funding_utxo.txid;
     let wallet = taker.bitcoin_wallet;
     let fee_sats = 1000;
-    let transaction = funding_utxo.transaction().unwrap();
+    let transaction: Transaction =
+        bitcoin::consensus::deserialize(&hex::decode(&funding_utxo.hex).unwrap()).unwrap();
 
     // if the predicate is true, we can spend it
     let txvout = transaction

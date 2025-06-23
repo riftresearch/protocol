@@ -3,7 +3,7 @@ use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoincore_rpc_async::bitcoin::Txid;
-use bitcoincore_rpc_async::json::GetRawTransactionResult;
+use bitcoincore_rpc_async::json::GetRawTransactionVerbose;
 use corepc_node::Conf;
 use eyre::{eyre, Result};
 use log::info;
@@ -81,33 +81,37 @@ impl BitcoinDevnet {
             bitcoin_regtest.params.rpc_socket.ip(),
             bitcoin_regtest.params.rpc_socket.port()
         );
+        let rpc_url = format!(
+            "http://{}:{}/wallet/alice",
+            bitcoin_regtest.params.rpc_socket.ip(),
+            bitcoin_regtest.params.rpc_socket.port()
+        );
 
         // Create wallet "alice" for mining
         let alice_address = {
             let regtest_clone = bitcoin_regtest.clone();
-            tokio::task::spawn_blocking(move || regtest_clone.create_wallet("alice"))
+            let wallet = tokio::task::spawn_blocking(move || regtest_clone.create_wallet("alice"))
                 .await
                 .map_err(|e| eyre!("Failed to spawn blocking task: {}", e))?
-                .map_err(|e| eyre!(e))?
-                .new_address()?
+                .map_err(|e| eyre!(e))?;
+
+            wallet.new_address()?
         };
 
-        info!(
-            "Creating async Bitcoin RPC client at {}",
-            rpc_url_with_cookie
-        );
+        info!("Creating async Bitcoin RPC client at {}", rpc_url);
 
         let bitcoin_rpc_client: Arc<AsyncBitcoinClient> = Arc::new(
             AsyncBitcoinClient::new(
                 rpc_url_with_cookie.clone(),
-                Auth::CookieFile(cookie.clone()),
-                Duration::from_millis(1000),
+                Auth::None,
+                Duration::from_millis(10000),
             )
             .await?,
         );
 
         let mine_time = Instant::now();
 
+        info!("Mining 101 blocks to miner...");
         bitcoin_rpc_client
             .generate_to_address(if using_bitcoin { 101 } else { 1 }, &alice_address)
             .await?;
@@ -124,16 +128,7 @@ impl BitcoinDevnet {
             let amount = 4_995_000_000; // for example, ~49.95 BTC in sats
             let external_address = BitcoinAddress::from_str(&addr_str)?.assume_checked();
             bitcoin_rpc_client
-                .send_to_address(
-                    &external_address,
-                    Amount::from_sat(amount),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
+                .send_to_address(&external_address, Amount::from_sat(amount))
                 .await?;
             funded_sats += amount;
         }
@@ -256,17 +251,13 @@ impl BitcoinDevnet {
         &self,
         address: BitcoinAddress,
         amount: Amount,
-    ) -> Result<GetRawTransactionResult> {
+    ) -> Result<GetRawTransactionVerbose> {
         let blocks_to_mine = (amount.to_btc() / 50.0).ceil() as usize;
         self.mine_blocks(blocks_to_mine as u64).await?;
-        let txid = self
-            .rpc_client
-            .send_to_address(&address, amount, None, None, None, None, None, None)
-            .await?;
-        let full_transaction = self
-            .rpc_client
-            .get_raw_transaction_info(&Txid::from_str(&txid.to_string()).unwrap(), None)
-            .await?;
+        let send_result = self.rpc_client.send_to_address(&address, amount).await?;
+        let txid = Txid::from_str(&send_result.0)?;
+
+        let full_transaction = self.rpc_client.get_raw_transaction_verbose(&txid).await?;
         // mine the tx
         self.mine_blocks(1).await?;
         Ok(full_transaction)

@@ -562,7 +562,7 @@ impl ForkWatchtower {
         );
 
         let block_header_result = btc_rpc
-            .get_block_header_info(&bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
+            .get_block_header_verbose(&bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
                 &natural_block_hash,
             )?)
             .await;
