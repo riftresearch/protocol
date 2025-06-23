@@ -13,6 +13,8 @@ mod fork_watchtower_test;
 #[cfg(test)]
 mod hypernode_test;
 #[cfg(test)]
+mod light_client_update_watchtower_test;
+#[cfg(test)]
 mod market_maker_hypernode_e2e_test;
 #[cfg(test)]
 mod quote_test;

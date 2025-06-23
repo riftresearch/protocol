@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use alloy::{
     primitives::{Address, TxHash, U256},
-    providers::{ext::AnvilApi, Provider, ProviderBuilder, WsConnect},
+    providers::{ext::AnvilApi, Provider},
     sol_types::SolEvent,
 };
 use bitcoin::Amount;
@@ -19,8 +19,6 @@ use rift_sdk::{
 };
 use sol_bindings::{AuctionUpdated, BTCDutchAuctionHouse, DutchAuctionParams, MappingWhitelist};
 use tokio::time::timeout;
-
-use crate::test_utils::setup_test_tracing;
 
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoincore_rpc_async::Auth;
@@ -45,7 +43,6 @@ use tokio::task::JoinSet;
 
 #[tokio::test]
 async fn test_market_maker_hypernode_end_to_end() {
-    setup_test_tracing();
     info!("=== Starting E2E Test ===");
 
     let result = timeout(Duration::from_secs(300), run_e2e_test()).await;
@@ -387,6 +384,9 @@ async fn start_hypernode(
         log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: rift_sdk::proof_generator::ProofGeneratorType::Execute,
+        enable_auto_light_client_update: false,
+        auto_light_client_update_block_lag_threshold: 6,
+        auto_light_client_update_check_interval_secs: 30,
     };
 
     let handle = tokio::spawn(async move {

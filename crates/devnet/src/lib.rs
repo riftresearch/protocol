@@ -391,6 +391,9 @@ impl RiftDevnetBuilder {
                 log_chunk_size,
                 btc_batch_rpc_size: 100,
                 proof_generator: ProofGeneratorType::Execute,
+                enable_auto_light_client_update: false,
+                auto_light_client_update_block_lag_threshold: 6,
+                auto_light_client_update_check_interval_secs: 30,
             };
 
             let hypernode_handle = join_set.spawn(async move {
@@ -455,7 +458,7 @@ impl RiftDevnetBuilder {
         // 11) Start auto-mining task if interactive mode is enabled
         if interactive && using_bitcoin {
             // Create a new RPC client for auto-mining to avoid clone issues
-            let bitcoin_rpc_url = bitcoin_devnet.regtest.rpc_url_with_wallet("alice");
+            let bitcoin_rpc_url = bitcoin_devnet.rpc_url_with_cookie.clone();
             let cookie = bitcoin_devnet.cookie.clone();
             let miner_address = bitcoin_devnet.miner_address.clone();
 

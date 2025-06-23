@@ -7,7 +7,7 @@ use alloy::network::EthereumWallet;
 use alloy::primitives::utils::format_units;
 use alloy::primitives::U256;
 use alloy::providers::ext::AnvilApi;
-use alloy::providers::{Provider, ProviderBuilder, WalletProvider, WsConnect};
+use alloy::providers::{Provider, WalletProvider, WsConnect};
 use alloy::signers::local::LocalSigner;
 use alloy::sol_types::SolEvent;
 use bitcoin_light_client_core::light_client::Header;
@@ -19,6 +19,7 @@ use rift_core::giga::RiftProgramInput;
 use rift_core::spv::generate_bitcoin_txn_merkle_proof;
 use rift_core::OrderFillingTransaction;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
+use rift_sdk::create_websocket_wallet_provider;
 use rift_sdk::proof_generator::{ProofGeneratorType, RiftProofGenerator};
 use rift_sdk::txn_builder::{self, serialize_no_segwit, P2WPKHBitcoinWallet};
 use rift_sdk::{get_retarget_height_from_block_height, DatabaseLocation};
@@ -87,11 +88,12 @@ async fn test_simulated_swap_end_to_end() {
         .await
         .unwrap();
 
-    let maker_evm_provider = ProviderBuilder::new()
-        .wallet(maker_evm_wallet)
-        .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
-        .await
-        .expect("Failed to create maker evm provider");
+    let maker_evm_provider = create_websocket_wallet_provider(
+        devnet.ethereum.anvil.ws_endpoint_url().to_string().as_str(),
+        maker_secret_bytes,
+    )
+    .await
+    .expect("Failed to create maker evm provider");
 
     // Quick references
     let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();
@@ -258,7 +260,8 @@ async fn test_simulated_swap_end_to_end() {
     let txid = funding_utxo.txid;
     let wallet = taker_btc_wallet;
     let fee_sats = 1000;
-    let transaction = funding_utxo.transaction().unwrap();
+    let transaction: Transaction =
+        bitcoin::consensus::deserialize(&hex::decode(&funding_utxo.hex).unwrap()).unwrap();
 
     // if the predicate is true, we can spend it
     let txvout = transaction

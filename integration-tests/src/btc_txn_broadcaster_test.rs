@@ -12,13 +12,9 @@ use rift_sdk::{
 };
 use tokio::task::JoinSet;
 
-use crate::test_utils::setup_test_tracing;
-
 /// Test basic functionality of the Bitcoin transaction broadcaster
 #[tokio::test]
 async fn test_btc_txn_broadcaster_basic() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     let test_account = MultichainAccount::with_network(42, Network::Regtest);
@@ -35,11 +31,7 @@ async fn test_btc_txn_broadcaster_basic() {
     .unwrap();
 
     // Mine a block to confirm the funding transaction
-    devnet
-        .regtest
-        .client
-        .generate_to_address(1, &test_account.bitcoin_wallet.address)
-        .unwrap();
+    devnet.mine_blocks(1).await.unwrap();
 
     // Create the transaction broadcaster
     let broadcaster = SimpleBitcoinTransactionBroadcaster::new(
@@ -66,11 +58,7 @@ async fn test_btc_txn_broadcaster_basic() {
             println!("Successfully broadcast transaction: {}", txid);
 
             // Mine a block to confirm the transaction
-            devnet
-                .regtest
-                .client
-                .generate_to_address(1, &recipient_wallet.bitcoin_wallet.address)
-                .unwrap();
+            devnet.mine_blocks(1).await.unwrap();
         }
         Err(e) => {
             panic!("Transaction broadcast failed: {}", e);
@@ -81,8 +69,6 @@ async fn test_btc_txn_broadcaster_basic() {
 /// Test transaction broadcasting with multiple outputs
 #[tokio::test]
 async fn test_btc_txn_broadcaster_multiple_outputs() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     let test_account = MultichainAccount::with_network(44, Network::Regtest);
@@ -99,11 +85,7 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
     .unwrap();
 
     // Mine a block to confirm the funding transaction
-    devnet
-        .regtest
-        .client
-        .generate_to_address(1, &test_account.bitcoin_wallet.address)
-        .unwrap();
+    devnet.mine_blocks(1).await.unwrap();
 
     // Wait a bit for Esplora to index the transaction
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -140,11 +122,7 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
             println!("Successfully broadcast multi-output transaction: {}", txid);
 
             // Mine a block to confirm the transaction
-            devnet
-                .regtest
-                .client
-                .generate_to_address(1, &recipient1.bitcoin_wallet.address)
-                .unwrap();
+            devnet.mine_blocks(1).await.unwrap();
         }
         Err(e) => {
             panic!("Multi-output transaction broadcast failed: {}", e);
@@ -155,8 +133,6 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
 /// Test insufficient funds scenario
 #[tokio::test]
 async fn test_btc_txn_broadcaster_insufficient_funds() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     // Create a test wallet (don't fund it)
@@ -202,8 +178,6 @@ async fn test_btc_txn_broadcaster_insufficient_funds() {
 /// Test the can_fund_transaction method
 #[tokio::test]
 async fn test_btc_txn_broadcaster_can_fund() {
-    setup_test_tracing();
-
     let mut join_set = JoinSet::new();
 
     let test_account = MultichainAccount::with_network(49, Network::Regtest);
@@ -220,11 +194,7 @@ async fn test_btc_txn_broadcaster_can_fund() {
     .unwrap();
 
     // Mine a block to confirm the funding transaction
-    devnet
-        .regtest
-        .client
-        .generate_to_address(1, &test_account.bitcoin_wallet.address)
-        .unwrap();
+    devnet.mine_blocks(1).await.unwrap();
 
     // Wait a bit for Esplora to index the transaction
     tokio::time::sleep(Duration::from_secs(2)).await;

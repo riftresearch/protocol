@@ -2,9 +2,9 @@ use bitcoincore_rpc_async::bitcoin::block::Header;
 use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::bitcoin::{Block, BlockHash};
-use bitcoincore_rpc_async::json::GetBlockHeaderResult;
+use bitcoincore_rpc_async::json::GetBlockHeaderVerbose;
 use serde_json::value::RawValue;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::errors::RiftSdkError;
 use backoff::future::retry;
@@ -17,9 +17,9 @@ use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
 use futures::stream::TryStreamExt;
 use futures::Future;
 use futures::StreamExt;
-use std::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::{Client as ReqwestClient, Url};
@@ -30,18 +30,26 @@ use std::marker::PhantomData;
 // arbitrary error code for transport errors that doesn't collide with bitcoin rpc error codes
 const TRANSPORT_ERROR_CODE: i32 = -32001;
 
-/// A minimal error type for the transport.
+/// Transport error types for different failure points in RPC communication.
 #[derive(Debug)]
 pub enum TransportError {
-    Http(reqwest::Error),
-    InvalidUrl(String),
+    /// Failed to send the HTTP request (network issues, timeouts, connection failures)
+    RequestSend(reqwest::Error),
+    /// HTTP request succeeded but returned an error status code (4xx, 5xx)
+    HttpStatus(reqwest::Error),
+    /// Failed to parse the JSON response from the server
+    JsonParsing(reqwest::Error),
+    /// Initialization error (e.g., invalid URL, authentication failure)
+    Initialization(String),
 }
 
 impl fmt::Display for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TransportError::Http(e) => write!(f, "HTTP error: {}", e),
-            TransportError::InvalidUrl(e) => write!(f, "Invalid URL: {}", e),
+            TransportError::RequestSend(e) => write!(f, "Failed to send request: {}", e),
+            TransportError::HttpStatus(e) => write!(f, "HTTP status error: {}", e),
+            TransportError::JsonParsing(e) => write!(f, "JSON parsing error: {}", e),
+            TransportError::Initialization(e) => write!(f, "Initialization error: {}", e),
         }
     }
 }
@@ -50,7 +58,29 @@ impl std::error::Error for TransportError {}
 
 impl From<reqwest::Error> for TransportError {
     fn from(e: reqwest::Error) -> Self {
-        TransportError::Http(e)
+        error!("HTTP transport error occurred: {}", e);
+
+        // Categorize the error based on reqwest error types
+        if e.is_timeout() {
+            warn!("Request timed out: {}", e);
+            TransportError::RequestSend(e)
+        } else if e.is_connect() {
+            warn!("Connection error: {}", e);
+            TransportError::RequestSend(e)
+        } else if e.is_request() {
+            warn!("Request error: {}", e);
+            TransportError::RequestSend(e)
+        } else if e.is_status() {
+            warn!("HTTP status error: {}", e);
+            TransportError::HttpStatus(e)
+        } else if e.is_decode() {
+            warn!("Response decode error: {}", e);
+            TransportError::JsonParsing(e)
+        } else {
+            // Default to request send for unknown error types
+            warn!("Unknown transport error: {}", e);
+            TransportError::RequestSend(e)
+        }
     }
 }
 
@@ -72,10 +102,10 @@ impl ReqwestTransport {
         let client = ReqwestClient::builder()
             .timeout(timeout)
             .build()
-            .map_err(TransportError::Http)?;
+            .map_err(|e| TransportError::Initialization(e.to_string()))?;
         let url = rpc_url
             .parse::<Url>()
-            .map_err(|e| TransportError::InvalidUrl(e.to_string()))?;
+            .map_err(|e| TransportError::Initialization(e.to_string()))?;
         Ok(ReqwestTransport { url, client, auth })
     }
 }
@@ -83,6 +113,7 @@ impl ReqwestTransport {
 impl From<TransportError> for bitcoincore_rpc_async::jsonrpc::Error {
     fn from(e: TransportError) -> Self {
         use bitcoincore_rpc_async::jsonrpc::error::RpcError;
+        error!("Converting TransportError to JsonRpc error: {}", e);
         bitcoincore_rpc_async::jsonrpc::Error::Rpc(RpcError {
             code: TRANSPORT_ERROR_CODE,
             message: e.to_string(),
@@ -103,16 +134,26 @@ impl Transport for ReqwestTransport {
             request = request.basic_auth(user, Some(pass));
         }
 
-        // TODO: aint no way this map chain is correct
-        request
+        let response = request
             .send()
             .await
-            .map_err(TransportError::Http)?
+            .map_err(|e| {
+                error!("Failed to send RPC request to {}: {}", self.url, e);
+                TransportError::RequestSend(e)
+            })?
             .error_for_status()
-            .map_err(TransportError::Http)?
+            .map_err(|e| {
+                error!("RPC request returned error status for {}: {}", self.url, e);
+                TransportError::HttpStatus(e)
+            })?;
+
+        response
             .json::<Response>()
             .await
-            .map_err(TransportError::Http)
+            .map_err(|e| {
+                error!("Failed to parse RPC response from {}: {}", self.url, e);
+                TransportError::JsonParsing(e)
+            })
             .map_err(Into::into)
     }
 
@@ -126,15 +167,32 @@ impl Transport for ReqwestTransport {
             request = request.basic_auth(user, Some(pass));
         }
 
-        request
+        let response = request
             .send()
             .await
-            .map_err(TransportError::Http)?
+            .map_err(|e| {
+                error!("Failed to send RPC batch request to {}: {}", self.url, e);
+                TransportError::RequestSend(e)
+            })?
             .error_for_status()
-            .map_err(TransportError::Http)?
+            .map_err(|e| {
+                error!(
+                    "RPC batch request returned error status for {}: {}",
+                    self.url, e
+                );
+                TransportError::HttpStatus(e)
+            })?;
+
+        response
             .json::<Vec<Response>>()
             .await
-            .map_err(TransportError::Http)
+            .map_err(|e| {
+                error!(
+                    "Failed to parse RPC batch response from {}: {}",
+                    self.url, e
+                );
+                TransportError::JsonParsing(e)
+            })
             .map_err(Into::into)
     }
 
@@ -193,7 +251,7 @@ where
 
     let attempt_count = Arc::new(AtomicUsize::new(0));
     let attempt_count_clone = attempt_count.clone();
-    
+
     let result = retry(backoff, || async {
         let current_attempt = attempt_count_clone.fetch_add(1, Ordering::SeqCst) + 1;
         let res = operation().await;
@@ -203,14 +261,31 @@ where
                 bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
                 ) if rpcerr.code == -32603 => {
-                    info!("Retrying RPC call (attempt {}) due to error: {:?}", current_attempt, rpcerr);
+                    info!(
+                        "Retrying RPC call (attempt {}) due to error: {:?}",
+                        current_attempt, rpcerr
+                    );
                     Err(BackoffError::transient(e))
                 }
                 bitcoincore_rpc_async::Error::JsonRpc(
                     bitcoincore_rpc_async::jsonrpc::error::Error::Rpc(ref rpcerr),
                 ) if rpcerr.code == TRANSPORT_ERROR_CODE => {
-                    tracing::error!("Caught transport error on attempt {}: {:?}", current_attempt, rpcerr);
-                    Err(BackoffError::permanent(e))
+                    // Check if this was originally a RequestSend error (retryable)
+                    if rpcerr.message.starts_with("Failed to send request:") {
+                        info!(
+                            "Retrying transport request error on attempt {} (code: {}): {}",
+                            current_attempt, rpcerr.code, rpcerr.message
+                        );
+                        Err(BackoffError::transient(e))
+                    } else {
+                        // Other transport errors (HttpStatus, JsonParsing, Initialization) are permanent
+                        error!(
+                            "Transport error detected on attempt {} (code: {}): {}",
+                            current_attempt, rpcerr.code, rpcerr.message
+                        );
+                        error!("Transport error details - data: {:?}", rpcerr.data);
+                        Err(BackoffError::permanent(e))
+                    }
                 }
                 _ => {
                     info!("RPC error on attempt {}: {:?}", current_attempt, e);
@@ -224,10 +299,17 @@ where
     let final_attempt_count = attempt_count.load(Ordering::SeqCst);
     match &result {
         Err(ref e) => {
-            tracing::error!("RPC operation failed after {} attempts: {}", final_attempt_count, e);
+            tracing::error!(
+                "RPC operation failed after {} attempts: {}",
+                final_attempt_count,
+                e
+            );
         }
         Ok(_) if final_attempt_count > 1 => {
-            info!("RPC operation succeeded after {} attempts", final_attempt_count);
+            info!(
+                "RPC operation succeeded after {} attempts",
+                final_attempt_count
+            );
         }
         _ => {} // Success on first attempt, no need to log
     }
@@ -243,8 +325,14 @@ impl AsyncBitcoinClient {
         timeout: Duration,
     ) -> bitcoincore_rpc_async::Result<Self> {
         let auth_credentials = auth.get_user_pass()?;
-        let transport = ReqwestTransport::new(&rpc_url, timeout, auth_credentials)
-            .map_err(|e| bitcoincore_rpc_async::Error::JsonRpc(e.into()))?;
+        let transport =
+            ReqwestTransport::new(&rpc_url, timeout, auth_credentials).map_err(|e| {
+                error!(
+                    "Failed to create Bitcoin RPC transport for URL {}: {}",
+                    rpc_url, e
+                );
+                bitcoincore_rpc_async::Error::JsonRpc(e.into())
+            })?;
 
         let json_rpc_client =
             bitcoincore_rpc_async::jsonrpc::client::Client::with_transport(transport);
@@ -382,10 +470,10 @@ impl HeaderChainValidator for Vec<Header> {
     }
 }
 
-impl HeaderChainValidator for Vec<GetBlockHeaderResult> {
+impl HeaderChainValidator for Vec<GetBlockHeaderVerbose> {
     fn validate_header_chain(&self) -> Result<(), RiftSdkError> {
         for i in 1..self.len() {
-            if self[i].previous_block_hash.unwrap() != self[i - 1].hash {
+            if self[i].previous_block_hash.as_ref().unwrap() != &self[i - 1].hash {
                 return Err(RiftSdkError::HeaderChainValidationFailed);
             }
         }
@@ -465,7 +553,7 @@ pub trait BitcoinClientExt {
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
-    ) -> crate::errors::Result<GetBlockHeaderResult>;
+    ) -> crate::errors::Result<GetBlockHeaderVerbose>;
 
     async fn find_oldest_block_before_timestamp(
         &self,
@@ -484,7 +572,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
-    ) -> crate::errors::Result<GetBlockHeaderResult> {
+    ) -> crate::errors::Result<GetBlockHeaderVerbose> {
         let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!(
                 "Error getting block hash for height {}: {}",
@@ -492,12 +580,15 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             ))
         })?;
 
-        let header = self.get_block_header_info(&block_hash).await.map_err(|e| {
-            RiftSdkError::BitcoinRpcError(format!(
-                "Error getting block header info for height {}: {}",
-                height, e
-            ))
-        })?;
+        let header = self
+            .get_block_header_verbose(&block_hash)
+            .await
+            .map_err(|e| {
+                RiftSdkError::BitcoinRpcError(format!(
+                    "Error getting block header info for height {}: {}",
+                    height, e
+                ))
+            })?;
 
         Ok(header)
     }
@@ -518,9 +609,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         while left < right {
             let mid = left + (right - left) / 2;
             let block = self.get_block_header_info_by_height(mid as u32).await?;
-            let block_time = block.median_time.ok_or_else(|| {
-                RiftSdkError::BitcoinRpcError(format!("Block {} has no median time", mid))
-            })? as u64;
+            let block_time = block.median_time as u64;
 
             if block_time >= target_timestamp {
                 right = mid;
@@ -534,9 +623,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         // Verify we found a valid block
         let found_block = self.get_block_header_info_by_height(left as u32).await?;
-        let found_block_time = found_block.median_time.ok_or_else(|| {
-            RiftSdkError::BitcoinRpcError(format!("Block {} has no median time", left))
-        })? as u64;
+        let found_block_time = found_block.median_time as u64;
 
         if found_block_time >= target_timestamp {
             return Err(RiftSdkError::BitcoinRpcError(format!(
@@ -686,11 +773,10 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             .map_err(|e| {
                 RiftSdkError::BitcoinRpcError(format!("Error getting block hashes: {}", e))
             })?;
-
         // ===============================================================
         // Batch 2: For each block hash, get the block header info.
         // ===============================================================
-        let header_requests: Vec<BitcoinCoreJsonRpcRequest<GetBlockHeaderResult>> = block_hashes
+        let header_requests: Vec<BitcoinCoreJsonRpcRequest<GetBlockHeaderVerbose>> = block_hashes
             .iter()
             .map(|block_hash| BitcoinCoreJsonRpcRequest {
                 method: "getblockheader",
@@ -700,7 +786,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             })
             .collect();
 
-        let header_results: Vec<GetBlockHeaderResult> = self
+        let header_results: Vec<GetBlockHeaderVerbose> = self
             .send_batch(&header_requests, Some(concurrency_limit))
             .await
             .map_err(|e| {
@@ -721,11 +807,17 @@ impl BitcoinClientExt for AsyncBitcoinClient {
             explorer_block_hash.reverse();
 
             // Extract chainwork from header (expecting exactly 32 bytes)
-            let chainwork: [u8; 32] = header
-                .chainwork
-                .as_slice()
+            let chainwork: [u8; 32] = hex::decode(header.chain_work.as_bytes())
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!("Error decoding chainwork: {}", e))
+                })?
                 .try_into()
-                .expect("Chainwork is not 32 bytes");
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!(
+                        "Error converting chainwork to array: {:?}",
+                        e
+                    ))
+                })?;
 
             let leaf = BlockLeaf::new(explorer_block_hash, height, chainwork);
             // Note: if GetHeaderResult isn't Copy, you may need to clone it.
@@ -734,28 +826,35 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         // Sort by height (if necessary)
         results.sort_by_key(|(height, _, _)| *height);
-
         // Unzip into separate vectors (if you need headers for validation)
-        let (leaves, headers): (Vec<BlockLeaf>, Vec<GetBlockHeaderResult>) = results
+        let (leaves, headers): (Vec<BlockLeaf>, Vec<GetBlockHeaderVerbose>) = results
             .into_iter()
             .map(|(_height, leaf, header)| (leaf, header))
             .unzip();
-
         // ===============================================================
         // Validation: Check the expected parent, if provided.
         // ===============================================================
         if let Some(expected_parent) = expected_parent {
-            let first_prev = headers[0]
-                .previous_block_hash
-                .as_ref()
-                .ok_or_else(|| {
+            let first_prev: [u8; 32] =
+                hex::decode(headers[0].previous_block_hash.as_ref().ok_or_else(|| {
                     RiftSdkError::ParentValidationFailed("Missing previous block hash".to_string())
+                })?)
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!(
+                        "Error decoding previous block hash: {}",
+                        e
+                    ))
                 })?
-                .as_raw_hash()
-                .to_byte_array();
+                .try_into()
+                .map_err(|e| {
+                    RiftSdkError::BitcoinRpcError(format!(
+                        "Error converting previous block hash to array: {:?}",
+                        e
+                    ))
+                })?;
 
             // Reverse the byte order
-            let first_prev_rev: Vec<u8> = first_prev.iter().rev().copied().collect();
+            let first_prev_rev: Vec<u8> = first_prev.to_vec();
 
             if first_prev_rev != expected_parent {
                 return Err(RiftSdkError::ParentValidationFailed(format!(
@@ -880,7 +979,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 #[derive(Deserialize, Debug)]
 pub struct EstimateSmartFeeResult {
     #[serde(default)]
-    pub feerate: Option<f64>, // in BTC/kB or BTC/kvB
+    pub feerate: Option<f64>,
     #[serde(default)]
     pub errors: Option<Vec<String>>,
     pub blocks: u32,

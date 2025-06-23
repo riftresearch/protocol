@@ -459,7 +459,7 @@ impl OrderFiller {
         confirmation_timeout: Duration,
     ) -> Result<TransactionStatus> {
 
-        let tx_result = match bitcoin_rpc.get_raw_transaction_info(txid, None).await {
+        let tx_result = match bitcoin_rpc.get_raw_transaction_verbose(txid).await {
             Ok(result) => result,
             Err(e) => {
                 log::error!("Failed to get transaction info for {}: {:?}", txid, e);
@@ -467,7 +467,7 @@ impl OrderFiller {
             }
         };
 
-        let confirmations = tx_result.confirmations.unwrap_or(0);
+        let confirmations = tx_result.confirmations.unwrap_or(0) as u32;
         
         let pending_tx = {
             let mut transactions = pending_transactions.lock().await;

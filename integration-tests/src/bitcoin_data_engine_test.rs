@@ -9,8 +9,6 @@ use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::DatabaseLocation;
 use tokio::task::JoinSet;
 
-use crate::test_utils::setup_test_tracing;
-
 async fn setup_bitcoin_regtest_and_client() -> (
     BitcoinRegtest,
     AsyncBitcoinClient,
@@ -38,7 +36,6 @@ async fn setup_bitcoin_regtest_and_client() -> (
 
 #[tokio::test]
 async fn test_simple_sync_and_read() {
-    setup_test_tracing();
     let db_loc = DatabaseLocation::InMemory;
     let (bitcoin_regtest, bitcoin_rpc, bitcoin_address, mut join_set) =
         setup_bitcoin_regtest_and_client().await;

@@ -1,6 +1,6 @@
 use alloy::eips::eip6110::DEPOSIT_REQUEST_TYPE;
 use alloy::primitives::{Address, Bytes, U256};
-use alloy::providers::{DynProvider, Provider, ProviderBuilder};
+use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::Log as AlloyLog;
 use alloy::rpc::types::Log;
 use alloy::signers::local::LocalWallet;

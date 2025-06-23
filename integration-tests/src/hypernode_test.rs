@@ -1,6 +1,6 @@
 use alloy::{
     primitives::{utils::format_units, U256},
-    providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
+    providers::ext::AnvilApi,
     sol_types::SolEvent,
 };
 use bitcoin::{
@@ -13,6 +13,7 @@ use data_engine::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
 use rift_sdk::{
+    create_websocket_wallet_provider,
     proof_generator::ProofGeneratorType,
     txn_builder::{self, serialize_no_segwit},
     DatabaseLocation, MultichainAccount,
@@ -20,12 +21,9 @@ use rift_sdk::{
 use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
 use tokio::signal::{self};
 
-use crate::test_utils::setup_test_tracing;
-
 #[tokio::test]
 // Serial anything that uses alot of bitcoin mining
 async fn test_hypernode_simple_swap() {
-    setup_test_tracing();
     // ---1) Spin up devnet with default config---
 
     let maker = MultichainAccount::new(1);
@@ -53,11 +51,12 @@ async fn test_hypernode_simple_swap() {
         .await
         .expect("Failed to build devnet");
 
-    let maker_evm_provider = ProviderBuilder::new()
-        .wallet(maker.ethereum_wallet)
-        .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
-        .await
-        .expect("Failed to create maker evm provider");
+    let maker_evm_provider = create_websocket_wallet_provider(
+        devnet.ethereum.anvil.ws_endpoint_url().to_string().as_str(),
+        maker.secret_bytes,
+    )
+    .await
+    .expect("Failed to create maker evm provider");
 
     // Quick references
     let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();
@@ -225,7 +224,8 @@ async fn test_hypernode_simple_swap() {
     let txid = funding_utxo.txid;
     let wallet = taker.bitcoin_wallet;
     let fee_sats = 1000;
-    let transaction = funding_utxo.transaction().unwrap();
+    let transaction: Transaction =
+        bitcoin::consensus::deserialize(&hex::decode(&funding_utxo.hex).unwrap()).unwrap();
 
     // if the predicate is true, we can spend it
     let txvout = transaction
@@ -307,6 +307,9 @@ async fn test_hypernode_simple_swap() {
             btc_batch_rpc_size: 100,
             log_chunk_size: 10000,
             proof_generator: ProofGeneratorType::Execute,
+            enable_auto_light_client_update: false,
+            auto_light_client_update_block_lag_threshold: 6,
+            auto_light_client_update_check_interval_secs: 30,
         };
         hypernode.run().await.expect("Hypernode crashed");
     });

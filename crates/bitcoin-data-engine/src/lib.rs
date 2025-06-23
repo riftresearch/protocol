@@ -158,7 +158,7 @@ async fn block_watchtower(
                 \n- Network connectivity issues between client and Bitcoin node\
                 \n- Bitcoin node is overloaded or experiencing high latency\
                 \n- RPC authentication/authorization issues\
-                \nCheck that your Bitcoin node is still running and accessible.", 
+                \nCheck that your Bitcoin node is still running and accessible.",
                 e
             )
         })?;
@@ -326,7 +326,7 @@ async fn find_common_ancestor_leaf(
         block_hash.reverse();
 
         let header_request = bitcoin_rpc
-            .get_block_header_info(&BlockHash::from_slice(&block_hash)?)
+            .get_block_header_verbose(&BlockHash::from_slice(&block_hash)?)
             .await;
 
         let header_status = match header_request {

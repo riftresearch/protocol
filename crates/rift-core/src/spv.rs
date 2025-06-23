@@ -85,7 +85,9 @@ pub fn verify_bitcoin_txn_merkle_proof(
     }
     assert!(
         current_hash == merkle_root,
-        "Merkle proof verification failed"
+        "Merkle proof verification failed, current_hash: {:?}, expected merkle_root: {:?}",
+        current_hash,
+        merkle_root
     );
 }
 

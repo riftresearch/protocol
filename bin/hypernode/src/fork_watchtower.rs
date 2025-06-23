@@ -15,8 +15,7 @@ use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
 use sol_bindings::{
-    BlockProofParams, ChainworkTooLow,
-    CheckpointNotEstablished, RiftExchangeHarnessInstance,
+    BlockProofParams, ChainworkTooLow, CheckpointNotEstablished, RiftExchangeHarnessInstance,
 };
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex, RwLockReadGuard};
@@ -191,71 +190,86 @@ impl ForkWatchtower {
 
         let fork_detection_lock = Arc::new(Mutex::new(()));
 
-        while let Some(event) = event_receiver.recv().await {
-            match event {
-                ForkWatchtowerEvent::NewTip(_) | ForkWatchtowerEvent::CheckForFork => {
-                    if !fork_in_progress.load(std::sync::atomic::Ordering::SeqCst) {
-                        let _lock = fork_detection_lock.lock().await;
+        {
+            let contract_data_engine = Arc::clone(&contract_data_engine);
+            let bitcoin_data_engine = Arc::clone(&bitcoin_data_engine);
+            let btc_rpc = Arc::clone(&btc_rpc);
+            let proof_generator = Arc::clone(&proof_generator);
+            let transaction_broadcaster = Arc::clone(&transaction_broadcaster);
+            let rift_exchange = rift_exchange.clone();
+            let fork_in_progress = Arc::clone(&fork_in_progress);
+            let fork_detection_lock = Arc::clone(&fork_detection_lock);
 
-                        match Self::detect_fork(
-                            &contract_data_engine,
-                            &bitcoin_data_engine,
-                            &btc_rpc,
-                            bitcoin_concurrency_limit,
-                        )
-                        .await
-                        {
-                            Ok(ForkDetectionResult::ForkDetected(chain_transition)) => {
-                                info!("Fork detected, generating proof and resolving");
+            join_set.spawn(
+                async move {
+                    while let Some(event) = event_receiver.recv().await {
+                        match event {
+                            ForkWatchtowerEvent::NewTip(_) | ForkWatchtowerEvent::CheckForFork => {
+                                if !fork_in_progress.load(std::sync::atomic::Ordering::SeqCst) {
+                                    let _lock = fork_detection_lock.lock().await;
 
-                                fork_in_progress.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    match Self::detect_fork(
+                                        &contract_data_engine,
+                                        &bitcoin_data_engine,
+                                        &btc_rpc,
+                                        bitcoin_concurrency_limit,
+                                    )
+                                    .await
+                                    {
+                                        Ok(ForkDetectionResult::ForkDetected(chain_transition)) => {
+                                            info!("Fork detected, generating proof and resolving");
 
-                                let proof_generator_clone = proof_generator.clone();
-                                let rift_exchange_clone = rift_exchange.clone();
-                                let transaction_broadcaster_clone = transaction_broadcaster.clone();
-                                let fork_in_progress_clone = fork_in_progress.clone();
+                                            fork_in_progress.store(true, std::sync::atomic::Ordering::SeqCst);
 
-                                join_set.spawn(
-                                    async move {
-                                        Self::process_fork_resolution(
-                                            chain_transition,
-                                            &proof_generator_clone,
-                                            &rift_exchange_clone,
-                                            &transaction_broadcaster_clone,
-                                        )
-                                        .await;
+                                            let proof_generator_clone = proof_generator.clone();
+                                            let rift_exchange_clone = rift_exchange.clone();
+                                            let transaction_broadcaster_clone = transaction_broadcaster.clone();
+                                            let fork_in_progress_clone = fork_in_progress.clone();
 
-                                        fork_in_progress_clone
-                                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                                            tokio::spawn(
+                                                async move {
+                                                    Self::process_fork_resolution(
+                                                        chain_transition,
+                                                        &proof_generator_clone,
+                                                        &rift_exchange_clone,
+                                                        &transaction_broadcaster_clone,
+                                                    )
+                                                    .await;
 
-                                        Ok(())
+                                                    fork_in_progress_clone
+                                                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                                                }
+                                                .instrument(info_span!("Fork Resolution Handler")),
+                                            );
+                                        }
+                                        Ok(ForkDetectionResult::NoFork) => {
+                                            info!("No fork detected at tip");
+                                        }
+                                        Ok(ForkDetectionResult::StaleChain) => {
+                                            info!(
+                                                "Light client chain is stale but valid, its included in BDE chain"
+                                            );
+                                        }
+                                        Err(e) => {
+                                            error!("Error detecting fork: {}", e);
+                                        }
                                     }
-                                    .instrument(info_span!("Fork Resolution Handler")),
-                                );
+                                }
                             }
-                            Ok(ForkDetectionResult::NoFork) => {
-                                info!("No fork detected at tip");
-                            }
-                            Ok(ForkDetectionResult::StaleChain) => {
-                                info!(
-                                    "Light client chain is stale but valid, its included in BDE chain"
-                                );
-                            }
-                            Err(e) => {
-                                error!("Error detecting fork: {}", e);
+
+                            ForkWatchtowerEvent::MmrRootUpdated(root) => {
+                                info!("Received MMR root update event: {}", hex::encode(root));
                             }
                         }
                     }
-                }
 
-                ForkWatchtowerEvent::MmrRootUpdated(root) => {
-                    info!("Received MMR root update event: {}", hex::encode(root));
+                    Ok(())
                 }
-            }
+                .instrument(info_span!("Fork Watchtower")),
+            );
         }
 
-        error!("Event channel closed unexpectedly");
-        Err(eyre::eyre!("Event channel closed"))
+        Ok(Self)
     }
 
     pub async fn process_fork_resolution(
@@ -548,7 +562,7 @@ impl ForkWatchtower {
         );
 
         let block_header_result = btc_rpc
-            .get_block_header_info(&bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
+            .get_block_header_verbose(&bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
                 &natural_block_hash,
             )?)
             .await;
