@@ -1,4 +1,5 @@
 use accumulators::mmr::map_leaf_index_to_element_index;
+use std::str::FromStr;
 
 use alloy::{
     primitives::Address,
@@ -722,15 +723,9 @@ async fn find_pending_swaps_with_sufficient_confirmations(
             let block_hash_hex = txn_result
                 .block_hash
                 .ok_or_else(|| eyre::eyre!("Transaction has no block hash"))?;
-            let block_hash_bytes: [u8; 32] = hex::decode(&block_hash_hex)
-                .map_err(|e| eyre::eyre!("Failed to decode block hash: {}", e))?
-                .try_into()
-                .map_err(|e| eyre::eyre!("Block hash is not 32 bytes: {:?}", e))?;
-            let block_info = btc_rpc
-                .get_block_verbose_one(&bitcoincore_rpc_async::bitcoin::BlockHash::from_slice(
-                    &block_hash_bytes,
-                )?)
-                .await?;
+            let block_hash = bitcoincore_rpc_async::bitcoin::BlockHash::from_str(&block_hash_hex)
+                .map_err(|e| eyre::eyre!("Failed to parse block hash: {}", e))?;
+            let block_info = btc_rpc.get_block_verbose_one(&block_hash).await?;
             let (block_leaf, block_header) =
                 get_leaf_and_block_header_from_block_info(&block_info)?;
 
@@ -738,10 +733,11 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                 .map_err(|e| eyre::eyre!("Failed to decode transaction hex: {}", e))?;
             let txn: bitcoin::Transaction = bitcoin::consensus::deserialize(&txn_hex_bytes)
                 .map_err(|e| eyre::eyre!("Failed to deserialize transaction: {}", e))?;
-            let tx_hash: [u8; 32] = hex::decode(&txn_result.txid)
+            let mut tx_hash: [u8; 32] = hex::decode(&txn_result.txid)
                 .map_err(|e| eyre::eyre!("Failed to decode txid hex: {}", e))?
                 .try_into()
                 .map_err(|e| eyre::eyre!("Txid is not 32 bytes: {:?}", e))?;
+            tx_hash.reverse();
 
             let block_header: Header =
                 bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&block_header)
@@ -756,11 +752,20 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                         let bytes = hex::decode(txid_hex).expect("Invalid txid hex");
                         let mut array = [0u8; 32];
                         array.copy_from_slice(&bytes);
+                        array.reverse();
                         array
                     })
                     .collect::<Vec<[u8; 32]>>(),
                 tx_hash,
             );
+
+            if hex::encode(block_merkle_root) != block_info.merkle_root {
+                tracing::error!(
+                    "Merkle root mismatch: {} != {}, proof will fail",
+                    hex::encode(block_merkle_root),
+                    block_info.merkle_root
+                );
+            }
 
             let rift_transaction_input = OrderFillingTransaction {
                 txn: serialize_no_segwit(&txn).unwrap(),
@@ -796,11 +801,10 @@ fn get_leaf_and_block_header_from_block_info(
         .try_into()
         .map_err(|e| eyre::eyre!("Chainwork is not 32 bytes: {:?}", e))?;
 
-    let mut explorer_block_hash: [u8; 32] = hex::decode(&block.hash)
+    let explorer_block_hash: [u8; 32] = hex::decode(&block.hash)
         .map_err(|e| eyre::eyre!("Failed to decode block hash: {}", e))?
         .try_into()
         .map_err(|e| eyre::eyre!("Block hash is not 32 bytes: {:?}", e))?;
-    explorer_block_hash.reverse();
     let leaf = BlockLeaf::new(explorer_block_hash, block.height as u32, chainwork);
 
     // Parse `bits` from hex:
@@ -808,10 +812,11 @@ fn get_leaf_and_block_header_from_block_info(
         .map_err(|e| eyre::eyre!("Block {} has invalid bits: {}", block.hash, e))?;
 
     let prev_blockhash = if let Some(ref prev_hash_hex) = block.previous_block_hash {
-        let bytes: [u8; 32] = hex::decode(prev_hash_hex)
+        let mut bytes: [u8; 32] = hex::decode(prev_hash_hex)
             .map_err(|e| eyre::eyre!("Failed to decode previous block hash: {}", e))?
             .try_into()
             .map_err(|e| eyre::eyre!("Previous block hash is not 32 bytes: {:?}", e))?;
+        bytes.reverse(); // Convert from little-endian to internal format
         bitcoincore_rpc_async::bitcoin::BlockHash::from_byte_array(bytes)
     } else {
         return Err(eyre::eyre!(
@@ -820,10 +825,11 @@ fn get_leaf_and_block_header_from_block_info(
         ));
     };
 
-    let merkle_root: [u8; 32] = hex::decode(&block.merkle_root)
+    let mut merkle_root: [u8; 32] = hex::decode(&block.merkle_root)
         .map_err(|e| eyre::eyre!("Failed to decode merkle root: {}", e))?
         .try_into()
         .map_err(|e| eyre::eyre!("Merkle root is not 32 bytes: {:?}", e))?;
+    merkle_root.reverse(); // Convert from little-endian to internal format
 
     let block_header = BlockHeader {
         version: Version::from_consensus(block.version),
@@ -835,6 +841,14 @@ fn get_leaf_and_block_header_from_block_info(
         bits: CompactTarget::from_consensus(parsed_bits),
         nonce: block.nonce as u32,
     };
+
+    assert_eq!(
+        block.hash,
+        block_header.block_hash().to_string(),
+        "Block hash mismatch: {} != {}",
+        block.hash,
+        block_header.block_hash().to_string()
+    );
 
     Ok((leaf, block_header))
 }

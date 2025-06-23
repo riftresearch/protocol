@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use alloy::{
     primitives::{Address, TxHash, U256},
-    providers::{ext::AnvilApi, Provider, ProviderBuilder, WsConnect},
+    providers::{ext::AnvilApi, Provider},
     sol_types::SolEvent,
 };
 use bitcoin::Amount;

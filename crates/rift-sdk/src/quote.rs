@@ -4,7 +4,6 @@ use crate::chains::{CHUNK_SIZE, RPC_TIMEOUT};
 use alloy::providers::DynProvider;
 use alloy::{
     primitives::{address, Address, U160, U256},
-    providers::{Provider, ProviderBuilder},
     sol,
 };
 use rand::seq::SliceRandom;

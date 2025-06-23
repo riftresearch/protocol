@@ -2,7 +2,6 @@ use crate::errors::RiftSdkError;
 use crate::quote::fetch_weth_cbbtc_conversion_rates;
 use alloy::providers::DynProvider;
 use alloy::providers::Provider;
-use alloy::providers::ProviderBuilder;
 use esplora_client::r#async::AsyncClient;
 use esplora_client::MempoolInfo;
 use reqwest::Url;

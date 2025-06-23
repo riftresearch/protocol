@@ -18,9 +18,7 @@ pub struct DevnetBuildGuard {
 
 impl DevnetBuildGuard {
     /// Block until both locks are acquired.
-    /// TEMPORARY NO-OP: Just returns access without actually acquiring locks
     pub async fn acquire() -> Result<Self> {
-        // NO-OP: Create dummy handles without any actual locking
         let process_guard = PROCESS_MUTEX.clone().lock_owned().await;
 
         let lockfile_path = LOCKFILE_PATH.clone();

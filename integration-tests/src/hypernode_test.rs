@@ -1,6 +1,6 @@
 use alloy::{
     primitives::{utils::format_units, U256},
-    providers::{ext::AnvilApi, ProviderBuilder, WsConnect},
+    providers::ext::AnvilApi,
     sol_types::SolEvent,
 };
 use bitcoin::{
@@ -13,6 +13,7 @@ use data_engine::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
 use rift_sdk::{
+    create_websocket_wallet_provider,
     proof_generator::ProofGeneratorType,
     txn_builder::{self, serialize_no_segwit},
     DatabaseLocation, MultichainAccount,
@@ -53,11 +54,12 @@ async fn test_hypernode_simple_swap() {
         .await
         .expect("Failed to build devnet");
 
-    let maker_evm_provider = ProviderBuilder::new()
-        .wallet(maker.ethereum_wallet)
-        .on_ws(WsConnect::new(devnet.ethereum.anvil.ws_endpoint_url()))
-        .await
-        .expect("Failed to create maker evm provider");
+    let maker_evm_provider = create_websocket_wallet_provider(
+        devnet.ethereum.anvil.ws_endpoint_url().to_string().as_str(),
+        maker.secret_bytes,
+    )
+    .await
+    .expect("Failed to create maker evm provider");
 
     // Quick references
     let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();

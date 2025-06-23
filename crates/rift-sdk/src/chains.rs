@@ -1,7 +1,7 @@
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
 };
-use alloy::providers::{Identity, Provider, ProviderBuilder, RootProvider};
+use alloy::providers::{Identity, Provider, RootProvider};
 use rand::seq::SliceRandom;
 use serde_json::Value;
 use std::time::Duration;
