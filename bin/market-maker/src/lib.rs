@@ -15,7 +15,7 @@ use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use bitcoincore_rpc_async::Auth;
 use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use esplora_client::AsyncClient as EsploraClient;
 use eyre::Result;
 use log::error;
@@ -237,7 +237,7 @@ impl MakerConfig {
         // Initialize contract data engine if light client address is provided
         let contract_data_engine = {
             info!("Starting contract data engine initialization");
-            let engine = data_engine::engine::ContractDataEngine::start(
+            let engine = rift_indexer::engine::RiftIndexer::start(
                 &self.database_location,
                 evm_rpc.clone(),
                 auction_house_address,

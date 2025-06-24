@@ -2,13 +2,13 @@
 members = [
   "bin/benchmark-light-client",
   "bin/devnet-server",
-  "bin/data-engine-server",
+  "bin/rift-indexer-server",
   "bin/hypernode",
   "bin/checkpoint-downloader",
   "bin/market-maker",
   "bin/sol-utils",
   "crates/bitcoin-data-engine",
-  "crates/data-engine",
+  "crates/rift-indexer",
   "crates/bitcoin-core-rs",
   "crates/bitcoin-light-client-core",
   "crates/rift-sdk",
@@ -36,9 +36,9 @@ bitcoin-data-engine = { path = "crates/bitcoin-data-engine" }
 rift-core = { path = "crates/rift-core" }
 rift-sdk = { path = "crates/rift-sdk" }
 rift-program = {path = "crates/rift-program"}
-data-engine = { path = "crates/data-engine" }
+rift-indexer = { path = "crates/rift-indexer" }
 test-data-utils = { path = "test-data" }
-data-engine-server = { path = "bin/data-engine-server" }
+rift-indexer-server = { path = "bin/rift-indexer-server" }
 checkpoint-downloader = { path = "bin/checkpoint-downloader" }
 devnet = {path = "crates/devnet"}
 market-maker = {path = "bin/market-maker"}

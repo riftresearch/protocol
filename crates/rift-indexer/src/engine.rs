@@ -44,7 +44,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct ContractDataEngine {
+pub struct RiftIndexer {
     pub checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     pub swap_database_connection: Arc<tokio_rusqlite::Connection>,
     server_started: Arc<AtomicBool>,
@@ -53,7 +53,7 @@ pub struct ContractDataEngine {
     mmr_root_broadcaster: broadcast::Sender<[u8; 32]>,
 }
 
-impl ContractDataEngine {
+impl RiftIndexer {
     /// Seeds the DataEngine with the provided checkpoint leaves, but does not start the event listener.
     pub async fn seed(
         database_location: &DatabaseLocation,
@@ -442,7 +442,7 @@ pub async fn listen_for_events(
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
     chunk_size: u64,
-    contract_data_engine: &Arc<ContractDataEngine>,
+    contract_data_engine: &Arc<RiftIndexer>,
 ) -> Result<()> {
     use std::sync::atomic::Ordering;
     use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -559,7 +559,7 @@ async fn process_log(
     checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     provider: DynProvider,
     rift_exchange_address: Address,
-    contract_data_engine: &Arc<ContractDataEngine>,
+    contract_data_engine: &Arc<RiftIndexer>,
 ) -> Result<()> {
     info!(
         "Processing log: block={:?}, tx={:?}",
@@ -763,7 +763,7 @@ async fn handle_bitcoin_light_client_updated_event(
     provider: DynProvider,
     checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: Address,
-    contract_data_engine: &Arc<ContractDataEngine>,
+    contract_data_engine: &Arc<RiftIndexer>,
 ) -> Result<()> {
     info!("Received BitcoinLightClientUpdated event");
     let txid = log

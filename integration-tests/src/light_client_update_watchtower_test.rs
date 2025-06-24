@@ -1,6 +1,6 @@
 use alloy::providers::Provider;
 use bitcoincore_rpc_async::RpcApi;
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use devnet::RiftDevnet;
 use hypernode::HypernodeArgs;
 use rift_sdk::{

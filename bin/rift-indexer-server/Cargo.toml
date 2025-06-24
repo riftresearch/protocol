@@ -1,12 +1,12 @@
 [package]
-name = "data-engine-server"
+name = "rift-indexer-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 exclude.workspace = true
 
 [[bin]]
-name = "data-engine-server"
+name = "rift-indexer-server"
 path = "src/bin/main.rs"
 
 [dependencies]
@@ -15,7 +15,7 @@ checkpoint-downloader.workspace = true
 
 axum.workspace = true
 alloy.workspace = true
-data-engine.workspace = true
+rift-indexer.workspace = true
 tokio-util.workspace = true
 tokio-rusqlite.workspace = true
 tokio.workspace = true

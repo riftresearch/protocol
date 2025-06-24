@@ -7,7 +7,7 @@ use alloy::{
     sol_types::SolEvent,
 };
 use bitcoin::Amount;
-use data_engine::models::SwapStatus;
+use rift_indexer::models::SwapStatus;
 use devnet::RiftDevnet;
 use eyre::Result;
 use hypernode::HypernodeArgs;
@@ -294,7 +294,7 @@ async fn setup_devnet(accounts: &TestAccounts) -> Result<DevnetConfig> {
 struct AuctionConfig {
     auction_house_address: Address,
     whitelist_address: Address,
-    data_engine: Arc<data_engine::engine::ContractDataEngine>,
+    data_engine: Arc<rift_indexer::engine::RiftIndexer>,
 }
 
 async fn start_market_maker(

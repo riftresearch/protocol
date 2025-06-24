@@ -5,7 +5,7 @@ use alloy::primitives::Address;
 use alloy::providers::DynProvider;
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::{hasher::Keccak256Hasher, leaves::BlockLeaf, ChainTransition};
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
@@ -63,7 +63,7 @@ impl LightClientUpdateWatchtower {
     pub async fn run(
         block_lag_threshold: u32,
         check_interval: Duration,
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         evm_rpc: DynProvider,
@@ -174,7 +174,7 @@ impl LightClientUpdateWatchtower {
     /// Check if the light client is lagging behind Bitcoin tip by more than the threshold
     /// Returns Some(blocks_behind) if update is needed, None if up to date
     async fn check_light_client_lag(
-        contract_data_engine: &Arc<ContractDataEngine>,
+        contract_data_engine: &Arc<RiftIndexer>,
         bitcoin_data_engine: &Arc<BitcoinDataEngine>,
         block_lag_threshold: u32,
     ) -> Result<Option<u32>, LightClientUpdateWatchtowerError> {
@@ -259,7 +259,7 @@ impl LightClientUpdateWatchtower {
 
     /// Perform the light client update by generating and submitting a proof
     async fn perform_light_client_update(
-        contract_data_engine: &Arc<ContractDataEngine>,
+        contract_data_engine: &Arc<RiftIndexer>,
         bitcoin_data_engine: &Arc<BitcoinDataEngine>,
         btc_rpc: &Arc<AsyncBitcoinClient>,
         rift_exchange: &RiftExchangeHarnessInstance<DynProvider>,

@@ -16,7 +16,7 @@ use bitcoincore_rpc_async::{
     json::GetBlockVerboseOne,
     RpcApi,
 };
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use itertools::Itertools;
 use rift_core::{
     giga::RiftProgramInput,
@@ -68,7 +68,7 @@ pub struct SwapWatchtower;
 
 impl SwapWatchtower {
     pub fn run(
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         evm_rpc: DynProvider,
         btc_rpc: Arc<AsyncBitcoinClient>,
@@ -130,7 +130,7 @@ impl SwapWatchtower {
     async fn search_for_swap_payments(
         evm_rpc: DynProvider,
         btc_rpc: Arc<AsyncBitcoinClient>,
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         bitcoin_concurrency_limit: usize,
         confirmed_swaps_tx: UnboundedSender<Vec<ConfirmedPayment>>,
@@ -239,7 +239,7 @@ impl SwapWatchtower {
         mut confirmed_swaps_rx: UnboundedReceiver<Vec<ConfirmedPayment>>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         bitcoin_concurrency_limit: usize,
         proof_generator: Arc<RiftProofGenerator>,
         evm_address: Address,
@@ -404,7 +404,7 @@ impl SwapWatchtower {
 async fn compute_block_search_range(
     evm_rpc: DynProvider,
     btc_rpc: Arc<AsyncBitcoinClient>,
-    contract_data_engine: Arc<ContractDataEngine>,
+    contract_data_engine: Arc<RiftIndexer>,
     bitcoin_data_engine: Arc<BitcoinDataEngine>,
 ) -> eyre::Result<(u32, u32)> {
     let current_evm_timestamp = evm_rpc
@@ -455,7 +455,7 @@ async fn compute_block_search_range(
 
 #[instrument(level = "info", skip(contract_data_engine, blocks))]
 async fn find_new_swaps_in_blocks(
-    contract_data_engine: Arc<ContractDataEngine>,
+    contract_data_engine: Arc<RiftIndexer>,
     blocks: &[Block],
 ) -> eyre::Result<Vec<PendingPayment>> {
     /*

@@ -5,8 +5,8 @@ use axum::{extract::State, routing::get, Json, Router};
 use bitcoin_light_client_core::hasher::Digest;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use clap::{command, Parser};
-use data_engine::engine::ContractDataEngine;
-use data_engine::models::OTCSwap;
+use rift_indexer::engine::RiftIndexer;
+use rift_indexer::models::OTCSwap;
 use eyre::Result;
 use regex::Regex;
 use rift_sdk::{create_websocket_provider, DatabaseLocation};
@@ -39,7 +39,7 @@ pub struct ServerConfig {
 /// DataEngineServer holds the underlying data engine, starting the Axum server in the background.
 /// It provides a getter method for easy access to the inner engine.
 pub struct DataEngineServer {
-    data_engine: Arc<ContractDataEngine>,
+    data_engine: Arc<RiftIndexer>,
 }
 
 impl DataEngineServer {
@@ -47,7 +47,7 @@ impl DataEngineServer {
     ///
     /// This helper method abstracts the common server startup logic.
     fn spawn_server(
-        data_engine: Arc<ContractDataEngine>,
+        data_engine: Arc<RiftIndexer>,
         port: u16,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<()> {
@@ -98,7 +98,7 @@ impl DataEngineServer {
         let provider = create_websocket_provider(&config.evm_rpc_websocket_url).await?;
         let rift_exchange_address = Address::from_str(&config.rift_exchange_address)?;
         let data_engine = Arc::new(
-            ContractDataEngine::start(
+            RiftIndexer::start(
                 &config.database_location,
                 provider,
                 rift_exchange_address,
@@ -119,7 +119,7 @@ impl DataEngineServer {
     /// This variant accepts a pre-configured DataEngine and immediately starts
     /// the HTTP server on the specified port in a background task.
     pub async fn from_engine(
-        data_engine: Arc<ContractDataEngine>,
+        data_engine: Arc<RiftIndexer>,
         port: u16,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<Self> {
@@ -128,7 +128,7 @@ impl DataEngineServer {
     }
 
     /// Returns a clone of the inner `Arc<DataEngine>`.
-    pub fn engine(&self) -> Arc<ContractDataEngine> {
+    pub fn engine(&self) -> Arc<RiftIndexer> {
         self.data_engine.clone()
     }
 }
@@ -159,7 +159,7 @@ struct OrderQuery {
 
 #[axum::debug_handler]
 async fn get_swaps_for_address(
-    State(data_engine): State<Arc<ContractDataEngine>>,
+    State(data_engine): State<Arc<RiftIndexer>>,
     axum::extract::Query(query): axum::extract::Query<VirtualSwapQuery>,
 ) -> Result<Json<Vec<OTCSwap>>, (axum::http::StatusCode, String)> {
     let swaps = data_engine
@@ -176,7 +176,7 @@ async fn get_swaps_for_address(
 
 #[axum::debug_handler]
 async fn get_order(
-    State(data_engine): State<Arc<ContractDataEngine>>,
+    State(data_engine): State<Arc<RiftIndexer>>,
     axum::extract::Query(query): axum::extract::Query<OrderQuery>,
 ) -> Result<Json<Option<OTCSwap>>, (axum::http::StatusCode, String)> {
     let otc_swap = data_engine
@@ -201,7 +201,7 @@ struct TipProofResponse {
 
 #[axum::debug_handler]
 async fn get_tip_proof(
-    State(data_engine): State<Arc<ContractDataEngine>>,
+    State(data_engine): State<Arc<RiftIndexer>>,
 ) -> Result<Json<TipProofResponse>, (axum::http::StatusCode, String)> {
     let (leaf, siblings, peaks) = data_engine.get_tip_proof().await.map_err(|e| {
         (
@@ -225,7 +225,7 @@ async fn get_tip_proof(
 
 #[axum::debug_handler]
 async fn get_latest_contract_block(
-    State(data_engine): State<Arc<ContractDataEngine>>,
+    State(data_engine): State<Arc<RiftIndexer>>,
 ) -> Result<Json<u64>, (axum::http::StatusCode, String)> {
     let block_number = data_engine
         .get_leaf_count()

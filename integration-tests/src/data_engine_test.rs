@@ -3,7 +3,7 @@ use bitcoin_light_client_core::{
     leaves::{create_new_leaves, get_genesis_leaf, BlockLeaf},
     light_client::{calculate_cumulative_work, Header},
 };
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use rift_sdk::DatabaseLocation;
 use test_data_utils::TEST_HEADERS;
 
@@ -32,7 +32,7 @@ async fn test_data_engine_file_db() {
     let leaves = get_test_data();
 
     // Seed the database
-    ContractDataEngine::seed(
+    RiftIndexer::seed(
         &DatabaseLocation::Directory(dir_str.clone()),
         leaves.clone(),
     )
@@ -40,7 +40,7 @@ async fn test_data_engine_file_db() {
     .unwrap();
 
     // Re-open using the same database location
-    let engine = ContractDataEngine::seed(&DatabaseLocation::Directory(dir_str), Vec::new())
+    let engine = RiftIndexer::seed(&DatabaseLocation::Directory(dir_str), Vec::new())
         .await
         .unwrap();
 
@@ -62,12 +62,12 @@ async fn test_data_engine_in_memory_db() {
     let leaves = get_test_data();
 
     // Initial seeding
-    ContractDataEngine::seed(&DatabaseLocation::InMemory, leaves.clone())
+    RiftIndexer::seed(&DatabaseLocation::InMemory, leaves.clone())
         .await
         .unwrap();
 
     // Create a new instance using the same location and seed again
-    let engine = ContractDataEngine::seed(&DatabaseLocation::InMemory, leaves.clone())
+    let engine = RiftIndexer::seed(&DatabaseLocation::InMemory, leaves.clone())
         .await
         .unwrap();
 
@@ -125,7 +125,7 @@ async fn test_data_engine_handles_restart() {
     // Step 1: Create our own independent data engine
     println!("Creating independent data engine with file-based database...");
     let mut join_set = tokio::task::JoinSet::new();
-    let independent_engine = ContractDataEngine::start(
+    let independent_engine = RiftIndexer::start(
         &DatabaseLocation::Directory(db_dir.clone()),
         devnet.ethereum.funded_provider.clone(),
         *rift_exchange.address(),
@@ -265,7 +265,7 @@ async fn test_data_engine_handles_restart() {
     // Step 5: Restart data engine with same DB location
     println!("Restarting independent data engine with same database location...");
     let mut new_join_set = tokio::task::JoinSet::new();
-    let restarted_engine = ContractDataEngine::start(
+    let restarted_engine = RiftIndexer::start(
         &DatabaseLocation::Directory(db_dir.clone()),
         devnet.ethereum.funded_provider.clone(),
         *rift_exchange.address(),
@@ -402,7 +402,7 @@ async fn test_data_engine_handles_block_reorg() {
     // Create our own independent data engine
     println!("Creating independent data engine with file-based database...");
     let mut join_set = tokio::task::JoinSet::new();
-    let independent_engine = ContractDataEngine::start(
+    let independent_engine = RiftIndexer::start(
         &DatabaseLocation::Directory(db_dir.clone()),
         devnet.ethereum.funded_provider.clone(),
         *rift_exchange.address(),
@@ -787,7 +787,7 @@ async fn test_data_engine_handles_reorg_while_down() {
     // Create our own independent data engine
     println!("Creating independent data engine with file-based database...");
     let mut join_set = tokio::task::JoinSet::new();
-    let independent_engine = ContractDataEngine::start(
+    let independent_engine = RiftIndexer::start(
         &DatabaseLocation::Directory(db_dir.clone()),
         devnet.ethereum.funded_provider.clone(),
         *rift_exchange.address(),
@@ -940,7 +940,7 @@ async fn test_data_engine_handles_reorg_while_down() {
     // STEP 3: Restart data engine with same DB location (this should detect reorg on startup)
     println!("Restarting independent data engine with same database location...");
     let mut new_join_set = tokio::task::JoinSet::new();
-    let restarted_engine = ContractDataEngine::start(
+    let restarted_engine = RiftIndexer::start(
         &DatabaseLocation::Directory(db_dir.clone()),
         devnet.ethereum.funded_provider.clone(),
         *rift_exchange.address(),

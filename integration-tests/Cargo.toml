@@ -16,8 +16,8 @@ tempfile.workspace = true
 bitcoin-light-client-core.workspace = true
 rift-core = { workspace = true }
 rift-sdk = { workspace = true }
-data-engine = { workspace = true }
-data-engine-server = { workspace = true }
+rift-indexer = { workspace = true }
+rift-indexer-server = { workspace = true }
 corepc-node = { workspace = true }
 sol-bindings= { workspace = true }
 bitcoin-data-engine = { workspace = true }

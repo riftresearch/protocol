@@ -135,7 +135,7 @@ impl HypernodeArgs {
 
         let contract_data_engine = {
             info!("Starting contract data engine initialization");
-            let engine = data_engine::engine::ContractDataEngine::start(
+            let engine = rift_indexer::engine::RiftIndexer::start(
                 &self.database_location,
                 evm_rpc.clone(),
                 rift_exchange_address,

@@ -7,7 +7,7 @@ use alloy::{
     pubsub::SubscriptionStream,
     rpc::types::Header,
 };
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use futures::{
     future::Ready,
     stream::{self, Chain, Once},
@@ -39,7 +39,7 @@ impl ReleaseWatchtower {
         rift_exchange_address: Address,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
         evm_rpc: DynProvider,
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> eyre::Result<Self> {
         let (tx, rx) = watch::channel(None);
@@ -89,7 +89,7 @@ async fn search_on_new_evm_blocks(
     rift_exchange_address: Address,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
     evm_rpc: DynProvider,
-    contract_data_engine: Arc<ContractDataEngine>,
+    contract_data_engine: Arc<RiftIndexer>,
     mut rx: watch::Receiver<Option<Header>>,
 ) -> eyre::Result<()> {
     let rift_exchange = RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
@@ -114,7 +114,7 @@ async fn search_on_new_evm_blocks(
 async fn search_for_releases(
     rift_exchange: &RiftExchangeHarnessClient,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
-    contract_data_engine: Arc<ContractDataEngine>,
+    contract_data_engine: Arc<RiftIndexer>,
     block_timestamp: u64,
 ) -> eyre::Result<()> {
     debug!(

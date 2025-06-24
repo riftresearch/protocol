@@ -10,7 +10,7 @@ use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::{hasher::Keccak256Hasher, leaves::BlockLeaf, ChainTransition};
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::RpcApi;
-use data_engine::engine::ContractDataEngine;
+use rift_indexer::engine::RiftIndexer;
 use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
@@ -87,7 +87,7 @@ pub struct ForkWatchtower;
 
 impl ForkWatchtower {
     pub async fn run(
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         evm_rpc: DynProvider,
@@ -415,7 +415,7 @@ impl ForkWatchtower {
     }
 
     pub async fn detect_fork(
-        contract_data_engine: &Arc<ContractDataEngine>,
+        contract_data_engine: &Arc<RiftIndexer>,
         bitcoin_data_engine: &Arc<BitcoinDataEngine>,
         btc_rpc: &Arc<AsyncBitcoinClient>,
         bitcoin_concurrency_limit: usize,

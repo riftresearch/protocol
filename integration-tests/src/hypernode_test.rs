@@ -9,7 +9,7 @@ use bitcoin::{
     Amount, Transaction,
 };
 use bitcoincore_rpc_async::RpcApi;
-use data_engine::models::SwapStatus;
+use rift_indexer::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
 use rift_sdk::{

@@ -2320,50 +2320,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
 
 [[package]]
-name = "data-engine"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "bitcoin-light-client-core",
- "clap",
- "eyre",
- "futures-util",
- "rift-core",
- "rift-sdk",
- "serde",
- "serde_json",
- "sol-bindings",
- "tokio",
- "tokio-rusqlite",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "data-engine-server"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "axum",
- "bitcoin-light-client-core",
- "checkpoint-downloader",
- "clap",
- "data-engine",
- "eyre",
- "regex",
- "rift-sdk",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rusqlite",
- "tokio-util",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "der"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2462,8 +2418,6 @@ dependencies = [
  "chrono",
  "clap",
  "corepc-node",
- "data-engine",
- "data-engine-server",
  "electrsd",
  "env_logger",
  "esplora-client",
@@ -2477,6 +2431,8 @@ dependencies = [
  "once_cell",
  "reqwest 0.12.15",
  "rift-core",
+ "rift-indexer",
+ "rift-indexer-server",
  "rift-sdk",
  "serde",
  "serde_json",
@@ -3701,7 +3657,6 @@ dependencies = [
  "chrono",
  "clap",
  "crypto-bigint",
- "data-engine",
  "dotenv",
  "env_logger",
  "eyre",
@@ -3712,6 +3667,7 @@ dependencies = [
  "metrics",
  "reqwest 0.12.15",
  "rift-core",
+ "rift-indexer",
  "rift-program",
  "rift-sdk",
  "serde",
@@ -4009,8 +3965,6 @@ dependencies = [
  "corepc-node",
  "crypto-bigint",
  "ctor",
- "data-engine",
- "data-engine-server",
  "devnet",
  "env_logger",
  "esplora-client",
@@ -4025,6 +3979,8 @@ dependencies = [
  "once_cell",
  "rand 0.9.0",
  "rift-core",
+ "rift-indexer",
+ "rift-indexer-server",
  "rift-sdk",
  "serial_test",
  "sol-bindings",
@@ -4384,7 +4340,6 @@ dependencies = [
  "chrono",
  "clap",
  "dashmap",
- "data-engine",
  "esplora-client",
  "eyre",
  "futures",
@@ -4393,6 +4348,7 @@ dependencies = [
  "log",
  "reqwest 0.12.15",
  "rift-core",
+ "rift-indexer",
  "rift-sdk",
  "ring",
  "serde",
@@ -5951,6 +5907,50 @@ dependencies = [
  "sol-bindings",
  "test-data-utils",
  "tiny-keccak",
+]
+
+[[package]]
+name = "rift-indexer"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "bitcoin-light-client-core",
+ "clap",
+ "eyre",
+ "futures-util",
+ "rift-core",
+ "rift-sdk",
+ "serde",
+ "serde_json",
+ "sol-bindings",
+ "tokio",
+ "tokio-rusqlite",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "rift-indexer-server"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "axum",
+ "bitcoin-light-client-core",
+ "checkpoint-downloader",
+ "clap",
+ "eyre",
+ "regex",
+ "rift-indexer",
+ "rift-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rusqlite",
+ "tokio-util",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

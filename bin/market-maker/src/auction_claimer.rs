@@ -3,7 +3,7 @@ use alloy::rpc::types::{Filter, Log};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{SolEvent, SolValue};
 use bitcoin_light_client_core::hasher::Keccak256Hasher;
-use data_engine::{engine::ContractDataEngine, models::ChainAwareOrder};
+use rift_indexer::{engine::RiftIndexer, models::ChainAwareOrder};
 use eyre::{eyre, Result};
 use log::{debug, error, info, warn};
 use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
@@ -283,7 +283,7 @@ impl AuctionClaimer {
     pub fn run(
         provider: DynProvider,
         config: AuctionClaimerConfig,
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<()> {
@@ -428,7 +428,7 @@ impl AuctionClaimer {
     async fn run_auction_claimer(
         provider: DynProvider,
         config: AuctionClaimerConfig,
-        contract_data_engine: Arc<ContractDataEngine>,
+        contract_data_engine: Arc<RiftIndexer>,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
         mut auction_rx: mpsc::Receiver<(DutchAuction, u64)>,
     ) -> eyre::Result<()> {

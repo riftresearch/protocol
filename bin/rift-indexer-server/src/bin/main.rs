@@ -1,8 +1,8 @@
 use clap::Parser;
 use eyre::Result;
 
-use data_engine_server::DataEngineServer;
-use data_engine_server::ServerConfig;
+use rift_indexer_server::DataEngineServer;
+use rift_indexer_server::ServerConfig;
 use tokio::task::JoinSet;
 
 #[tokio::main]

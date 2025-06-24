@@ -13,7 +13,7 @@ path = "src/bin/main.rs"
 rift-sdk = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
 bitcoin = { workspace = true }
-data-engine = { workspace = true }
+rift-indexer = { workspace = true }
 bitcoin-data-engine = { workspace = true }
 rift-core = { workspace = true }
 sol-bindings= { workspace = true }

@@ -15,7 +15,7 @@ bitcoin-data-engine = { workspace = true }
 rift-core = { workspace = true }
 rift-sdk = { workspace = true }
 rift-program = { workspace = true }
-data-engine = { workspace = true }
+rift-indexer = { workspace = true }
 checkpoint-downloader = { workspace = true }
 bitcoincore-rpc-async = { workspace = true }
 accumulators = { workspace = true }

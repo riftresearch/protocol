@@ -15,8 +15,8 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use tokio::task::JoinSet;
 
-use data_engine::engine::ContractDataEngine;
-use data_engine_server::DataEngineServer;
+use rift_indexer::engine::RiftIndexer;
+use rift_indexer_server::DataEngineServer;
 
 use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation, MultichainAccount};
 
@@ -75,7 +75,7 @@ use crate::evm_devnet::Mode;
 pub struct RiftDevnet {
     pub bitcoin: BitcoinDevnet,
     pub ethereum: EthDevnet,
-    pub contract_data_engine: Arc<ContractDataEngine>,
+    pub contract_data_engine: Arc<RiftIndexer>,
     pub checkpoint_file_path: String,
     pub join_set: JoinSet<eyre::Result<()>>,
     checkpoint_file_handle: NamedTempFile,
@@ -232,7 +232,7 @@ impl RiftDevnetBuilder {
         // 4) Create/seed DataEngine
         log::info!("Seeding data engine with checkpoint leaves...");
         let t = tokio::time::Instant::now();
-        let mut contract_data_engine = data_engine::engine::ContractDataEngine::seed(
+        let mut contract_data_engine = rift_indexer::engine::RiftIndexer::seed(
             &data_engine_db_location,
             checkpoint_leaves,
         )
@@ -288,7 +288,7 @@ impl RiftDevnetBuilder {
         // 8) Possibly run data-engine server in interactive mode
         let contract_data_engine_server = if interactive {
             Some(
-                data_engine_server::DataEngineServer::from_engine(
+                rift_indexer_server::DataEngineServer::from_engine(
                     contract_data_engine.clone(),
                     crate::CONTRACT_DATA_ENGINE_SERVER_PORT,
                     &mut join_set,
