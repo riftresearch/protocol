@@ -28,7 +28,6 @@ use tracing_subscriber::EnvFilter;
 
 #[ctor]
 fn init_test_tracing() {
-    // Only init tracing if --nocapture is passed
     let has_nocapture = std::env::args().any(|arg| arg == "--nocapture" || arg == "--show-output");
     if has_nocapture {
         tracing_subscriber::fmt()
@@ -36,6 +35,6 @@ fn init_test_tracing() {
                 EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
             )
             .try_init()
-            .ok(); // Ignore errors if already initialized
+            .ok();
     }
 }

@@ -12,6 +12,7 @@ use sol_bindings::{
 use tokio::time::Instant;
 
 use alloy::{
+    dyn_abi::abi::token,
     eips::eip7251::ConsolidationRequest,
     network::TransactionBuilder,
     node_bindings::{Anvil, AnvilInstance},
@@ -80,6 +81,7 @@ impl EthDevnet {
                 deploy_mode.clone(),
             )
             .await?;
+        info!("Deployed RiftExchange at {}", rift_exchange.address());
 
         // Should only need to deploy periphery contracts if we're in interactive mode
         let periphery = match deploy_mode.clone() {
@@ -204,6 +206,7 @@ pub async fn deploy_contracts(
     let token_address = Address::from_str(TOKEN_ADDRESS)?;
     // Deploy the mock token, this is dependent on if we're on a fork or not
     let token = if matches!(mode, Mode::Fork(_)) {
+        println!("Pointing to MockToken at {}", token_address);
         // deploy it
         let mock_token = TokenizedBTC::deploy(funded_provider.clone()).await?;
         funded_provider
@@ -214,13 +217,15 @@ pub async fn deploy_contracts(
             .await?;
         TokenizedBTC::new(token_address, funded_provider.clone().erased())
     } else {
-        TokenizedBTC::new(token_address, funded_provider.clone().erased())
+        println!("Deploying MockToken at {}", token_address);
+        TokenizedBTC::deploy(funded_provider.clone().erased()).await?
     };
 
     // Record the block number to track from
     let deployment_block_number = funded_provider.get_block_number().await?;
 
     let tip_block_leaf_sol: sol_bindings::BlockLeaf = tip_block_leaf.into();
+    println!("Deploying RiftExchange");
     // Deploy RiftExchange
     let exchange = RiftExchangeHarnessInstance::deploy(
         funded_provider.clone().erased(),
@@ -229,7 +234,7 @@ pub async fn deploy_contracts(
         circuit_verification_key_hash.into(),
         verifier_contract,
         verifier_contract, // arbitrary address, not used
-        TAKER_FEE_BIPS as u16,
+        TAKER_FEE_BIPS,
         tip_block_leaf_sol,
     )
     .await?;
