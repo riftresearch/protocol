@@ -41,12 +41,12 @@ serial_test = { workspace = true }
 once_cell = { workspace = true }
 test-data-utils = { workspace = true }
 crypto-bigint = { workspace = true }
-mockall = "0.13.1"
+mockall = { workspace = true }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-async-trait = "0.1.72"
-market-maker = { path = "../bin/market-maker" }
-anyhow = "1.0.75"
-rand = "0.9.0"
+async-trait = { workspace = true }
+market-maker = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
 esplora-client = { workspace = true }
-ctor = "0.2"
+ctor = { workspace = true }

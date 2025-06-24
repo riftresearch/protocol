@@ -36,13 +36,13 @@ hex = { workspace = true }
 alloy = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
 chrono = { workspace = true }
-dashmap = "6.1.0"
-alloy-primitives = "1.1.0"
-alloy-sol-types = "1.1.0"
-anyhow = "1.0.98"
+dashmap = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+anyhow = { workspace = true }
 log = { workspace = true }
-async-trait = "0.1.88"
+async-trait = { workspace = true }
 esplora-client = { workspace = true }
-base64 = "0.22.1"
-ring = "0.17.14"
-jsonwebtoken = "9.3"
+base64 = { workspace = true }
+ring = { workspace = true }
+jsonwebtoken = { workspace = true }
