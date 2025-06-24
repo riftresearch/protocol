@@ -86,7 +86,10 @@ async fn test_data_engine_in_memory_db() {
 async fn test_data_engine_handles_restart_properly() {
     use alloy::{primitives::U256, providers::Provider, sol_types::SolEvent};
     use devnet::RiftDevnet;
-    use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation, MultichainAccount};
+    use rift_sdk::{
+        create_websocket_wallet_provider, handle_background_thread_result, DatabaseLocation,
+        MultichainAccount,
+    };
     use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
     use tokio::time::{sleep, timeout, Duration};
 
@@ -265,7 +268,7 @@ async fn test_data_engine_handles_restart_properly() {
         &DatabaseLocation::Directory(db_dir.clone()),
         devnet.ethereum.funded_provider.clone(),
         *rift_exchange.address(),
-        0,      // deploy block number
+        0,      // deploy block number (will be ignored due to smart resumption)
         10000,  // log chunk size
         vec![], // no checkpoint leaves
         &mut new_join_set,
@@ -273,11 +276,18 @@ async fn test_data_engine_handles_restart_properly() {
     .await
     .expect("Failed to restart data engine");
 
-    // Wait for initial sync to complete
-    restarted_engine
-        .wait_for_initial_sync()
-        .await
-        .expect("Failed to wait for initial sync");
+    println!("Waiting for restarted initial sync...");
+
+    tokio::select! {
+        _ = restarted_engine.wait_for_initial_sync() => {
+            println!("Restarted data engine initial sync complete");
+        }
+        result = new_join_set.join_next() => {
+            if let Some(Err(e)) = result {
+                panic!("Background thread failed during restart: {:?}", e);
+            }
+        }
+    }
 
     // Step 6: Verify data engine sees both orders
     println!("Verifying restarted data engine sees both orders...");

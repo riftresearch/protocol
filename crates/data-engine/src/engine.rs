@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     db::{
-        add_order, add_payment, get_live_orders_by_script_and_amounts, get_order_by_initial_hash,
+        add_order, add_payment, get_latest_processed_block_number, get_live_orders_by_script_and_amounts, get_order_by_initial_hash,
         get_orders_for_recipient, get_otc_swap_by_order_index, get_payments_ready_to_be_settled,
         get_virtual_swaps, setup_swaps_database, update_order_and_payment_to_settled,
         update_order_to_refunded, ChainAwarePaymentWithOrder,
@@ -92,8 +92,9 @@ impl ContractDataEngine {
         rx.recv().await.map(|_| ()).map_err(Into::into)
     }
 
-    /// Seeds the DataEngine and immediately starts the event listener.
-    /// Internally this uses seed() and then start_server().
+    /// Seeds the DataEngine and immediately starts the event listener with smart resumption.
+    /// This method checks the database for the latest processed block and resumes from there,
+    /// preventing duplicate event processing on restart.
     pub async fn start(
         database_location: &DatabaseLocation,
         provider: DynProvider,
@@ -105,12 +106,25 @@ impl ContractDataEngine {
     ) -> Result<Self> {
         // Seed the engine with checkpoint leaves.
         let mut engine = Self::seed(database_location, checkpoint_leaves).await?;
-        // Start event listener
+        
+        // Check for the latest processed block in the database
+        let resume_from_block = match get_latest_processed_block_number(&engine.swap_database_connection).await? {
+            Some(latest_block) => {
+                info!("Found latest processed block: {}. Resuming from block {}", latest_block, latest_block + 1);
+                latest_block + 1  // Resume from the next block
+            }
+            None => {
+                info!("No previous events found. Starting from deploy block: {}", deploy_block_number);
+                deploy_block_number
+            }
+        };
+        
+        // Start event listener from the resume block
         engine
             .start_event_listener(
                 provider,
                 rift_exchange_address,
-                deploy_block_number,
+                resume_from_block,
                 log_chunk_size,
                 join_set,
             )
@@ -180,6 +194,8 @@ impl ContractDataEngine {
                 .await
                 .create_seed_checkpoint(&checkpoint_leaves)
                 .await?;
+        } else {
+            info!("Skipping seeding MMR as it already has leaves");
         }
         Ok(())
     }

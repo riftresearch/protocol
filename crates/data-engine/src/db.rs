@@ -1092,3 +1092,30 @@ pub async fn get_otc_swap_by_order_index(
     .await
     .map_err(|e| eyre::eyre!(e))
 }
+
+/// Get the latest block number that has been processed by the data engine.
+/// This looks at both orders and payments tables to find the highest block number.
+/// Returns None if no events have been processed yet.
+pub async fn get_latest_processed_block_number(conn: &Connection) -> Result<Option<u64>> {
+    let sql = r#"
+        SELECT MAX(block_number) as max_block FROM (
+            SELECT order_block_number as block_number FROM orders
+            UNION ALL
+            SELECT payment_block_number as block_number FROM payments
+        )
+    "#;
+
+    conn.call(move |conn| {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query([])?;
+        
+        if let Some(row) = rows.next()? {
+            let max_block: Option<i64> = row.get(0)?;
+            Ok(max_block.map(|b| b as u64))
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
