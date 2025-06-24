@@ -52,6 +52,16 @@ pub async fn setup_swaps_database(conn: &Connection) -> Result<()> {
                 ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS light_client_updates (
+            update_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_number        INTEGER   NOT NULL,
+            block_hash          BLOB(32)  NOT NULL,
+            txid                BLOB(32)  NOT NULL,
+            prior_mmr_root      BLOB(32)  NOT NULL,
+            new_mmr_root        BLOB(32)  NOT NULL,
+            timestamp           INTEGER   NOT NULL
+        );
+
     "#;
 
     conn.call(|conn| {
@@ -1093,8 +1103,159 @@ pub async fn get_otc_swap_by_order_index(
     .map_err(|e| eyre::eyre!(e))
 }
 
+/// Add a light client update to the database
+pub async fn add_light_client_update(
+    conn: &Connection,
+    block_number: u64,
+    block_hash: [u8; 32],
+    txid: [u8; 32],
+    prior_mmr_root: [u8; 32],
+    new_mmr_root: [u8; 32],
+    timestamp: u64,
+) -> Result<()> {
+    let sql = r#"
+        INSERT INTO light_client_updates (
+            block_number, block_hash, txid, prior_mmr_root, new_mmr_root, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?)
+    "#;
+
+    conn.call(move |conn| {
+        conn.execute(
+            sql,
+            params![
+                block_number as i64,
+                &block_hash[..],
+                &txid[..],
+                &prior_mmr_root[..],
+                &new_mmr_root[..],
+                timestamp as i64
+            ],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+/// Remove light client updates from blocks after the given block number (for reorg handling)
+pub async fn remove_light_client_updates_after_block(
+    conn: &Connection,
+    block_number: u64,
+) -> Result<()> {
+    let sql = "DELETE FROM light_client_updates WHERE block_number > ?";
+
+    conn.call(move |conn| {
+        let rows_deleted = conn.execute(sql, params![block_number as i64])?;
+        info!("Removed {} light client updates after block {}", rows_deleted, block_number);
+        Ok(())
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+/// Get the latest MMR root from light client updates at or before the given block number
+pub async fn get_latest_mmr_root_at_block(
+    conn: &Connection,
+    block_number: u64,
+) -> Result<Option<[u8; 32]>> {
+    let sql = r#"
+        SELECT new_mmr_root FROM light_client_updates 
+        WHERE block_number <= ? 
+        ORDER BY block_number DESC, update_id DESC 
+        LIMIT 1
+    "#;
+
+    conn.call(move |conn| {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query(params![block_number as i64])?;
+        
+        if let Some(row) = rows.next()? {
+            let mmr_root_bytes: Vec<u8> = row.get(0)?;
+            if mmr_root_bytes.len() == 32 {
+                let mut mmr_root = [0u8; 32];
+                mmr_root.copy_from_slice(&mmr_root_bytes);
+                Ok(Some(mmr_root))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+/// Remove all events associated with a specific transaction hash (for reorg handling)
+/// This function is called when a log with removed=true is detected
+pub async fn remove_events_by_transaction(
+    conn: &Connection,
+    txid: [u8; 32],
+) -> Result<()> {
+    // Remove orders with this transaction ID
+    let orders_sql = "DELETE FROM orders WHERE order_txid = ?";
+    
+    // Remove payments with this transaction ID  
+    let payments_sql = "DELETE FROM payments WHERE payment_txid = ?";
+    
+    // Remove light client updates with this transaction ID
+    let light_client_sql = "DELETE FROM light_client_updates WHERE txid = ?";
+
+    conn.call(move |conn| {
+        // Start a transaction for atomicity
+        let tx = conn.transaction()?;
+        
+        let orders_deleted = tx.execute(orders_sql, params![&txid[..]])?;
+        let payments_deleted = tx.execute(payments_sql, params![&txid[..]])?;
+        let light_client_deleted = tx.execute(light_client_sql, params![&txid[..]])?;
+        
+        tx.commit()?;
+        
+        if orders_deleted > 0 || payments_deleted > 0 || light_client_deleted > 0 {
+            info!(
+                "Removed reorged events: {} orders, {} payments, {} light client updates for txid {}",
+                orders_deleted, payments_deleted, light_client_deleted, hex::encode(txid)
+            );
+        }
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+/// Remove all events from blocks after the given block number (for reorg handling)
+/// This is a comprehensive cleanup function that handles all event types
+pub async fn remove_all_events_after_block(
+    conn: &Connection,
+    block_number: u64,
+) -> Result<()> {
+    let orders_sql = "DELETE FROM orders WHERE order_block_number > ?";
+    let payments_sql = "DELETE FROM payments WHERE payment_block_number > ?";
+    let light_client_sql = "DELETE FROM light_client_updates WHERE block_number > ?";
+
+    conn.call(move |conn| {
+        let tx = conn.transaction()?;
+        
+        let orders_deleted = tx.execute(orders_sql, params![block_number as i64])?;
+        let payments_deleted = tx.execute(payments_sql, params![block_number as i64])?;
+        let light_client_deleted = tx.execute(light_client_sql, params![block_number as i64])?;
+        
+        tx.commit()?;
+        
+        info!(
+            "Removed all events after block {}: {} orders, {} payments, {} light client updates",
+            block_number, orders_deleted, payments_deleted, light_client_deleted
+        );
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
 /// Get the latest block number that has been processed by the data engine.
-/// This looks at both orders and payments tables to find the highest block number.
+/// This looks at orders, payments, and light client updates tables to find the highest block number.
 /// Returns None if no events have been processed yet.
 pub async fn get_latest_processed_block_number(conn: &Connection) -> Result<Option<u64>> {
     let sql = r#"
@@ -1102,6 +1263,8 @@ pub async fn get_latest_processed_block_number(conn: &Connection) -> Result<Opti
             SELECT order_block_number as block_number FROM orders
             UNION ALL
             SELECT payment_block_number as block_number FROM payments
+            UNION ALL
+            SELECT block_number FROM light_client_updates
         )
     "#;
 
@@ -1115,6 +1278,44 @@ pub async fn get_latest_processed_block_number(conn: &Connection) -> Result<Opti
         } else {
             Ok(None)
         }
+    })
+    .await
+    .map_err(|e| eyre::eyre!(e))
+}
+
+/// Get block numbers and hashes for stored events to validate against current chain state.
+/// Returns a list of (block_number, block_hash) tuples for validation.
+pub async fn get_stored_events_for_validation(
+    conn: &Connection,
+) -> Result<Vec<(u64, [u8; 32])>> {
+    let sql = r#"
+        SELECT DISTINCT block_number, block_hash FROM (
+            SELECT order_block_number as block_number, order_block_hash as block_hash FROM orders
+            UNION ALL
+            SELECT payment_block_number as block_number, payment_block_hash as block_hash FROM payments
+            UNION ALL
+            SELECT block_number, block_hash FROM light_client_updates
+        )
+        ORDER BY block_number ASC
+    "#;
+
+    conn.call(move |conn| {
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = stmt.query([])?;
+        
+        let mut events = Vec::new();
+        while let Some(row) = rows.next()? {
+            let block_number: i64 = row.get(0)?;
+            let block_hash_vec: Vec<u8> = row.get(1)?;
+            
+            if block_hash_vec.len() == 32 {
+                let mut block_hash = [0u8; 32];
+                block_hash.copy_from_slice(&block_hash_vec);
+                events.push((block_number as u64, block_hash));
+            }
+        }
+        
+        Ok(events)
     })
     .await
     .map_err(|e| eyre::eyre!(e))

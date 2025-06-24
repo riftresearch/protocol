@@ -1,5 +1,6 @@
 use alloy::{
     dyn_abi::SolType,
+    hex,
     primitives::{Address, FixedBytes},
     providers::{ext::TraceApi, DynProvider, Provider},
     rpc::types::{trace::parity::Action, BlockNumberOrTag, Filter, Log},
@@ -29,10 +30,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     db::{
-        add_order, add_payment, get_latest_processed_block_number, get_live_orders_by_script_and_amounts, get_order_by_initial_hash,
-        get_orders_for_recipient, get_otc_swap_by_order_index, get_payments_ready_to_be_settled,
-        get_virtual_swaps, setup_swaps_database, update_order_and_payment_to_settled,
-        update_order_to_refunded, ChainAwarePaymentWithOrder,
+        add_light_client_update, add_order, add_payment, get_latest_processed_block_number,
+        get_live_orders_by_script_and_amounts, get_order_by_initial_hash, get_orders_for_recipient,
+        get_otc_swap_by_order_index, get_payments_ready_to_be_settled, get_stored_events_for_validation,
+        get_virtual_swaps, remove_all_events_after_block, setup_swaps_database,
+        update_order_and_payment_to_settled, update_order_to_refunded, ChainAwarePaymentWithOrder,
     },
     models::ChainAwareOrder,
 };
@@ -106,19 +108,31 @@ impl ContractDataEngine {
     ) -> Result<Self> {
         // Seed the engine with checkpoint leaves.
         let mut engine = Self::seed(database_location, checkpoint_leaves).await?;
-        
+
+        // Validate stored events against current chain state on startup
+        validate_stored_events_on_startup(&engine.swap_database_connection, &provider)
+            .await?;
+
         // Check for the latest processed block in the database
-        let resume_from_block = match get_latest_processed_block_number(&engine.swap_database_connection).await? {
-            Some(latest_block) => {
-                info!("Found latest processed block: {}. Resuming from block {}", latest_block, latest_block + 1);
-                latest_block + 1  // Resume from the next block
-            }
-            None => {
-                info!("No previous events found. Starting from deploy block: {}", deploy_block_number);
-                deploy_block_number
-            }
-        };
-        
+        let resume_from_block =
+            match get_latest_processed_block_number(&engine.swap_database_connection).await? {
+                Some(latest_block) => {
+                    info!(
+                        "Found latest processed block: {}. Resuming from block {}",
+                        latest_block,
+                        latest_block + 1
+                    );
+                    latest_block + 1 // Resume from the next block
+                }
+                None => {
+                    info!(
+                        "No previous events found. Starting from deploy block: {}",
+                        deploy_block_number
+                    );
+                    deploy_block_number
+                }
+            };
+
         // Start event listener from the resume block
         engine
             .start_event_listener(
@@ -340,6 +354,71 @@ fn get_qualified_swaps_database_path(database_location: String) -> String {
     swaps_db_path.to_str().expect("Invalid path").to_string()
 }
 
+/// Validate stored events against current chain state on startup.
+/// Detects reorgs that occurred while the data engine was offline.
+async fn validate_stored_events_on_startup(
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+    provider: &DynProvider,
+) -> Result<()> {
+    info!("Validating stored events against current chain state");
+
+    let stored_events = get_stored_events_for_validation(db_conn).await?;
+    
+    if stored_events.is_empty() {
+        info!("No stored events to validate");
+        return Ok(());
+    }
+
+    let mut reorg_detected = false;
+    let mut last_valid_block = 0u64;
+
+    for (block_number, stored_block_hash) in stored_events {
+        match provider.get_block_by_number(BlockNumberOrTag::Number(block_number)).await {
+            Ok(Some(current_block)) => {
+                let current_block_hash = current_block.header.hash.0;
+                
+                if current_block_hash != stored_block_hash {
+                    warn!(
+                        "Reorg detected on startup: block {} has hash {} but stored hash is {}",
+                        block_number,
+                        hex::encode(current_block_hash),
+                        hex::encode(stored_block_hash)
+                    );
+                    reorg_detected = true;
+                    break;
+                } else {
+                    last_valid_block = block_number;
+                }
+            }
+            Ok(None) => {
+                warn!(
+                    "Block {} no longer exists on chain (stored hash: {})",
+                    block_number,
+                    hex::encode(stored_block_hash)
+                );
+                reorg_detected = true;
+                break;
+            }
+            Err(e) => {
+                warn!("Failed to fetch block {}: {:?}", block_number, e);
+                // Continue checking other blocks rather than failing completely
+            }
+        }
+    }
+
+    if reorg_detected {
+        info!(
+            "Reorg detected on startup. Cleaning up events after block {}",
+            last_valid_block.saturating_sub(1)
+        );
+        remove_all_events_after_block(db_conn, last_valid_block.saturating_sub(1)).await?;
+    } else {
+        info!("All stored events are valid on current chain");
+    }
+
+    Ok(())
+}
+
 /// Process every past + future event for `rift_exchange_address` without gaps.
 ///
 /// 1.  Start the Web-socket subscription *first* (race-free).
@@ -376,6 +455,10 @@ pub async fn listen_for_events(
         .await?;
     let mut live_stream = sub.into_stream();
 
+    // Subscribe to block headers for reorg detection
+    let block_sub = provider.subscribe_blocks().await?;
+    let mut block_stream = block_sub.into_stream();
+
     // 2. Unbounded buffer for live logs
     let (tx, mut rx): (_, UnboundedReceiver<Log>) = unbounded_channel();
     tokio::spawn(async move {
@@ -383,6 +466,16 @@ pub async fn listen_for_events(
             if tx.send(log).is_err() {
                 break;
             }
+        }
+    });
+
+    // Start reorg detection task
+    let reorg_db_conn = db_conn.clone();
+    let reorg_provider = provider.clone();
+    tokio::spawn(async move {
+        if let Err(e) = monitor_blocks_for_reorg(block_stream, reorg_db_conn, reorg_provider).await
+        {
+            warn!("Block monitoring for reorg detection failed: {:?}", e);
         }
     });
 
@@ -468,7 +561,10 @@ async fn process_log(
     rift_exchange_address: Address,
     contract_data_engine: &Arc<ContractDataEngine>,
 ) -> Result<()> {
-    info!("Processing log: {:?}", log);
+    info!(
+        "Processing log: block={:?}, tx={:?}",
+        log.block_number, log.transaction_hash
+    );
 
     // If there's no topic then that's a critical error.
     let topic = log
@@ -674,6 +770,14 @@ async fn handle_bitcoin_light_client_updated_event(
         .transaction_hash
         .ok_or_else(|| eyre::eyre!("Missing txid in BitcoinLightClientUpdated event"))?;
 
+    // Extract EVM block metadata
+    let block_number = log
+        .block_number
+        .ok_or_else(|| eyre::eyre!("Missing block number in BitcoinLightClientUpdated event"))?;
+    let block_hash = log
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("Missing block hash in BitcoinLightClientUpdated event"))?;
+
     // Propagate any decoding error.
     let decoded = BitcoinLightClientUpdated::decode_log(&log.inner)
         .map_err(|e| eyre::eyre!("Failed to decode BitcoinLightClientUpdated event: {:?}", e))?;
@@ -713,7 +817,30 @@ async fn handle_bitcoin_light_client_updated_event(
         ));
     }
 
+    // Store the light client update in the database with EVM block metadata
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    add_light_client_update(
+        &contract_data_engine.swap_database_connection,
+        block_number,
+        block_hash.0,
+        txid.0,
+        prior_mmr_root,
+        new_mmr_root,
+        timestamp,
+    )
+    .await?;
+
     contract_data_engine.update_mmr_root(new_mmr_root).await?;
+
+    info!(
+        "Stored light client update: block {} -> MMR root {}",
+        block_number,
+        hex::encode(new_mmr_root)
+    );
 
     Ok(())
 }
@@ -790,4 +917,85 @@ async fn extract_compressed_block_leaves_from_light_client_updating_tx(
         eyre::eyre!("No compressed block leaves found in light client updating tx")
     })?;
     Ok(compressed_block_leaves.to_vec())
+}
+
+/// Monitor incoming block headers for reorganizations
+/// Detects reorgs by checking for blocks with the same or earlier block numbers
+/// Also periodically polls for block number regression (for Anvil compatibility)
+async fn monitor_blocks_for_reorg(
+    mut block_stream: impl futures_util::Stream<Item = alloy::rpc::types::Header> + Unpin,
+    db_conn: Arc<tokio_rusqlite::Connection>,
+    _provider: DynProvider,
+) -> Result<()> {
+    use futures_util::StreamExt;
+
+    let mut last_block_number: Option<u64> = None;
+    let mut block_hash_cache: std::collections::HashMap<u64, [u8; 32]> =
+        std::collections::HashMap::new();
+
+    info!("Starting block monitoring for reorg detection");
+
+    while let Some(block) = block_stream.next().await {
+        let current_block_number = block.number;
+        let current_block_hash = block.hash.0;
+
+        info!("Received block {}: {}", current_block_number, hex::encode(current_block_hash));
+
+        // Check for reorg conditions
+        if let Some(last_num) = last_block_number {
+            // Case 1: Same block number (fork)
+            if current_block_number == last_num {
+                info!("Reorg detected: duplicate block number {}", current_block_number);
+                handle_reorg(&db_conn, current_block_number - 1).await?;
+            }
+            // Case 2: Earlier block number (chain went backwards)
+            else if current_block_number < last_num {
+                info!("Reorg detected: block number went from {} to {}", last_num, current_block_number);
+                handle_reorg(&db_conn, current_block_number - 1).await?;
+            }
+            // Case 3: Check parent hash doesn't match cached hash (subtle reorg)
+            else if current_block_number > 0 {
+                let parent_block_num = current_block_number - 1;
+                if let Some(cached_parent_hash) = block_hash_cache.get(&parent_block_num) {
+                    if block.parent_hash.0 != *cached_parent_hash {
+                        info!(
+                            "Reorg detected: parent hash mismatch at block {}. Expected: {}, Got: {}",
+                            parent_block_num,
+                            hex::encode(cached_parent_hash),
+                            hex::encode(block.parent_hash.0)
+                        );
+                        handle_reorg(&db_conn, parent_block_num).await?;
+                    }
+                }
+            }
+        }
+
+        // Cache this block's hash and update last block number
+        block_hash_cache.insert(current_block_number, current_block_hash);
+        last_block_number = Some(current_block_number);
+
+        // Keep cache size manageable (last 100 blocks)
+        if block_hash_cache.len() > 100 {
+            if let Some(min_key) = block_hash_cache.keys().min().copied() {
+                block_hash_cache.remove(&min_key);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle a detected reorg by cleaning up database state
+async fn handle_reorg(db_conn: &Arc<tokio_rusqlite::Connection>, fork_point: u64) -> Result<()> {
+    info!("Handling reorg from fork point: block {}", fork_point);
+
+    // Remove all events after the fork point
+    remove_all_events_after_block(db_conn, fork_point).await?;
+
+    info!(
+        "Reorg cleanup complete. Removed all events after block {}",
+        fork_point
+    );
+
+    Ok(())
 }
