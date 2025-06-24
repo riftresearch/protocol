@@ -304,7 +304,6 @@ async fn spawn_anvil(mode: Mode) -> Result<AnvilInstance> {
         let mut anvil = Anvil::new()
             .arg("--host")
             .arg("0.0.0.0")
-            .block_time(1)
             .chain_id(1337)
             .arg("--steps-tracing")
             .arg("--timestamp")
@@ -313,6 +312,7 @@ async fn spawn_anvil(mode: Mode) -> Result<AnvilInstance> {
             Mode::Fork(fork_config) => {
                 anvil = anvil.port(50101_u16);
                 anvil = anvil.fork(fork_config.url);
+                anvil = anvil.block_time(1);
                 if let Some(block_number) = fork_config.block_number {
                     anvil = anvil.fork_block_number(block_number);
                 }

@@ -479,27 +479,17 @@ async fn test_auction_claimer_end_to_end() {
         let auction_owner = MultichainAccount::new(3);
 
         info!("Setting up devnet...");
-        let devnet_result = timeout(Duration::from_secs(60), async {
-            RiftDevnet::builder()
-                .using_bitcoin(true)
-                .using_esplora(true)
-                .funded_evm_address(market_maker.ethereum_address.to_string())
-                .funded_evm_address(filler_account.ethereum_address.to_string())
-                .funded_evm_address(auction_owner.ethereum_address.to_string())
-                .data_engine_db_location(DatabaseLocation::InMemory)
-                .build()
-                .await
-        })
-        .await;
-
-        let (devnet, _funded_sats) = match devnet_result {
-            Ok(Ok(result)) => {
-                info!("Devnet setup complete");
-                result
-            }
-            Ok(Err(e)) => panic!("Failed to build devnet: {:?}", e),
-            Err(_) => panic!("Devnet setup timed out after 60 seconds"),
-        };
+        let (devnet, _funded_sats) = RiftDevnet::builder()
+            .using_bitcoin(true)
+            .using_esplora(true)
+            .funded_evm_address(market_maker.ethereum_address.to_string())
+            .funded_evm_address(filler_account.ethereum_address.to_string())
+            .funded_evm_address(auction_owner.ethereum_address.to_string())
+            .data_engine_db_location(DatabaseLocation::InMemory)
+            .build()
+            .await
+            .expect("Failed to build devnet");
+        info!("Devnet setup complete");
 
         let evm_ws_rpc = devnet.ethereum.anvil.ws_endpoint_url().to_string();
         info!("WebSocket RPC URL: {}", evm_ws_rpc);
