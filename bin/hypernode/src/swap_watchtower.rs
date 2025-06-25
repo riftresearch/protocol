@@ -1,4 +1,4 @@
-use accumulators::mmr::map_leaf_index_to_element_index;
+use accumulators::mmr::leaf_count_to_mmr_size;
 use std::str::FromStr;
 
 use alloy::{
@@ -16,7 +16,6 @@ use bitcoincore_rpc_async::{
     json::GetBlockVerboseOne,
     RpcApi,
 };
-use rift_indexer::engine::RiftIndexer;
 use itertools::Itertools;
 use rift_core::{
     giga::RiftProgramInput,
@@ -25,6 +24,7 @@ use rift_core::{
     spv::generate_bitcoin_txn_merkle_proof,
     OrderFillingTransaction,
 };
+use rift_indexer::engine::RiftIndexer;
 use rift_sdk::{
     bitcoin_utils::{AsyncBitcoinClient, BitcoinClientExt},
     checkpoint_mmr::CheckpointedBlockTree,
@@ -929,13 +929,15 @@ pub async fn build_chain_transition_for_light_client_update<'a>(
         info!("Parent leaf index: {}", parent_leaf_index);
         info!(
             "Getting peaks for element count: {}",
-            map_leaf_index_to_element_index(parent_leaf_index) + 1
+            leaf_count_to_mmr_size(parent_leaf_index + 1)
         );
 
         // get the peaks of the light client mmr as if the parent leaf was the tip of the MMR
         let parent_leaf_peaks = light_client_mmr
-            .get_peaks(Some(map_leaf_index_to_element_index(parent_leaf_index) + 1))
+            .get_peaks(Some(leaf_count_to_mmr_size(parent_leaf_index + 1)))
             .await?;
+
+        println!("Parent leaf peaks: {:?}", parent_leaf_peaks);
 
         let parent_retarget_height = get_retarget_height_from_block_height(parent_leaf.height);
         let parent_retarget_leaf = bitcoin_mmr

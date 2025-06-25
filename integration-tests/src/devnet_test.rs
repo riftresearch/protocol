@@ -1,7 +1,7 @@
 use ::bitcoin::consensus::{Decodable, Encodable};
 use ::bitcoin::hashes::Hash;
 use ::bitcoin::{Amount, Transaction};
-use accumulators::mmr::map_leaf_index_to_element_index;
+use accumulators::mmr::{leaf_count_to_mmr_size, map_leaf_index_to_element_index};
 use alloy::hex;
 use alloy::network::EthereumWallet;
 use alloy::primitives::utils::format_units;
@@ -444,7 +444,7 @@ async fn test_simulated_swap_end_to_end() {
         .checkpointed_block_tree
         .read()
         .await
-        .get_peaks(Some(map_leaf_index_to_element_index(parent_leaf_index) + 1))
+        .get_peaks(Some(leaf_count_to_mmr_size(parent_leaf_index + 1)))
         .await
         .unwrap();
 

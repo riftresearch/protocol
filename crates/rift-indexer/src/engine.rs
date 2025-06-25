@@ -32,9 +32,10 @@ use crate::{
     db::{
         add_light_client_update, add_order, add_payment, get_latest_processed_block_number,
         get_live_orders_by_script_and_amounts, get_order_by_initial_hash, get_orders_for_recipient,
-        get_otc_swap_by_order_index, get_payments_ready_to_be_settled, get_stored_events_for_validation,
-        get_virtual_swaps, remove_all_events_after_block, setup_swaps_database,
-        update_order_and_payment_to_settled, update_order_to_refunded, ChainAwarePaymentWithOrder,
+        get_otc_swap_by_order_index, get_payments_ready_to_be_settled,
+        get_stored_events_for_validation, get_virtual_swaps, remove_all_events_after_block,
+        setup_swaps_database, update_order_and_payment_to_settled, update_order_to_refunded,
+        ChainAwarePaymentWithOrder,
     },
     models::ChainAwareOrder,
 };
@@ -110,8 +111,7 @@ impl RiftIndexer {
         let mut engine = Self::seed(database_location, checkpoint_leaves).await?;
 
         // Validate stored events against current chain state on startup
-        validate_stored_events_on_startup(&engine.swap_database_connection, &provider)
-            .await?;
+        validate_stored_events_on_startup(&engine.swap_database_connection, &provider).await?;
 
         // Check for the latest processed block in the database
         let resume_from_block =
@@ -363,7 +363,7 @@ async fn validate_stored_events_on_startup(
     info!("Validating stored events against current chain state");
 
     let stored_events = get_stored_events_for_validation(db_conn).await?;
-    
+
     if stored_events.is_empty() {
         info!("No stored events to validate");
         return Ok(());
@@ -373,10 +373,13 @@ async fn validate_stored_events_on_startup(
     let mut last_valid_block = 0u64;
 
     for (block_number, stored_block_hash) in stored_events {
-        match provider.get_block_by_number(BlockNumberOrTag::Number(block_number)).await {
+        match provider
+            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .await
+        {
             Ok(Some(current_block)) => {
                 let current_block_hash = current_block.header.hash.0;
-                
+
                 if current_block_hash != stored_block_hash {
                     warn!(
                         "Reorg detected on startup: block {} has hash {} but stored hash is {}",
@@ -939,18 +942,22 @@ async fn monitor_blocks_for_reorg(
         let current_block_number = block.number;
         let current_block_hash = block.hash.0;
 
-        info!("Received block {}: {}", current_block_number, hex::encode(current_block_hash));
-
         // Check for reorg conditions
         if let Some(last_num) = last_block_number {
             // Case 1: Same block number (fork)
             if current_block_number == last_num {
-                info!("Reorg detected: duplicate block number {}", current_block_number);
+                info!(
+                    "Reorg detected: duplicate block number {}",
+                    current_block_number
+                );
                 handle_reorg(&db_conn, current_block_number - 1).await?;
             }
             // Case 2: Earlier block number (chain went backwards)
             else if current_block_number < last_num {
-                info!("Reorg detected: block number went from {} to {}", last_num, current_block_number);
+                info!(
+                    "Reorg detected: block number went from {} to {}",
+                    last_num, current_block_number
+                );
                 handle_reorg(&db_conn, current_block_number - 1).await?;
             }
             // Case 3: Check parent hash doesn't match cached hash (subtle reorg)

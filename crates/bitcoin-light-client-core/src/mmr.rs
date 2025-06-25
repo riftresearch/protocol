@@ -71,7 +71,7 @@ impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
         }
     }
 
-    fn get_mmr_peak_heights(n: u32) -> Vec<u32> {
+    pub fn get_mmr_peak_heights(n: u32) -> Vec<u32> {
         let mut heights = Vec::new();
         let mut position = 0;
         let mut remaining = n;
@@ -238,7 +238,8 @@ pub mod tests {
     use super::*;
     use crate::hasher::Keccak256Hasher;
     use accumulators::mmr::{
-        element_index_to_leaf_index, elements_count_to_leaf_count, Proof as ClientMMRProof,
+        element_index_to_leaf_index, elements_count_to_leaf_count, find_peaks,
+        leaf_count_to_mmr_size, map_leaf_index_to_element_index, Proof as ClientMMRProof,
     };
     use accumulators::{
         hasher::keccak::KeccakHasher as ClientKeccakHasher, mmr::MMR as ClientMMR,
@@ -288,6 +289,40 @@ pub mod tests {
         let store_rc = Arc::new(store);
         let hasher = Arc::new(ClientKeccakHasher::new());
         ClientMMR::new(store_rc, hasher, None)
+    }
+
+    #[test]
+    fn test_peak_count_calculation() {
+        let leaf_index = 166;
+        for leaf_index in 0..100 {
+            let leaf_count = leaf_index + 1;
+            let elements_count = leaf_count_to_mmr_size(leaf_count);
+            // let element_count_alt = map_leaf_index_to_element_index(leaf_index) + 1;
+            // if elements_count != element_count_alt {
+            //     println!("Elements count mismatch at leaf_index: {}", leaf_index);
+            //     println!("Elements count: {}", elements_count);
+            //     println!("Element count alt: {}", element_count_alt);
+            // }
+            //println!("Leaf index: {}", leaf_index);
+            //println!("Elements count: {}", elements_count);
+            //println!("Element count alt: {}", element_count_alt);
+            let peaks = find_peaks(elements_count);
+            let heights = MerkleMountainRange::<Keccak256Hasher, CompactMMR>::get_mmr_peak_heights(
+                leaf_count as u32,
+            );
+        }
+        //println!("Peaks (from hypernode): {:?}", peaks);
+        // println!("Heights (from circuit): {:?}", heights);
+        //if peaks.len() != heights.len() {
+        /*
+        println!(
+            "Peaks and heights lengths mismatch at leaf_index: {}",
+            leaf_index
+        );
+        println!("Peaks: {:?}", peaks);
+        println!("Heights: {:?}", heights);
+        */
+        //}
     }
 
     #[test]
