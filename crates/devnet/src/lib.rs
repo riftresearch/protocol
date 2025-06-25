@@ -1,7 +1,6 @@
 //! `lib.rs` — central library code.
 
 pub mod bitcoin_devnet;
-mod devnet_lock;
 pub mod evm_devnet;
 
 pub use bitcoin_devnet::BitcoinDevnet;
@@ -172,10 +171,6 @@ impl RiftDevnetBuilder {
     ///   - The devnet instance
     ///   - The number of satoshis funded to `funded_bitcoin_address` (if any)
     pub async fn build(self) -> Result<(crate::RiftDevnet, u64)> {
-        // 0) ───── Serialise the BUILD *only* ─────
-        let _build_lock = crate::devnet_lock::DevnetBuildGuard::acquire().await?;
-
-        // All logic is adapted from the old `RiftDevnet::setup`.
         let Self {
             interactive,
             using_bitcoin,
@@ -232,12 +227,10 @@ impl RiftDevnetBuilder {
         // 4) Create/seed DataEngine
         log::info!("Seeding data engine with checkpoint leaves...");
         let t = tokio::time::Instant::now();
-        let mut contract_data_engine = rift_indexer::engine::RiftIndexer::seed(
-            &data_engine_db_location,
-            checkpoint_leaves,
-        )
-        .await
-        .map_err(|e| eyre::eyre!("[devnet builder] Failed to seed data engine: {}", e))?;
+        let mut contract_data_engine =
+            rift_indexer::engine::RiftIndexer::seed(&data_engine_db_location, checkpoint_leaves)
+                .await
+                .map_err(|e| eyre::eyre!("[devnet builder] Failed to seed data engine: {}", e))?;
         log::info!("Data engine seeded in {:?}", t.elapsed());
 
         let deploy_mode = if interactive {

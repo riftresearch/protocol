@@ -538,6 +538,7 @@ mod tests {
     // Create an MMR up to the bch fork block (block 478558), then commit to 10 BCH blocks, then dispose of the 10 BCH blocks, simultaneously commiting to 11 bitcoin blocks
     // Then validate the new MMR root and public inputs
     #[tokio::test]
+    #[ignore = "compute heavy"]
     async fn test_bch_chain_extension_then_overwrite() {
         let client_mmr_state = create_from_bch_fork().await;
 

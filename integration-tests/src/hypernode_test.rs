@@ -9,9 +9,9 @@ use bitcoin::{
     Amount, Transaction,
 };
 use bitcoincore_rpc_async::RpcApi;
-use rift_indexer::models::SwapStatus;
 use devnet::RiftDevnet;
 use hypernode::{HypernodeArgs, Provider};
+use rift_indexer::models::SwapStatus;
 use rift_sdk::{
     create_websocket_wallet_provider,
     proof_generator::ProofGeneratorType,
@@ -28,6 +28,7 @@ async fn test_hypernode_simple_swap() {
 
     let maker = MultichainAccount::new(1);
     let taker = MultichainAccount::new(2);
+    let maker2 = MultichainAccount::new(3); // Second maker for second swap
 
     println!(
         "Maker BTC P2WPKH: {:?}",
@@ -41,15 +42,25 @@ async fn test_hypernode_simple_swap() {
     println!("Taker BTC wallet: {:?}", taker.bitcoin_wallet.address);
     println!("Maker EVM wallet: {:?}", maker.ethereum_address);
     println!("Taker EVM wallet: {:?}", taker.ethereum_address);
+    println!("Maker2 EVM wallet: {:?}", maker2.ethereum_address);
 
     // fund maker evm wallet, and taker btc wallet
     let (devnet, _funded_sats) = RiftDevnet::builder()
         .using_bitcoin(true)
         .funded_evm_address(maker.ethereum_address.to_string())
+        .funded_evm_address(maker2.ethereum_address.to_string())
         .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
+
+    // Easier if we just mine automatically
+    devnet
+        .ethereum
+        .funded_provider
+        .anvil_set_interval_mining(1)
+        .await
+        .unwrap();
 
     let maker_evm_provider = create_websocket_wallet_provider(
         devnet.ethereum.anvil.ws_endpoint_url().to_string().as_str(),
@@ -58,12 +69,20 @@ async fn test_hypernode_simple_swap() {
     .await
     .expect("Failed to create maker evm provider");
 
+    let maker2_evm_provider = create_websocket_wallet_provider(
+        devnet.ethereum.anvil.ws_endpoint_url().to_string().as_str(),
+        maker2.secret_bytes,
+    )
+    .await
+    .expect("Failed to create maker2 evm provider");
+
     // Quick references
     let rift_exchange = devnet.ethereum.rift_exchange_contract.clone();
     let token_contract = devnet.ethereum.token_contract.clone();
 
-    // ---2) "Maker" address gets some ERC20 to deposit---
+    // ---2) First Swap: Maker1 creates order, taker pays with Bitcoin---
 
+    println!("=== FIRST SWAP ===");
     println!("Maker address: {:?}", maker.ethereum_address);
 
     let deposit_amount = U256::from(100_000_000u128); //1 wrapped bitcoin
@@ -222,7 +241,7 @@ async fn test_hypernode_simple_swap() {
         .unwrap();
 
     let txid = funding_utxo.txid;
-    let wallet = taker.bitcoin_wallet;
+    let wallet = &taker.bitcoin_wallet;
     let fee_sats = 1000;
     let transaction: Transaction =
         bitcoin::consensus::deserialize(&hex::decode(&funding_utxo.hex).unwrap()).unwrap();
@@ -257,7 +276,7 @@ async fn test_hypernode_simple_swap() {
         &canon_txid,
         &canon_bitcoin_tx,
         txvout,
-        &wallet,
+        wallet,
         fee_sats,
     )
     .unwrap();
@@ -348,12 +367,6 @@ async fn test_hypernode_simple_swap() {
         .await
         .unwrap();
 
-    devnet
-        .ethereum
-        .funded_provider
-        .anvil_mine(Some(1), None)
-        .await
-        .unwrap();
     // now check again for ever until the swap is completed
     loop {
         let otc_swap = devnet
@@ -367,6 +380,179 @@ async fn test_hypernode_simple_swap() {
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
+    // ---3) Second Swap: Maker2 creates order, taker pays with Bitcoin again---
+
+    println!("\n=== SECOND SWAP ===");
+
+    // Approve tokens for second maker
+    let approve_call2 = token_contract.approve(*rift_exchange.address(), deposit_amount);
+    maker2_evm_provider
+        .send_transaction(approve_call2.into_transaction_request())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    println!("Approved tokens for second maker");
+
+    // Get new proof data for second order
+    let (safe_leaf2, safe_siblings2, safe_peaks2) =
+        devnet.contract_data_engine.get_tip_proof().await.unwrap();
+    let safe_leaf2: sol_bindings::BlockLeaf = safe_leaf2.into();
+
+    let maker2_btc_wallet_script_pubkey = maker2.bitcoin_wallet.get_p2wpkh_script();
+    let padded_script2 = maker2_btc_wallet_script_pubkey.to_bytes();
+
+    // Create second order with different salt
+    let deposit_params2 = CreateOrderParams {
+        base: BaseCreateOrderParams {
+            owner: maker2.ethereum_address,
+            bitcoinScriptPubKey: padded_script2.into(),
+            salt: [0x55; 32].into(), // Different salt for second order
+            confirmationBlocks: 2,
+            safeBlockLeaf: safe_leaf2,
+        },
+        expectedSats: expected_sats,
+        depositAmount: deposit_amount,
+        designatedReceiver: taker.ethereum_address,
+        safeBlockSiblings: safe_siblings2.iter().map(From::from).collect(),
+        safeBlockPeaks: safe_peaks2.iter().map(From::from).collect(),
+    };
+
+    let deposit_call2 = rift_exchange.createOrder(deposit_params2);
+    let deposit_tx2 = maker2_evm_provider
+        .send_transaction(deposit_call2.into_transaction_request())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let receipt_logs2 = deposit_tx2.inner.logs();
+    let order_created_log2 = OrderCreated::decode_log(
+        &receipt_logs2
+            .iter()
+            .find(|log| *log.topic0().unwrap() == OrderCreated::SIGNATURE_HASH)
+            .unwrap()
+            .inner,
+    )
+    .unwrap();
+
+    let new_order2 = &order_created_log2.data.order;
+    println!("Created second order: {:?}", new_order2);
+
+    // Fund taker with more Bitcoin for second swap
+    let funding_utxo2 = devnet
+        .bitcoin
+        .deal_bitcoin(
+            taker.bitcoin_wallet.address.clone(),
+            Amount::from_sat(funding_amount),
+        )
+        .await
+        .unwrap();
+
+    let transaction2: Transaction =
+        bitcoin::consensus::deserialize(&hex::decode(&funding_utxo2.hex).unwrap()).unwrap();
+
+    let txvout2 = transaction2
+        .output
+        .iter()
+        .enumerate()
+        .find(|(_, output)| {
+            output.script_pubkey.as_bytes() == wallet.get_p2wpkh_script().as_bytes()
+                && output.value == Amount::from_sat(funding_amount)
+        })
+        .map(|(index, _)| index as u32)
+        .unwrap();
+
+    let serialized2 = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&transaction2);
+    let mut reader2 = serialized2.as_slice();
+    let canon_bitcoin_tx2 = Transaction::consensus_decode_from_finite_reader(&mut reader2).unwrap();
+    let canon_txid2 = canon_bitcoin_tx2.compute_txid();
+
+    // Build and broadcast second payment transaction
+    let payment_tx2 = txn_builder::build_rift_payment_transaction_single_input(
+        &vec![new_order2.clone()],
+        &canon_txid2,
+        &canon_bitcoin_tx2,
+        txvout2,
+        wallet,
+        fee_sats,
+    )
+    .unwrap();
+
+    let payment_tx_serialized2 = &mut Vec::new();
+    payment_tx2
+        .consensus_encode(payment_tx_serialized2)
+        .unwrap();
+
+    let broadcast_tx2 = devnet
+        .bitcoin
+        .rpc_client
+        .send_raw_transaction(payment_tx_serialized2.as_slice())
+        .await
+        .unwrap();
+    println!("Second Bitcoin tx sent");
+
+    // Mine blocks for second swap
+    devnet.bitcoin.mine_blocks(2).await.unwrap();
+
+    // Wait for second swap to enter challenge period
+    let otc_swap2 = loop {
+        let otc_swap = devnet
+            .contract_data_engine
+            .get_otc_swap_by_order_index(new_order2.index.to::<u64>())
+            .await
+            .unwrap();
+        println!("Second OTCSwap: {:#?}", otc_swap);
+        if otc_swap
+            .clone()
+            .is_some_and(|otc_swap| otc_swap.swap_status() == SwapStatus::ChallengePeriod)
+        {
+            break otc_swap.unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    };
+
+    // Warp ahead for second swap unlock
+    let swap_unlock_timestamp2 = otc_swap2
+        .payments
+        .first()
+        .unwrap()
+        .payment
+        .challengeExpiryTimestamp
+        + 1;
+    devnet
+        .ethereum
+        .funded_provider
+        .anvil_set_time(swap_unlock_timestamp2)
+        .await
+        .unwrap();
+
+    devnet
+        .ethereum
+        .funded_provider
+        .anvil_mine(Some(1), None)
+        .await
+        .unwrap();
+
+    // Wait for second swap to complete
+    loop {
+        let otc_swap = devnet
+            .contract_data_engine
+            .get_otc_swap_by_order_index(new_order2.index.to::<u64>())
+            .await
+            .unwrap();
+        println!("Second OTCSwap Post Swap: {:#?}", otc_swap);
+        if otc_swap.is_some_and(|otc_swap| otc_swap.swap_status() == SwapStatus::Completed) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    println!("\n=== BOTH SWAPS COMPLETED SUCCESSFULLY ===");
+
     // stop the hypernode
     hypernode_handle.abort();
 }
