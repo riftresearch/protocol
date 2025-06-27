@@ -32,7 +32,7 @@ Ensure you have the following tools installed:
 
   
 ## Run Devnet
-From source [here](./bin/devnet/README.md)
+From source [here](./bin/devnet-cli/README.md)
 
 Alternatively, the devnet is packaged as a Docker image: 
 ```sh

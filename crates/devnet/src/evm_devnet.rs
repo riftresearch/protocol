@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use bitcoin::hex;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
@@ -9,6 +10,7 @@ use sol_bindings::{
     ParaswapAdapter::ParaswapAdapterInstance, RiftAuctionAdaptor::RiftAuctionAdaptorInstance,
     RiftExchangeHarnessInstance,
 };
+use tempfile::NamedTempFile;
 use tokio::time::Instant;
 
 use alloy::{
@@ -22,8 +24,8 @@ use alloy::{
 };
 
 use crate::{
-    RiftExchangeHarnessWebsocket, SP1MockVerifier, TokenizedBTC, TokenizedBTCWebsocket,
-    TAKER_FEE_BIPS, TOKEN_ADDRESS,
+    get_new_temp_dir, RiftDevnetCache, RiftExchangeHarnessWebsocket, SP1MockVerifier, TokenizedBTC,
+    TokenizedBTCWebsocket, TAKER_FEE_BIPS, TOKEN_ADDRESS,
 };
 
 pub struct PeripheryContracts {
@@ -39,6 +41,9 @@ pub struct EthDevnet {
     pub funded_provider: DynProvider,
     pub deploy_mode: Mode,
     pub periphery: Option<PeripheryContracts>,
+    pub anvil_datadir: Option<tempfile::TempDir>,
+    pub anvil_dump_path: tempfile::TempDir,
+    pub deployment_block_number: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -54,15 +59,17 @@ impl EthDevnet {
         genesis_mmr_root: [u8; 32],
         tip_block_leaf: BlockLeaf,
         deploy_mode: Mode,
+        devnet_cache: Option<Arc<RiftDevnetCache>>,
     ) -> Result<(Self, u64)> {
-        let anvil = spawn_anvil(deploy_mode.clone()).await?;
+        let (anvil, anvil_datadir, anvil_dump_path) =
+            spawn_anvil(deploy_mode.clone(), devnet_cache.clone()).await?;
         info!(
             "Anvil spawned at {}, chain_id={}",
             anvil.endpoint(),
             anvil.chain_id()
         );
 
-        let private_key = anvil.keys()[0].clone().to_bytes().try_into().unwrap();
+        let private_key = anvil.keys()[0].clone().to_bytes().into();
 
         let funded_provider = create_websocket_wallet_provider(
             anvil.ws_endpoint_url().to_string().as_str(),
@@ -71,35 +78,92 @@ impl EthDevnet {
         .await?
         .erased();
 
-        let t = Instant::now();
-        let (rift_exchange, token_contract, verifier_contract, deployment_block_number) =
-            deploy_contracts(
-                funded_provider.clone(),
-                circuit_verification_key_hash,
-                genesis_mmr_root,
-                tip_block_leaf,
-                deploy_mode.clone(),
-            )
-            .await?;
-        info!("Deployed RiftExchange at {}", rift_exchange.address());
+        let (rift_exchange, token_contract, verifier_contract, deployment_block_number, periphery) =
+            match devnet_cache {
+                Some(devnet_cache) if devnet_cache.populated => {
+                    let cache_load_start = Instant::now();
+                    info!("[EVM Setup] Loading cached EVM contracts...");
 
-        // Should only need to deploy periphery contracts if we're in interactive mode
-        let periphery = match deploy_mode.clone() {
-            Mode::Fork(fork_config) => {
-                let rift_auction_adaptor = deploy_periphery(
-                    funded_provider.clone(),
-                    fork_config.bundler3_address,
-                    *rift_exchange.address(),
-                )
-                .await?;
-                Some(PeripheryContracts {
-                    rift_auction_adapter: rift_auction_adaptor,
-                })
-            }
-            Mode::Local => None,
-        };
+                    // Load contract metadata from cache
+                    let metadata_path = devnet_cache.cache_dir.join("contracts.json");
+                    let metadata_json = tokio::fs::read_to_string(&metadata_path).await?;
+                    let metadata: crate::ContractMetadata = serde_json::from_str(&metadata_json)?;
 
-        info!("Deployed in {:?}", t.elapsed());
+                    // Create contract instances from cached addresses
+                    let rift_exchange = Arc::new(RiftExchangeHarnessInstance::new(
+                        metadata.rift_exchange_address.parse()?,
+                        funded_provider.clone(),
+                    ));
+
+                    let token_contract = Arc::new(crate::TokenizedBTC::TokenizedBTCInstance::new(
+                        metadata.token_address.parse()?,
+                        funded_provider.clone(),
+                    ));
+
+                    let verifier_contract = metadata.verifier_address.parse()?;
+
+                    let periphery = match (deploy_mode.clone(), metadata.periphery) {
+                        (Mode::Fork(_), Some(periphery_meta)) => {
+                            let rift_auction_adapter = Arc::new(RiftAuctionAdaptorInstance::new(
+                                periphery_meta.rift_auction_adapter_address.parse()?,
+                                funded_provider.clone(),
+                            ));
+                            Some(PeripheryContracts {
+                                rift_auction_adapter,
+                            })
+                        }
+                        _ => None,
+                    };
+
+                    info!("[EVM Setup] Loaded cached contracts in {:?}", cache_load_start.elapsed());
+                    (
+                        rift_exchange,
+                        token_contract,
+                        verifier_contract,
+                        metadata.deployment_block_number,
+                        periphery,
+                    )
+                }
+                _ => {
+                    let t = Instant::now();
+                    let (rift_exchange, token_contract, verifier_contract, deployment_block_number) =
+                        deploy_contracts(
+                            funded_provider.clone(),
+                            circuit_verification_key_hash,
+                            genesis_mmr_root,
+                            tip_block_leaf,
+                            deploy_mode.clone(),
+                        )
+                        .await?;
+                    info!("Deployed RiftExchange at {}", rift_exchange.address());
+
+                    // Should only need to deploy periphery contracts if we're in interactive mode
+                    let periphery = match deploy_mode.clone() {
+                        Mode::Fork(fork_config) => {
+                            let rift_auction_adaptor = deploy_periphery(
+                                funded_provider.clone(),
+                                fork_config.bundler3_address,
+                                *rift_exchange.address(),
+                            )
+                            .await?;
+                            Some(PeripheryContracts {
+                                rift_auction_adapter: rift_auction_adaptor,
+                            })
+                        }
+                        Mode::Local => None,
+                    };
+
+                    info!("Deployed in {:?}", t.elapsed());
+
+                    (
+                        rift_exchange,
+                        token_contract,
+                        verifier_contract,
+                        deployment_block_number,
+                        periphery,
+                    )
+                }
+            };
 
         let devnet = EthDevnet {
             anvil,
@@ -109,6 +173,9 @@ impl EthDevnet {
             funded_provider,
             deploy_mode,
             periphery,
+            anvil_datadir,
+            anvil_dump_path,
+            deployment_block_number,
         };
 
         Ok((devnet, deployment_block_number))
@@ -193,6 +260,7 @@ pub async fn deploy_contracts(
     alloy::primitives::Address,
     u64,
 )> {
+    let contracts_start = Instant::now();
     use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
 
     use std::str::FromStr;
@@ -206,7 +274,6 @@ pub async fn deploy_contracts(
     let token_address = Address::from_str(TOKEN_ADDRESS)?;
     // Deploy the mock token, this is dependent on if we're on a fork or not
     let token = if matches!(mode, Mode::Fork(_)) {
-        println!("Pointing to MockToken at {}", token_address);
         // deploy it
         let mock_token = TokenizedBTC::deploy(funded_provider.clone()).await?;
         funded_provider
@@ -217,7 +284,6 @@ pub async fn deploy_contracts(
             .await?;
         TokenizedBTC::new(token_address, funded_provider.clone().erased())
     } else {
-        println!("Deploying MockToken at {}", token_address);
         TokenizedBTC::deploy(funded_provider.clone().erased()).await?
     };
 
@@ -225,8 +291,9 @@ pub async fn deploy_contracts(
     let deployment_block_number = funded_provider.get_block_number().await?;
 
     let tip_block_leaf_sol: sol_bindings::BlockLeaf = tip_block_leaf.into();
-    println!("Deploying RiftExchange");
+    info!("[EVM Deploy] Deploying RiftExchange");
     // Deploy RiftExchange
+    let exchange_start = Instant::now();
     let exchange = RiftExchangeHarnessInstance::deploy(
         funded_provider.clone().erased(),
         genesis_mmr_root.into(),
@@ -238,8 +305,10 @@ pub async fn deploy_contracts(
         tip_block_leaf_sol,
     )
     .await?;
+    info!("[EVM Deploy] RiftExchange deployment took {:?}", exchange_start.elapsed());
 
     // Add common hypernode addresses used in tests and devnet
+    let hypernode_start = Instant::now();
     use alloy::signers::local::LocalSigner;
     use rift_sdk::MultichainAccount;
 
@@ -258,6 +327,7 @@ pub async fn deploy_contracts(
     test_hypernodes.push(maker_signer.address()); // Used in test_simulated_swap_end_to_end
     test_hypernodes.push(taker_signer.address()); // Used in test_simulated_swap_end_to_end
 
+    let hypernode_count = test_hypernodes.len();
     for hypernode_address in test_hypernodes {
         let add_hypernode_call = exchange.addHypernode(hypernode_address);
         funded_provider
@@ -266,7 +336,9 @@ pub async fn deploy_contracts(
             .get_receipt()
             .await?;
     }
+    info!("[EVM Deploy] Added {} hypernodes in {:?}", hypernode_count, hypernode_start.elapsed());
 
+    info!("[EVM Deploy] Total contract deployment took {:?}", contracts_start.elapsed());
     Ok((
         Arc::new(exchange),
         Arc::new(token),
@@ -282,12 +354,15 @@ pub async fn deploy_periphery(
     bundler3_address: Address,
     rift_exchange_address: Address,
 ) -> Result<Arc<RiftAuctionAdaptorInstance<DynProvider>>> {
+    let deploy_start = Instant::now();
+    info!("[EVM Deploy] Deploying RiftAuctionAdaptor...");
     let rift_auction_adaptor = RiftAuctionAdaptorInstance::deploy(
         funded_provider.clone(),
         bundler3_address,
         rift_exchange_address,
     )
     .await?;
+    info!("[EVM Deploy] RiftAuctionAdaptor deployed in {:?}", deploy_start.elapsed());
     Ok(Arc::new(rift_auction_adaptor))
 }
 
@@ -299,15 +374,52 @@ pub struct ForkConfig {
 }
 
 /// Spawns Anvil in a blocking task.
-async fn spawn_anvil(mode: Mode) -> Result<AnvilInstance> {
-    tokio::task::spawn_blocking(move || {
+async fn spawn_anvil(
+    mode: Mode,
+    devnet_cache: Option<Arc<RiftDevnetCache>>,
+) -> Result<(AnvilInstance, Option<tempfile::TempDir>, tempfile::TempDir)> {
+    let spawn_start = Instant::now();
+    // Create or load anvil datafile
+    let anvil_datadir = if devnet_cache.is_some() {
+        let cache_start = Instant::now();
+        let datadir = Some(
+            devnet_cache
+                .as_ref()
+                .unwrap()
+                .create_anvil_datadir()
+                .await?,
+        );
+        info!("[Anvil] Created anvil datadir from cache in {:?}", cache_start.elapsed());
+        datadir
+    } else {
+        None
+    };
+
+    let anvil_datadir_pathbuf = anvil_datadir.as_ref().map(|dir| dir.path().to_path_buf());
+
+    // get a directory for the --dump-state flag
+    let anvil_dump_path = get_new_temp_dir()?;
+    let anvil_dump_pathbuf = anvil_dump_path.path().to_path_buf();
+
+    let anvil_instance = tokio::task::spawn_blocking(move || {
         let mut anvil = Anvil::new()
             .arg("--host")
             .arg("0.0.0.0")
             .chain_id(1337)
             .arg("--steps-tracing")
             .arg("--timestamp")
-            .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string());
+            .arg((chrono::Utc::now().timestamp() - 9 * 60 * 60).to_string()) // 9 hours ago? TODO: do we need to do this?
+            .arg("--dump-state")
+            .arg(anvil_dump_pathbuf.to_string_lossy().to_string());
+
+        // Load state if file exists and has content - Anvil can handle the file format directly
+        if let Some(state_path) = anvil_datadir_pathbuf {
+            info!("[Anvil] Loading state from {}", state_path.to_string_lossy());
+            anvil = anvil
+                .arg("--load-state")
+                .arg(state_path.to_string_lossy().to_string());
+        }
+
         match mode {
             Mode::Fork(fork_config) => {
                 anvil = anvil.port(50101_u16);
@@ -319,7 +431,29 @@ async fn spawn_anvil(mode: Mode) -> Result<AnvilInstance> {
             }
             Mode::Local => {}
         }
-        anvil.try_spawn().map_err(|e| eyre!(e))
+        anvil.try_spawn().map_err(|e| {
+            eprintln!("Failed to spawn Anvil: {:?}", e);
+            eyre!(e)
+        })
     })
-    .await?
+    .await??;
+
+    info!("[Anvil] Anvil spawned in {:?}", spawn_start.elapsed());
+
+    // print the stdout of the anvil instance
+    /*
+    let anvil_child = anvil_instance.child_mut();
+    let anvil_stdout = anvil_child.stdout.take().unwrap();
+
+    tokio::task::spawn_blocking(move || {
+        use std::io::{BufRead, BufReader};
+
+        let stdout_reader = BufReader::new(anvil_stdout);
+        for line in stdout_reader.lines().map_while(Result::ok) {
+            println!("anvil stdout: {}", line);
+        }
+    });
+    */
+
+    Ok((anvil_instance, anvil_datadir, anvil_dump_path))
 }

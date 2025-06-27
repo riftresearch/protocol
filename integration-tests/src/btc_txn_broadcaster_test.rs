@@ -7,6 +7,7 @@ use rift_sdk::{
     btc_txn_broadcaster::{
         BitcoinTransactionBroadcasterTrait, SimpleBitcoinTransactionBroadcaster,
     },
+    handle_background_thread_result,
     txn_builder::P2WPKHBitcoinWallet,
     DatabaseLocation, MultichainAccount,
 };
@@ -20,15 +21,13 @@ async fn test_btc_txn_broadcaster_basic() {
     let test_account = MultichainAccount::with_network(42, Network::Regtest);
 
     // Setup devnet with Bitcoin and Esplora
-    let (devnet, _) = BitcoinDevnet::setup(
-        vec![test_account.bitcoin_wallet.address.to_string()],
-        true,
-        true,
-        false,
-        &mut join_set,
-    )
-    .await
-    .unwrap();
+    let (devnet, _) = RiftDevnet::builder()
+        .using_esplora(true)
+        .funded_bitcoin_address(test_account.bitcoin_wallet.address.to_string())
+        .build()
+        .await
+        .unwrap();
+    let devnet = devnet.bitcoin;
 
     // Mine a block to confirm the funding transaction
     devnet.mine_blocks(1).await.unwrap();
@@ -74,18 +73,13 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
     let test_account = MultichainAccount::with_network(44, Network::Regtest);
 
     // Setup devnet with Bitcoin and Esplora
-    let (devnet, _) = BitcoinDevnet::setup(
-        vec![test_account.bitcoin_wallet.address.to_string()],
-        true,
-        true,
-        false,
-        &mut join_set,
-    )
-    .await
-    .unwrap();
-
-    // Mine a block to confirm the funding transaction
-    devnet.mine_blocks(1).await.unwrap();
+    let (devnet, _) = RiftDevnet::builder()
+        .using_esplora(true)
+        .funded_bitcoin_address(test_account.bitcoin_wallet.address.to_string())
+        .build()
+        .await
+        .unwrap();
+    let devnet = devnet.bitcoin;
 
     // Wait a bit for Esplora to index the transaction
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -115,14 +109,11 @@ async fn test_btc_txn_broadcaster_multiple_outputs() {
     ];
 
     // Test broadcasting a transaction with multiple outputs
-    let result = broadcaster.broadcast_transaction(&outputs).await;
 
+    let result = broadcaster.broadcast_transaction(&outputs).await;
     match result {
         Ok(txid) => {
             println!("Successfully broadcast multi-output transaction: {}", txid);
-
-            // Mine a block to confirm the transaction
-            devnet.mine_blocks(1).await.unwrap();
         }
         Err(e) => {
             panic!("Multi-output transaction broadcast failed: {}", e);
@@ -139,15 +130,12 @@ async fn test_btc_txn_broadcaster_insufficient_funds() {
     let test_account = MultichainAccount::with_network(47, Network::Regtest);
 
     // Setup devnet with Bitcoin and Esplora (without funding the wallet)
-    let (devnet, _) = BitcoinDevnet::setup(
-        vec![], // Don't fund any address
-        true,
-        true,
-        false,
-        &mut join_set,
-    )
-    .await
-    .unwrap();
+    let (devnet, _) = RiftDevnet::builder()
+        .using_esplora(true)
+        .build()
+        .await
+        .unwrap();
+    let devnet = devnet.bitcoin;
 
     // Create the transaction broadcaster
     let broadcaster = SimpleBitcoinTransactionBroadcaster::new(
@@ -183,15 +171,13 @@ async fn test_btc_txn_broadcaster_can_fund() {
     let test_account = MultichainAccount::with_network(49, Network::Regtest);
 
     // Setup devnet with Bitcoin and Esplora
-    let (devnet, _) = BitcoinDevnet::setup(
-        vec![test_account.bitcoin_wallet.address.to_string()],
-        true,
-        true,
-        false,
-        &mut join_set,
-    )
-    .await
-    .unwrap();
+    let (devnet, _) = RiftDevnet::builder()
+        .using_esplora(true)
+        .funded_bitcoin_address(test_account.bitcoin_wallet.address.to_string())
+        .build()
+        .await
+        .unwrap();
+    let devnet = devnet.bitcoin;
 
     // Mine a block to confirm the funding transaction
     devnet.mine_blocks(1).await.unwrap();

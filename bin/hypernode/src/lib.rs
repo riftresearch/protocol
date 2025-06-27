@@ -17,6 +17,7 @@ use rift_sdk::txn_broadcast::TransactionBroadcaster;
 use rift_sdk::{
     create_websocket_wallet_provider, handle_background_thread_result, DatabaseLocation,
 };
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,9 +57,9 @@ pub struct HypernodeArgs {
     #[arg(long, env)]
     pub deploy_block_number: u64,
 
-    /// Log chunk size
+    /// Log chunk size for Ethereum RPC calls
     #[arg(long, env, default_value = "10000")]
-    pub log_chunk_size: u64,
+    pub evm_log_chunk_size: u64,
 
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
@@ -91,6 +92,24 @@ const BITCOIN_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 impl HypernodeArgs {
     pub async fn run(&self) -> Result<()> {
         let rift_exchange_address = Address::from_str(&self.rift_exchange_address)?;
+        let rift_indexer_database_location = match &self.database_location {
+            DatabaseLocation::InMemory => DatabaseLocation::InMemory,
+            DatabaseLocation::Directory(path) => DatabaseLocation::Directory(
+                PathBuf::from_str(path)?
+                    .join("rift_indexer")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        };
+        let bitcoin_data_engine_database_location = match &self.database_location {
+            DatabaseLocation::InMemory => DatabaseLocation::InMemory,
+            DatabaseLocation::Directory(path) => DatabaseLocation::Directory(
+                PathBuf::from_str(path)?
+                    .join("bitcoin_data_engine")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        };
 
         let checkpoint_leaves = decompress_checkpoint_file(&self.checkpoint_file)?;
         info!(
@@ -133,14 +152,14 @@ impl HypernodeArgs {
             Arc::new(RiftProofGenerator::new(proof_generator_type))
         });
 
-        let contract_data_engine = {
+        let rift_indexer = {
             info!("Starting contract data engine initialization");
             let engine = rift_indexer::engine::RiftIndexer::start(
-                &self.database_location,
+                &rift_indexer_database_location,
                 evm_rpc.clone(),
                 rift_exchange_address,
                 self.deploy_block_number,
-                self.log_chunk_size,
+                self.evm_log_chunk_size,
                 checkpoint_leaves,
                 &mut join_set,
             )
@@ -160,7 +179,7 @@ impl HypernodeArgs {
         let bitcoin_data_engine = {
             info!("Starting bitcoin data engine initialization");
             let engine = bitcoin_data_engine::BitcoinDataEngine::new(
-                &self.database_location,
+                &bitcoin_data_engine_database_location,
                 btc_rpc.clone(),
                 self.btc_batch_rpc_size,
                 BITCOIN_BLOCK_POLL_INTERVAL,
@@ -189,7 +208,7 @@ impl HypernodeArgs {
 
         info!("Starting hypernode watchtowers...");
         SwapWatchtower::run(
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             bitcoin_data_engine.clone(),
             evm_rpc.clone(),
             btc_rpc.clone(),
@@ -204,13 +223,13 @@ impl HypernodeArgs {
             rift_exchange_address,
             transaction_broadcaster.clone(),
             evm_rpc.clone(),
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             &mut join_set,
         )
         .await?;
 
         ForkWatchtower::run(
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             bitcoin_data_engine.clone(),
             btc_rpc.clone(),
             evm_rpc.clone(),
@@ -226,7 +245,7 @@ impl HypernodeArgs {
             LightClientUpdateWatchtower::run(
                 self.auto_light_client_update_block_lag_threshold,
                 Duration::from_secs(self.auto_light_client_update_check_interval_secs),
-                contract_data_engine.clone(),
+                rift_indexer.clone(),
                 bitcoin_data_engine.clone(),
                 btc_rpc.clone(),
                 evm_rpc.clone(),

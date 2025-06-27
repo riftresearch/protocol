@@ -52,6 +52,7 @@ pub struct RiftIndexer {
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
     mmr_root_broadcaster: broadcast::Sender<[u8; 32]>,
+    pub database_location: DatabaseLocation,
 }
 
 impl RiftIndexer {
@@ -66,7 +67,8 @@ impl RiftIndexer {
         let swap_database_connection = Arc::new(match database_location.clone() {
             DatabaseLocation::InMemory => tokio_rusqlite::Connection::open_in_memory().await?,
             DatabaseLocation::Directory(path) => {
-                tokio_rusqlite::Connection::open(get_qualified_swaps_database_path(path)).await?
+                tokio_rusqlite::Connection::open(get_qualified_swaps_database_path(path).await?)
+                    .await?
             }
         });
 
@@ -84,6 +86,7 @@ impl RiftIndexer {
             initial_sync_broadcaster: broadcast::channel(1).0,
             server_started: Arc::new(AtomicBool::new(false)),
             mmr_root_broadcaster,
+            database_location: database_location.clone(),
         })
     }
 
@@ -348,10 +351,15 @@ impl RiftIndexer {
     }
 }
 
-fn get_qualified_swaps_database_path(database_location: String) -> String {
+async fn get_qualified_swaps_database_path(database_location: String) -> Result<String> {
     let path = PathBuf::from(database_location);
     let swaps_db_path = path.join("swaps.db");
-    swaps_db_path.to_str().expect("Invalid path").to_string()
+    if !swaps_db_path.exists() {
+        tokio::fs::create_dir_all(path)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to create swaps database dir: {:?}", e))?;
+    }
+    Ok(swaps_db_path.to_str().unwrap().to_string())
 }
 
 /// Validate stored events against current chain state on startup.
@@ -445,7 +453,7 @@ pub async fn listen_for_events(
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
     chunk_size: u64,
-    contract_data_engine: &Arc<RiftIndexer>,
+    rift_indexer: &Arc<RiftIndexer>,
 ) -> Result<()> {
     use std::sync::atomic::Ordering;
     use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -507,7 +515,7 @@ pub async fn listen_for_events(
                 &checkpointed_block_tree,
                 provider.clone(),
                 rift_exchange_address,
-                contract_data_engine,
+                rift_indexer,
             )
             .await?;
         }
@@ -524,7 +532,7 @@ pub async fn listen_for_events(
             &checkpointed_block_tree,
             provider.clone(),
             rift_exchange_address,
-            contract_data_engine,
+            rift_indexer,
         )
         .await?;
     }
@@ -547,7 +555,7 @@ pub async fn listen_for_events(
             &checkpointed_block_tree,
             provider.clone(),
             rift_exchange_address,
-            contract_data_engine,
+            rift_indexer,
         )
         .await?;
     }
@@ -562,7 +570,7 @@ async fn process_log(
     checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     provider: DynProvider,
     rift_exchange_address: Address,
-    contract_data_engine: &Arc<RiftIndexer>,
+    rift_indexer: &Arc<RiftIndexer>,
 ) -> Result<()> {
     info!(
         "Processing log: block={:?}, tx={:?}",
@@ -603,7 +611,7 @@ async fn process_log(
                         provider.clone(),
                         checkpointed_block_tree.clone(),
                         rift_exchange_address,
-                        contract_data_engine,
+                        rift_indexer,
                     )
                 })
                 .await?;
@@ -766,7 +774,7 @@ async fn handle_bitcoin_light_client_updated_event(
     provider: DynProvider,
     checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: Address,
-    contract_data_engine: &Arc<RiftIndexer>,
+    rift_indexer: &Arc<RiftIndexer>,
 ) -> Result<()> {
     info!("Received BitcoinLightClientUpdated event");
     let txid = log
@@ -827,7 +835,7 @@ async fn handle_bitcoin_light_client_updated_event(
         .as_secs();
 
     add_light_client_update(
-        &contract_data_engine.swap_database_connection,
+        &rift_indexer.swap_database_connection,
         block_number,
         block_hash.0,
         txid.0,
@@ -837,7 +845,7 @@ async fn handle_bitcoin_light_client_updated_event(
     )
     .await?;
 
-    contract_data_engine.update_mmr_root(new_mmr_root).await?;
+    rift_indexer.update_mmr_root(new_mmr_root).await?;
 
     info!(
         "Stored light client update: block {} -> MMR root {}",

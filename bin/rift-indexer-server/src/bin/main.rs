@@ -1,7 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
-use rift_indexer_server::DataEngineServer;
+use rift_indexer_server::RiftIndexerServer;
 use rift_indexer_server::ServerConfig;
 use tokio::task::JoinSet;
 
@@ -20,8 +20,8 @@ async fn main() -> Result<()> {
     let checkpoint_leaves =
         checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
     let mut join_set = JoinSet::new();
-    let data_engine_server =
-        DataEngineServer::start(config, checkpoint_leaves, &mut join_set).await?;
+    let rift_indexer_server =
+        RiftIndexerServer::start(config, checkpoint_leaves, &mut join_set).await?;
     join_set.join_all().await;
     Ok(())
 }

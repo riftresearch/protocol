@@ -5,22 +5,24 @@ sync:
 
 build: 
 	cargo build --release
+	@echo "Build complete"
 
 test-contracts: 
 	cargo build --release --bin sol-utils 
 	cd contracts && forge test
+	@echo "Test contracts complete"
 
-test-crates: | build
-	cargo test --release --workspace --exclude rift-program
+cache-devnet: | build
+	cargo run --release --bin devnet -- cache
+	@echo "Devnet cached"
 
 ntest-circuits:
 	cargo nextest run --release -p rift-core -p bitcoin-light-client-core -p bitcoin-core-rs
+	@echo "Test circuits complete"
 
-test: | build test-contracts test-crates
-	@echo "All tests passed"
-
-ntest-crates: | build
+ntest-crates: | cache-devnet 
 	cargo nextest run --release --workspace --exclude rift-program -- --skip market_maker_hypernode_end_to_end
+	@echo "Test crates complete"
 
-ntest: | build test-contracts ntest-crates
+ntest: | cache-devnet test-contracts ntest-crates
 	@echo "All tests passed"

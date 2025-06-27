@@ -283,7 +283,7 @@ impl AuctionClaimer {
     pub fn run(
         provider: DynProvider,
         config: AuctionClaimerConfig,
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Result<()> {
@@ -320,13 +320,13 @@ impl AuctionClaimer {
         // Claim auctions task
         let config_for_claimer = config.clone();
         let provider_for_claimer = provider.clone();
-        let contract_data_engine_for_claimer = contract_data_engine.clone();
+        let rift_indexer_for_claimer = rift_indexer.clone();
         let transaction_broadcaster_for_claimer = transaction_broadcaster.clone();
 
         join_set.spawn(Self::run_auction_claimer(
             provider_for_claimer,
             config_for_claimer,
-            contract_data_engine_for_claimer,
+            rift_indexer_for_claimer,
             transaction_broadcaster_for_claimer,
             auction_rx,
         ));
@@ -428,7 +428,7 @@ impl AuctionClaimer {
     async fn run_auction_claimer(
         provider: DynProvider,
         config: AuctionClaimerConfig,
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
         mut auction_rx: mpsc::Receiver<(DutchAuction, u64)>,
     ) -> eyre::Result<()> {
@@ -547,7 +547,7 @@ impl AuctionClaimer {
                 let filler_auth_data = Bytes::new();
 
                 // Get Merkle proof
-                let proof_result = contract_data_engine
+                let proof_result = rift_indexer
                     .get_tip_proof()
                     .await;
                 

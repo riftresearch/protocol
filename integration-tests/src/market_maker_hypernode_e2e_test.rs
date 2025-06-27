@@ -7,12 +7,12 @@ use alloy::{
     sol_types::SolEvent,
 };
 use bitcoin::Amount;
-use rift_indexer::models::SwapStatus;
 use devnet::RiftDevnet;
 use eyre::Result;
 use hypernode::HypernodeArgs;
 use log::{error, info, warn};
 use market_maker::MakerConfig;
+use rift_indexer::models::SwapStatus;
 use rift_sdk::{
     create_websocket_wallet_provider, txn_builder::P2WPKHBitcoinWallet, DatabaseLocation,
     MultichainAccount,
@@ -63,7 +63,7 @@ async fn run_e2e_test() -> Result<()> {
     let auction_config = AuctionConfig {
         auction_house_address: *devnet.devnet.ethereum.rift_exchange_contract.address(),
         whitelist_address: Address::from([0x00; 20]),
-        data_engine: devnet.devnet.contract_data_engine.clone(),
+        data_engine: devnet.devnet.rift_indexer.clone(),
     };
 
     let mm_handle = start_market_maker(&accounts, &devnet, &auction_config).await?;
@@ -228,9 +228,7 @@ async fn setup_devnet(accounts: &TestAccounts) -> Result<DevnetConfig> {
     info!("Setting up DevNet infrastructure...");
 
     let devnet_builder = RiftDevnet::builder()
-        .using_bitcoin(true)
         .using_esplora(true)
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .funded_evm_address(accounts.auction_creator.ethereum_address.to_string())
         .funded_evm_address(accounts.market_maker.ethereum_address.to_string())
         .funded_evm_address(accounts.hypernode_operator.ethereum_address.to_string())
@@ -334,7 +332,12 @@ async fn start_market_maker(
         }).unwrap_or_else(|| {
             "http://localhost:3002".to_string()
         }),
-        checkpoint_file: devnet.devnet.checkpoint_file_path.clone(),
+        checkpoint_file: devnet
+            .devnet
+            .checkpoint_file_handle
+            .path()
+            .to_string_lossy()
+            .to_string(),
         database_location: DatabaseLocation::InMemory,
         deploy_block_number: 0,
         evm_log_chunk_size: 10000,
@@ -377,11 +380,16 @@ async fn start_hypernode(
         evm_ws_rpc: devnet.devnet.ethereum.anvil.ws_endpoint_url().to_string(),
         btc_rpc: devnet.devnet.bitcoin.rpc_url_with_cookie.clone(),
         private_key: hex::encode(accounts.hypernode_operator.secret_bytes),
-        checkpoint_file: devnet.devnet.checkpoint_file_path.clone(),
+        checkpoint_file: devnet
+            .devnet
+            .checkpoint_file_handle
+            .path()
+            .to_string_lossy()
+            .to_string(),
         database_location: DatabaseLocation::InMemory,
         rift_exchange_address: auction_config.auction_house_address.to_string(),
         deploy_block_number: 0,
-        log_chunk_size: 10000,
+        evm_log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: rift_sdk::proof_generator::ProofGeneratorType::Execute,
         enable_auto_light_client_update: false,
@@ -452,7 +460,7 @@ async fn create_auction(
         .header
         .timestamp;
 
-    let (safe_leaf, _, _) = devnet.devnet.contract_data_engine.get_tip_proof().await?;
+    let (safe_leaf, _, _) = devnet.devnet.rift_indexer.get_tip_proof().await?;
 
     let dutch_params = DutchAuctionParams {
         startBtcOut: U256::from(50_000_000u64),

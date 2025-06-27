@@ -46,10 +46,8 @@ async fn test_hypernode_simple_swap() {
 
     // fund maker evm wallet, and taker btc wallet
     let (devnet, _funded_sats) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .funded_evm_address(maker.ethereum_address.to_string())
         .funded_evm_address(maker2.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -119,10 +117,9 @@ async fn test_hypernode_simple_swap() {
 
     // We can skip real MMR proofs; for dev/test, we can pass dummy MMR proof data or a known "safe block."
     // For example, we'll craft a dummy "BlockLeaf" that the contract won't reject:
-    let (safe_leaf, safe_siblings, safe_peaks) =
-        devnet.contract_data_engine.get_tip_proof().await.unwrap();
+    let (safe_leaf, safe_siblings, safe_peaks) = devnet.rift_indexer.get_tip_proof().await.unwrap();
 
-    let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
+    let mmr_root = devnet.rift_indexer.get_mmr_root().await.unwrap();
 
     let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 
@@ -319,12 +316,16 @@ async fn test_hypernode_simple_swap() {
             evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
             btc_rpc: rpc_url_with_cookie.clone(),
             private_key: hex::encode(hypernode_account.secret_bytes),
-            checkpoint_file: devnet.checkpoint_file_path.clone(),
+            checkpoint_file: devnet
+                .checkpoint_file_handle
+                .path()
+                .to_string_lossy()
+                .to_string(),
             database_location: DatabaseLocation::InMemory,
             rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
             deploy_block_number: 0,
             btc_batch_rpc_size: 100,
-            log_chunk_size: 10000,
+            evm_log_chunk_size: 10000,
             proof_generator: ProofGeneratorType::Execute,
             enable_auto_light_client_update: false,
             auto_light_client_update_block_lag_threshold: 6,
@@ -339,7 +340,7 @@ async fn test_hypernode_simple_swap() {
     );
     let otc_swap = loop {
         let otc_swap = devnet
-            .contract_data_engine
+            .rift_indexer
             .get_otc_swap_by_order_index(new_order.index.to::<u64>())
             .await
             .unwrap();
@@ -370,7 +371,7 @@ async fn test_hypernode_simple_swap() {
     // now check again for ever until the swap is completed
     loop {
         let otc_swap = devnet
-            .contract_data_engine
+            .rift_indexer
             .get_otc_swap_by_order_index(new_order.index.to::<u64>())
             .await
             .unwrap();
@@ -398,7 +399,7 @@ async fn test_hypernode_simple_swap() {
 
     // Get new proof data for second order
     let (safe_leaf2, safe_siblings2, safe_peaks2) =
-        devnet.contract_data_engine.get_tip_proof().await.unwrap();
+        devnet.rift_indexer.get_tip_proof().await.unwrap();
     let safe_leaf2: sol_bindings::BlockLeaf = safe_leaf2.into();
 
     let maker2_btc_wallet_script_pubkey = maker2.bitcoin_wallet.get_p2wpkh_script();
@@ -501,7 +502,7 @@ async fn test_hypernode_simple_swap() {
     // Wait for second swap to enter challenge period
     let otc_swap2 = loop {
         let otc_swap = devnet
-            .contract_data_engine
+            .rift_indexer
             .get_otc_swap_by_order_index(new_order2.index.to::<u64>())
             .await
             .unwrap();
@@ -540,7 +541,7 @@ async fn test_hypernode_simple_swap() {
     // Wait for second swap to complete
     loop {
         let otc_swap = devnet
-            .contract_data_engine
+            .rift_indexer
             .get_otc_swap_by_order_index(new_order2.index.to::<u64>())
             .await
             .unwrap();

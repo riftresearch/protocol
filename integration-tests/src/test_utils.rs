@@ -6,7 +6,6 @@ use alloy::{
 use rift_sdk::{txn_builder::P2WPKHBitcoinWallet, MultichainAccount};
 
 use std::sync::Arc;
-use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
 
 use bitcoincore_rpc_async::RpcApi;
 
@@ -32,9 +31,7 @@ pub async fn create_deposit(
 ) {
     let maker = MultichainAccount::new(1);
     let (mut devnet, deploy_block_number) = RiftDevnet::builder()
-        .using_bitcoin(using_bitcoin)
         .funded_evm_address(maker.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .unwrap();
@@ -85,10 +82,9 @@ pub async fn create_deposit(
     println!("Approved");
 
     // ---3) Maker deposits liquidity into RiftExchange---
-    let (safe_leaf, safe_siblings, safe_peaks) =
-        devnet.contract_data_engine.get_tip_proof().await.unwrap();
+    let (safe_leaf, safe_siblings, safe_peaks) = devnet.rift_indexer.get_tip_proof().await.unwrap();
 
-    let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
+    let mmr_root = devnet.rift_indexer.get_mmr_root().await.unwrap();
 
     let safe_leaf: sol_bindings::BlockLeaf = safe_leaf.into();
 

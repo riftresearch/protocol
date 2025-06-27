@@ -219,7 +219,7 @@ async fn consume_broadcast_queue<S: BitcoinSigner + Send + Sync + 'static>(
 
         info!("UTXOs: {:#?}", utxo_wrapped);
 
-        let (.., selected_input_utxos) = cs::select_coins(
+        let selected_input_utxos = cs::select_coins(
             pay_value,
             bitcoin::transaction::effective_value(
                 fee_rate_sat_vb,
@@ -232,8 +232,12 @@ async fn consume_broadcast_queue<S: BitcoinSigner + Send + Sync + 'static>(
             fee_rate_sat_vb,
             long_term_fee_rate,
             &utxo_wrapped,
-        )
-        .ok_or_else(|| eyre::eyre!("insufficient funds"))?;
+        );
+        if selected_input_utxos.is_none() {
+            let _ = req.response_tx.send(Err(eyre::eyre!("insufficient funds")));
+            continue;
+        }
+        let (_, selected_input_utxos) = selected_input_utxos.unwrap();
 
         // --- decide change ---
         let change_opt = calc_change(&selected_input_utxos, pay_value, fee_rate_sat_vb)?;

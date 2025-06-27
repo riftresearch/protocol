@@ -32,6 +32,8 @@ pub struct BitcoinDataEngine {
     initial_sync_broadcaster: broadcast::Sender<bool>,
     /// Broadcast sender for new blocks
     block_broadcaster: broadcast::Sender<BlockLeaf>,
+    /// The database location
+    pub db_location: DatabaseLocation,
 }
 
 impl BitcoinDataEngine {
@@ -87,6 +89,7 @@ impl BitcoinDataEngine {
             initial_sync_complete,
             initial_sync_broadcaster,
             block_broadcaster,
+            db_location: database_location.clone(),
         }
     }
 
