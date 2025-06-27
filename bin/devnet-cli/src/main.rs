@@ -16,25 +16,25 @@ use tracing_subscriber::EnvFilter;
 #[command(author, version, about)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+    
+    /// Address to fund with cbBTC and Ether (used when no subcommand provided)
+    #[arg(short = 'a', long, global = true)]
+    fund_address: Vec<String>,
+
+    /// RPC URL to fork from, if unset will not fork (used when no subcommand provided)
+    #[arg(short = 'f', long, global = true)]
+    fork_url: Option<String>,
+
+    /// Block number to fork from, if unset and fork_url is set, will use the latest block (used when no subcommand provided)
+    #[arg(short = 'b', long, global = true)]
+    fork_block_number: Option<u64>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Run devnet server (interactive mode)
-    Server {
-        /// Address to fund with cbBTC and Ether
-        #[arg(short, long)]
-        fund_address: Vec<String>,
-
-        /// RPC URL to fork from, if unset will not fork
-        #[arg(short = 'f', long)]
-        fork_url: String,
-
-        /// Block number to fork from, if unset and fork_url is set, will use the latest block
-        #[arg(short = 'b', long)]
-        fork_block_number: Option<u64>,
-    },
+    Server,
     /// Create and save a cached devnet for faster subsequent runs
     Cache,
 }
@@ -59,12 +59,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Server {
-            fund_address,
-            fork_url,
-            fork_block_number,
-        } => run_server(fund_address, fork_url, fork_block_number).await,
-        Commands::Cache => run_cache().await,
+        Some(Commands::Server) | None => {
+            // Default to server mode when no subcommand is provided
+            // For server mode, fork_url is required
+            let fork_url = cli.fork_url.ok_or_else(|| {
+                eyre::eyre!("fork_url is required for server mode. Use -f or --fork-url")
+            })?;
+            run_server(cli.fund_address, fork_url, cli.fork_block_number).await
+        }
+        Some(Commands::Cache) => run_cache().await,
     }
 }
 
