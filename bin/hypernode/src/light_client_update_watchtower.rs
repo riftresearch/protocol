@@ -63,7 +63,7 @@ impl LightClientUpdateWatchtower {
     pub async fn run(
         block_lag_threshold: u32,
         check_interval: Duration,
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         evm_rpc: DynProvider,
@@ -115,7 +115,7 @@ impl LightClientUpdateWatchtower {
                     match event {
                         LightClientUpdateEvent::CheckLag => {
                             match Self::check_light_client_lag(
-                                &contract_data_engine,
+                                &rift_indexer,
                                 &bitcoin_data_engine,
                                 block_lag_threshold,
                             )
@@ -146,7 +146,7 @@ impl LightClientUpdateWatchtower {
                         }
                         LightClientUpdateEvent::UpdateRequired(blocks_behind) => {
                             if let Err(e) = Self::perform_light_client_update(
-                                &contract_data_engine,
+                                &rift_indexer,
                                 &bitcoin_data_engine,
                                 &btc_rpc,
                                 &rift_exchange,
@@ -174,12 +174,12 @@ impl LightClientUpdateWatchtower {
     /// Check if the light client is lagging behind Bitcoin tip by more than the threshold
     /// Returns Some(blocks_behind) if update is needed, None if up to date
     async fn check_light_client_lag(
-        contract_data_engine: &Arc<RiftIndexer>,
+        rift_indexer: &Arc<RiftIndexer>,
         bitcoin_data_engine: &Arc<BitcoinDataEngine>,
         block_lag_threshold: u32,
     ) -> Result<Option<u32>, LightClientUpdateWatchtowerError> {
         // Get current light client tip from contract data engine
-        let light_client_mmr_guard = contract_data_engine.checkpointed_block_tree.read().await;
+        let light_client_mmr_guard = rift_indexer.checkpointed_block_tree.read().await;
         let light_client_leaf_count =
             light_client_mmr_guard.get_leaf_count().await.map_err(|e| {
                 LightClientUpdateWatchtowerError::LagCheckError(format!(
@@ -259,7 +259,7 @@ impl LightClientUpdateWatchtower {
 
     /// Perform the light client update by generating and submitting a proof
     async fn perform_light_client_update(
-        contract_data_engine: &Arc<RiftIndexer>,
+        rift_indexer: &Arc<RiftIndexer>,
         bitcoin_data_engine: &Arc<BitcoinDataEngine>,
         btc_rpc: &Arc<AsyncBitcoinClient>,
         rift_exchange: &RiftExchangeHarnessInstance<DynProvider>,
@@ -271,7 +271,7 @@ impl LightClientUpdateWatchtower {
         info!(blocks_behind, "Starting light client update process");
 
         // Build chain transition for light client update
-        let light_client_mmr = contract_data_engine.checkpointed_block_tree.read().await;
+        let light_client_mmr = rift_indexer.checkpointed_block_tree.read().await;
         let bitcoin_mmr = bitcoin_data_engine.indexed_mmr.read().await;
 
         let chain_transition = build_chain_transition_for_light_client_update(

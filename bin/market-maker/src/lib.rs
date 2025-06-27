@@ -235,7 +235,7 @@ impl MakerConfig {
         };
 
         // Initialize contract data engine if light client address is provided
-        let contract_data_engine = {
+        let rift_indexer = {
             info!("Starting contract data engine initialization");
             let engine = rift_indexer::engine::RiftIndexer::start(
                 &self.database_location,
@@ -377,7 +377,7 @@ impl MakerConfig {
         AuctionClaimer::run(
             evm_rpc.clone(),
             auction_claimer_config,
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             evm_tx_broadcaster.clone(),
             &mut join_set,
         )?;

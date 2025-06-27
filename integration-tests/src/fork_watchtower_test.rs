@@ -22,11 +22,11 @@ async fn test_fork_watchtower_no_fork_detection() {
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
-    let contract_data_engine = devnet.contract_data_engine.clone();
+    let rift_indexer = devnet.rift_indexer.clone();
 
     // Detect fork
     let detection_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Fork detection failed");
 
@@ -51,10 +51,10 @@ async fn test_fork_watchtower_stale_chain_detection() {
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
-    let contract_data_engine = devnet.contract_data_engine.clone();
+    let rift_indexer = devnet.rift_indexer.clone();
 
     // Force the light client to be stale by mining blocks but keeping the light client at the old height and ensuring its still a valid subchain
-    let initial_mmr_root = contract_data_engine.get_mmr_root().await.unwrap();
+    let initial_mmr_root = rift_indexer.get_mmr_root().await.unwrap();
     println!(
         "Initial light client MMR root: {}",
         hex::encode(initial_mmr_root)
@@ -89,7 +89,7 @@ async fn test_fork_watchtower_stale_chain_detection() {
     }
 
     let detection_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Fork detection after mining failed");
 
@@ -99,7 +99,7 @@ async fn test_fork_watchtower_stale_chain_detection() {
             println!("detected stale chain");
 
             // Verify the light client tip is still included in the bde chain
-            let light_client_tip_index = contract_data_engine
+            let light_client_tip_index = rift_indexer
                 .checkpointed_block_tree
                 .read()
                 .await
@@ -107,7 +107,7 @@ async fn test_fork_watchtower_stale_chain_detection() {
                 .await
                 .unwrap()
                 - 1;
-            let light_client_tip = contract_data_engine
+            let light_client_tip = rift_indexer
                 .checkpointed_block_tree
                 .read()
                 .await
@@ -186,11 +186,11 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
-    let contract_data_engine = devnet.contract_data_engine.clone();
+    let rift_indexer = devnet.rift_indexer.clone();
 
     // Make sure both chains are in sync meaning no fork
     let initial_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Initial fork detection failed");
 
@@ -229,7 +229,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
         println!("Err from blocks_result: Timed out waiting for all blocks, continue");
     }
 
-    let light_client_tip_index = contract_data_engine
+    let light_client_tip_index = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -238,7 +238,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
         .unwrap()
         - 1;
 
-    let current_light_client_tip = contract_data_engine
+    let current_light_client_tip = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -300,8 +300,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 
     // append the fake block to the lc chain
     {
-        let mut checkpointed_block_tree =
-            contract_data_engine.checkpointed_block_tree.write().await;
+        let mut checkpointed_block_tree = rift_indexer.checkpointed_block_tree.write().await;
 
         let root = checkpointed_block_tree.get_root().await.unwrap();
 
@@ -325,13 +324,10 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
         // Update the cde root cache with the new root
         drop(checkpointed_block_tree);
 
-        contract_data_engine
-            .update_mmr_root(new_root)
-            .await
-            .unwrap();
+        rift_indexer.update_mmr_root(new_root).await.unwrap();
     }
 
-    let updated_light_client_tip_index = contract_data_engine
+    let updated_light_client_tip_index = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -340,7 +336,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
         .unwrap()
         - 1;
 
-    let updated_light_client_tip = contract_data_engine
+    let updated_light_client_tip = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -381,7 +377,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
     // detect the fork
     println!("Detecting fork after mining blocks");
     let detection_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Fork detection after mining failed");
 
@@ -397,7 +393,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
             );
             assert_eq!(
                 chain_transition.current_mmr_root,
-                contract_data_engine.get_mmr_root().await.unwrap(),
+                rift_indexer.get_mmr_root().await.unwrap(),
                 "Chain transition current_mmr_root should match contract data engine root"
             );
 
@@ -413,7 +409,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
             );
 
             // Get the initial state
-            let initial_light_client_mmr_root = contract_data_engine.get_mmr_root().await.unwrap();
+            let initial_light_client_mmr_root = rift_indexer.get_mmr_root().await.unwrap();
             let bde_mmr_root = bitcoin_data_engine
                 .indexed_mmr
                 .read()
@@ -453,12 +449,12 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 
             println!("Simulating fork resolution by replacing light client chain");
 
-            contract_data_engine
+            rift_indexer
                 .reset_mmr_for_testing(&bde_leaves)
                 .await
                 .expect("Failed to reset light client MMR");
 
-            let final_light_client_mmr_root = contract_data_engine.get_mmr_root().await.unwrap();
+            let final_light_client_mmr_root = rift_indexer.get_mmr_root().await.unwrap();
 
             println!(
                 "Final light client MMR root: {}",
@@ -472,7 +468,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
             );
 
             let mut found_fake_block = false;
-            let current_leaf_count = contract_data_engine
+            let current_leaf_count = rift_indexer
                 .checkpointed_block_tree
                 .read()
                 .await
@@ -481,7 +477,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
                 .unwrap();
 
             for i in 0..current_leaf_count {
-                let leaf_opt = contract_data_engine
+                let leaf_opt = rift_indexer
                     .checkpointed_block_tree
                     .read()
                     .await
@@ -516,11 +512,11 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
-    let contract_data_engine = devnet.contract_data_engine.clone();
+    let rift_indexer = devnet.rift_indexer.clone();
 
     // make sure both chains are in sync so no fork
     let initial_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Initial fork detection failed");
 
@@ -549,7 +545,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 
     // Create divergent chain
 
-    let light_client_tip_index = contract_data_engine
+    let light_client_tip_index = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -558,7 +554,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
         .unwrap()
         - 1;
 
-    let current_light_client_tip = contract_data_engine
+    let current_light_client_tip = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -613,8 +609,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
     );
 
     {
-        let mut checkpointed_block_tree =
-            contract_data_engine.checkpointed_block_tree.write().await;
+        let mut checkpointed_block_tree = rift_indexer.checkpointed_block_tree.write().await;
 
         let root = checkpointed_block_tree.get_root().await.unwrap();
 
@@ -629,14 +624,11 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
         drop(checkpointed_block_tree);
 
         // Update the cde cached MMR root
-        contract_data_engine
-            .update_mmr_root(new_root)
-            .await
-            .unwrap();
+        rift_indexer.update_mmr_root(new_root).await.unwrap();
     }
 
     // Verify the light client has been updated with fake block
-    let new_light_client_tip_index = contract_data_engine
+    let new_light_client_tip_index = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -645,7 +637,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
         .unwrap()
         - 1;
 
-    let new_light_client_tip = contract_data_engine
+    let new_light_client_tip = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -680,7 +672,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 
     println!("Detecting fork with light client tip not in BDE chain");
     let detection_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Fork detection failed");
 
@@ -695,7 +687,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
             );
             assert_eq!(
                 chain_transition.current_mmr_root,
-                contract_data_engine.get_mmr_root().await.unwrap(),
+                rift_indexer.get_mmr_root().await.unwrap(),
                 "Chain transition current_mmr_root should match contract data engine root"
             );
 
@@ -748,9 +740,9 @@ async fn test_fork_watchtower_equal_chainwork() {
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
-    let contract_data_engine = devnet.contract_data_engine.clone();
+    let rift_indexer = devnet.rift_indexer.clone();
 
-    let light_client_tip_index = contract_data_engine
+    let light_client_tip_index = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -759,7 +751,7 @@ async fn test_fork_watchtower_equal_chainwork() {
         .unwrap()
         - 1;
 
-    let light_client_tip = contract_data_engine
+    let light_client_tip = rift_indexer
         .checkpointed_block_tree
         .read()
         .await
@@ -837,7 +829,7 @@ async fn test_fork_watchtower_equal_chainwork() {
     // Run fork detection should follow first seen policy
     println!("Detecting fork with equal chainwork blocks (first-seen policy)");
     let detection_result =
-        ForkWatchtower::detect_fork(&contract_data_engine, &bitcoin_data_engine, &btc_rpc, 100)
+        ForkWatchtower::detect_fork(&rift_indexer, &bitcoin_data_engine, &btc_rpc, 100)
             .await
             .expect("Fork detection failed");
 

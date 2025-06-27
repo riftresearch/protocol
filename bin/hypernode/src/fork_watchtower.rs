@@ -87,7 +87,7 @@ pub struct ForkWatchtower;
 
 impl ForkWatchtower {
     pub async fn run(
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         evm_rpc: DynProvider,
@@ -144,9 +144,9 @@ impl ForkWatchtower {
             .instrument(info_span!("Block Subscription Handler")),
         );
 
-        let mut mmr_root_subscription = contract_data_engine.subscribe_to_mmr_root_updates();
+        let mut mmr_root_subscription = rift_indexer.subscribe_to_mmr_root_updates();
         let event_sender_mmr = event_sender.clone();
-        let mmr_root_subscription_cde = Arc::clone(&contract_data_engine);
+        let mmr_root_subscription_cde = Arc::clone(&rift_indexer);
 
         join_set.spawn(
             async move {
@@ -191,7 +191,7 @@ impl ForkWatchtower {
         let fork_detection_lock = Arc::new(Mutex::new(()));
 
         {
-            let contract_data_engine = Arc::clone(&contract_data_engine);
+            let rift_indexer = Arc::clone(&rift_indexer);
             let bitcoin_data_engine = Arc::clone(&bitcoin_data_engine);
             let btc_rpc = Arc::clone(&btc_rpc);
             let proof_generator = Arc::clone(&proof_generator);
@@ -209,7 +209,7 @@ impl ForkWatchtower {
                                     let _lock = fork_detection_lock.lock().await;
 
                                     match Self::detect_fork(
-                                        &contract_data_engine,
+                                        &rift_indexer,
                                         &bitcoin_data_engine,
                                         &btc_rpc,
                                         bitcoin_concurrency_limit,
@@ -415,14 +415,14 @@ impl ForkWatchtower {
     }
 
     pub async fn detect_fork(
-        contract_data_engine: &Arc<RiftIndexer>,
+        rift_indexer: &Arc<RiftIndexer>,
         bitcoin_data_engine: &Arc<BitcoinDataEngine>,
         btc_rpc: &Arc<AsyncBitcoinClient>,
         bitcoin_concurrency_limit: usize,
     ) -> Result<ForkDetectionResult, ForkWatchtowerError> {
         info!("Checking for fork at chain tips only");
 
-        let light_client_mmr = contract_data_engine.checkpointed_block_tree.read().await;
+        let light_client_mmr = rift_indexer.checkpointed_block_tree.read().await;
         let bitcoin_mmr = bitcoin_data_engine.indexed_mmr.read().await;
 
         let light_client_tip_index = light_client_mmr.get_leaf_count().await.map_err(|e| {

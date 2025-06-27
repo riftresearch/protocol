@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "bin/benchmark-light-client",
-  "bin/devnet-server",
+  "bin/devnet-cli",
   "bin/rift-indexer-server",
   "bin/hypernode",
   "bin/checkpoint-downloader",
@@ -100,8 +100,8 @@ bitcoincore-rpc-async = { git = "https://github.com/riftresearch/rust-bitcoincor
 esplora-client = { git = "https://github.com/riftresearch/rust-esplora-client.git", rev = "a571328ff799993f877d87db8dad6e4c6b313225", features = ["async", "tokio"] }
 bitcoin-coin-selection =  { version = "0.7.0", features = ["rand"]}
 
-corepc-node = { version = "0.8.0", features = ["29_0", "download"] }
-electrsd = { git = "https://github.com/RCasatta/electrsd", rev = "bdc97e879bad82e13e69c74d898271db12224f44", features = ["corepc-node_29_0", "esplora_a33e97e1", "legacy"] }
+corepc-node = { git = "https://github.com/riftresearch/corepc/", rev = "ae028263e24da26fed31a9c32232ecdefcb1cb37", features = ["29_0", "download"] }
+electrsd = { git = "https://github.com/riftresearch/electrsd", rev = "247221d4f3b2954fb5a21d4652babfdea4cf85ca", features = ["corepc-node_29_0", "esplora_a33e97e1", "legacy"] }
 
 dotenv = "0.15.0"
 bip39 = "2.1.0"
@@ -120,6 +120,7 @@ rand = "0.9.0"
 lazy_static = "1.5.0"
 mockall = "0.13.1"
 ctor = "0.2"
+dirs = "6.0.0"
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/sp1-patches/RustCrypto-bigint", tag = "patch-0.5.5-sp1-4.0.0" }

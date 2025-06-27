@@ -39,7 +39,7 @@ impl ReleaseWatchtower {
         rift_exchange_address: Address,
         transaction_broadcaster: Arc<TransactionBroadcaster>,
         evm_rpc: DynProvider,
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> eyre::Result<Self> {
         let (tx, rx) = watch::channel(None);
@@ -54,7 +54,7 @@ impl ReleaseWatchtower {
                     rift_exchange_address,
                     transaction_broadcaster,
                     evm_rpc,
-                    contract_data_engine,
+                    rift_indexer,
                     rx,
                 )
                 .await
@@ -89,7 +89,7 @@ async fn search_on_new_evm_blocks(
     rift_exchange_address: Address,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
     evm_rpc: DynProvider,
-    contract_data_engine: Arc<RiftIndexer>,
+    rift_indexer: Arc<RiftIndexer>,
     mut rx: watch::Receiver<Option<Header>>,
 ) -> eyre::Result<()> {
     let rift_exchange = RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
@@ -102,7 +102,7 @@ async fn search_on_new_evm_blocks(
             search_for_releases(
                 &rift_exchange,
                 transaction_broadcaster.clone(),
-                contract_data_engine.clone(),
+                rift_indexer.clone(),
                 latest_block_header.timestamp,
             )
             .await?;
@@ -114,14 +114,14 @@ async fn search_on_new_evm_blocks(
 async fn search_for_releases(
     rift_exchange: &RiftExchangeHarnessClient,
     transaction_broadcaster: Arc<TransactionBroadcaster>,
-    contract_data_engine: Arc<RiftIndexer>,
+    rift_indexer: Arc<RiftIndexer>,
     block_timestamp: u64,
 ) -> eyre::Result<()> {
     debug!(
         "Searching for releases at evm block timestamp {}",
         block_timestamp
     );
-    let swaps_ready_to_be_released = contract_data_engine
+    let swaps_ready_to_be_released = rift_indexer
         .get_payments_ready_to_be_settled(block_timestamp)
         .await?;
 
@@ -140,7 +140,7 @@ async fn search_for_releases(
 
     // Step 1: Grab the tip block height (lock scope is *only* for these few lines).
     let tip_block_height = {
-        let tree = contract_data_engine.checkpointed_block_tree.read().await;
+        let tree = rift_indexer.checkpointed_block_tree.read().await;
         // If get_leaf_count is truly async, you need to restructure that.
         // For demonstration, let's assume it's synchronous or you do not hold `tree` across the await.
         (tree.get_leaf_count().await? - 1) as u32
@@ -159,7 +159,7 @@ async fn search_for_releases(
 
         // Acquire the lock in a tight scope:
         let proof = {
-            let tree = contract_data_engine.checkpointed_block_tree.read().await;
+            let tree = rift_indexer.checkpointed_block_tree.read().await;
             tree.get_circuit_proof(block_leaf.height as usize, None)
                 .await
         };

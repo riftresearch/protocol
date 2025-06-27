@@ -1,8 +1,8 @@
 use alloy::providers::Provider;
 use bitcoincore_rpc_async::RpcApi;
-use rift_indexer::engine::RiftIndexer;
 use devnet::RiftDevnet;
 use hypernode::HypernodeArgs;
+use rift_indexer::engine::RiftIndexer;
 use rift_sdk::{
     create_websocket_wallet_provider, proof_generator::ProofGeneratorType,
     txn_broadcast::TransactionBroadcaster, DatabaseLocation, MultichainAccount,
@@ -17,9 +17,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
     // Setup devnet with Bitcoin enabled
     let hypernode_account = MultichainAccount::new(151);
     let (mut devnet, deploy_block_number) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .funded_evm_address(hypernode_account.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -63,11 +61,15 @@ async fn test_light_client_update_watchtower_automatic_update() {
         evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
         btc_rpc: devnet.bitcoin.rpc_url_with_cookie.clone(),
         private_key: hex::encode(hypernode_account.secret_bytes),
-        checkpoint_file: devnet.checkpoint_file_path.clone(),
+        checkpoint_file: devnet
+            .checkpoint_file_handle
+            .path()
+            .to_string_lossy()
+            .to_string(),
         database_location: DatabaseLocation::InMemory,
         rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
         deploy_block_number,
-        log_chunk_size: 10000,
+        evm_log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: ProofGeneratorType::Execute,
         enable_auto_light_client_update: true,
@@ -166,7 +168,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
         .await
         .unwrap();
 
-    let data_engine_mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
+    let data_engine_mmr_root = devnet.rift_indexer.get_mmr_root().await.unwrap();
 
     println!("Final contract MMR root: {}", hex::encode(final_mmr_root));
     println!(
@@ -192,9 +194,7 @@ async fn test_light_client_update_watchtower_disabled() {
     // Setup devnet with Bitcoin enabled
     let hypernode_account = MultichainAccount::new(151);
     let (mut devnet, deploy_block_number) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .funded_evm_address(hypernode_account.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -220,11 +220,15 @@ async fn test_light_client_update_watchtower_disabled() {
         evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
         btc_rpc: devnet.bitcoin.rpc_url_with_cookie.clone(),
         private_key: hex::encode(hypernode_account.secret_bytes),
-        checkpoint_file: devnet.checkpoint_file_path.clone(),
+        checkpoint_file: devnet
+            .checkpoint_file_handle
+            .path()
+            .to_string_lossy()
+            .to_string(),
         database_location: DatabaseLocation::InMemory,
         rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
         deploy_block_number,
-        log_chunk_size: 10000,
+        evm_log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: ProofGeneratorType::Execute,
         enable_auto_light_client_update: false, // DISABLED

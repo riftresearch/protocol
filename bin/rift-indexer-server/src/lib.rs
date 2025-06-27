@@ -5,10 +5,10 @@ use axum::{extract::State, routing::get, Json, Router};
 use bitcoin_light_client_core::hasher::Digest;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use clap::{command, Parser};
-use rift_indexer::engine::RiftIndexer;
-use rift_indexer::models::OTCSwap;
 use eyre::Result;
 use regex::Regex;
+use rift_indexer::engine::RiftIndexer;
+use rift_indexer::models::OTCSwap;
 use rift_sdk::{create_websocket_provider, DatabaseLocation};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -36,13 +36,13 @@ pub struct ServerConfig {
     pub database_location: DatabaseLocation,
 }
 
-/// DataEngineServer holds the underlying data engine, starting the Axum server in the background.
+/// RiftIndexerServer holds the underlying data engine, starting the Axum server in the background.
 /// It provides a getter method for easy access to the inner engine.
-pub struct DataEngineServer {
+pub struct RiftIndexerServer {
     data_engine: Arc<RiftIndexer>,
 }
 
-impl DataEngineServer {
+impl RiftIndexerServer {
     /// Spawns an Axum server that serves the API endpoints.
     ///
     /// This helper method abstracts the common server startup logic.
@@ -84,7 +84,7 @@ impl DataEngineServer {
         Ok(())
     }
 
-    /// Asynchronously creates a new DataEngineServer.
+    /// Asynchronously creates a new RiftIndexerServer.
     ///
     /// This method sets up the data engine. If needed, it seeds
     /// the underlying MMR with the initial block leaves.
@@ -114,7 +114,7 @@ impl DataEngineServer {
         Ok(Self { data_engine })
     }
 
-    /// Creates a new DataEngineServer from an existing Arc<DataEngine> and the provided port.
+    /// Creates a new RiftIndexerServer from an existing Arc<DataEngine> and the provided port.
     ///
     /// This variant accepts a pre-configured DataEngine and immediately starts
     /// the HTTP server on the specified port in a background task.

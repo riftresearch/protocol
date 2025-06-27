@@ -1508,7 +1508,7 @@ version = "4.0.2"
 source = "git+https://github.com/riftresearch/rust-bitcoincore-rpc-async?rev=4949ff5035e1aacfeab7d86ef654331667c1ef03#4949ff5035e1aacfeab7d86ef654331667c1ef03"
 dependencies = [
  "async-trait",
- "corepc-types 0.8.0 (git+https://github.com/riftresearch/corepc?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37)",
+ "corepc-types 0.8.0 (git+https://github.com/riftresearch/corepc/?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37)",
  "jsonrpc-async",
  "log",
  "serde",
@@ -1994,14 +1994,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "corepc-client"
+version = "0.8.0"
+source = "git+https://github.com/riftresearch/corepc/?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37#ae028263e24da26fed31a9c32232ecdefcb1cb37"
+dependencies = [
+ "bitcoin",
+ "corepc-types 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "corepc-node"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "596e4ee1ff3616ae3f36e89e0b847604034ba689243cc5e7dd08da395b88ec58"
+source = "git+https://github.com/riftresearch/corepc/?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37#ae028263e24da26fed31a9c32232ecdefcb1cb37"
 dependencies = [
  "anyhow",
- "bitcoin_hashes 0.14.0",
- "corepc-client",
+ "bitcoin_hashes 0.13.0",
+ "corepc-client 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "flate2",
  "log",
  "minreq",
@@ -2026,7 +2037,7 @@ dependencies = [
 [[package]]
 name = "corepc-types"
 version = "0.8.0"
-source = "git+https://github.com/riftresearch/corepc?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37#ae028263e24da26fed31a9c32232ecdefcb1cb37"
+source = "git+https://github.com/riftresearch/corepc/?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37#ae028263e24da26fed31a9c32232ecdefcb1cb37"
 dependencies = [
  "bitcoin",
  "serde",
@@ -2418,6 +2429,7 @@ dependencies = [
  "chrono",
  "clap",
  "corepc-node",
+ "dirs 6.0.0",
  "electrsd",
  "env_logger",
  "esplora-client",
@@ -2429,6 +2441,7 @@ dependencies = [
  "log",
  "market-maker",
  "once_cell",
+ "rand 0.9.0",
  "reqwest 0.12.15",
  "rift-core",
  "rift-indexer",
@@ -2441,11 +2454,12 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+ "tracing",
  "which 7.0.3",
 ]
 
 [[package]]
-name = "devnet-server"
+name = "devnet-cli"
 version = "0.1.0"
 dependencies = [
  "alloy",
@@ -2456,6 +2470,7 @@ dependencies = [
  "log",
  "rift-sdk",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2485,7 +2500,16 @@ version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
- "dirs-sys",
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]
@@ -2506,8 +2530,20 @@ checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users",
+ "redox_users 0.4.6",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.5.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2517,7 +2553,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
 dependencies = [
  "libc",
- "redox_users",
+ "redox_users 0.4.6",
  "winapi",
 ]
 
@@ -2630,10 +2666,10 @@ dependencies = [
 [[package]]
 name = "electrsd"
 version = "0.34.0"
-source = "git+https://github.com/RCasatta/electrsd?rev=bdc97e879bad82e13e69c74d898271db12224f44#bdc97e879bad82e13e69c74d898271db12224f44"
+source = "git+https://github.com/riftresearch/electrsd?rev=247221d4f3b2954fb5a21d4652babfdea4cf85ca#247221d4f3b2954fb5a21d4652babfdea4cf85ca"
 dependencies = [
  "bitcoin_hashes 0.14.0",
- "corepc-client",
+ "corepc-client 0.8.0 (git+https://github.com/riftresearch/corepc/?rev=ae028263e24da26fed31a9c32232ecdefcb1cb37)",
  "corepc-node",
  "electrum-client",
  "log",
@@ -5731,6 +5767,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd6f9d3d47bdd2ad6945c5015a226ec6155d0bcdfd8f7cd29f86b71f8de99d2b"
+dependencies = [
+ "getrandom 0.2.15",
+ "libredox",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "regex"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6809,7 +6856,7 @@ dependencies = [
  "cargo_metadata",
  "chrono",
  "clap",
- "dirs",
+ "dirs 5.0.1",
 ]
 
 [[package]]
@@ -7014,7 +7061,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "clap",
- "dirs",
+ "dirs 5.0.1",
  "downloader",
  "enum-map",
  "eyre",
@@ -7201,7 +7248,7 @@ dependencies = [
  "backoff",
  "bincode",
  "cfg-if",
- "dirs",
+ "dirs 5.0.1",
  "eventsource-stream",
  "futures",
  "hashbrown 0.14.5",

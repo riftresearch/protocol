@@ -127,13 +127,7 @@ async fn add_maker_to_whitelist(
 
 #[tokio::test]
 async fn test_calculate_optimal_claim_block_comprehensive() {
-    let (devnet, _funded_sats) = match RiftDevnet::builder()
-        .using_bitcoin(true)
-        .using_esplora(true)
-        .data_engine_db_location(DatabaseLocation::InMemory)
-        .build()
-        .await
-    {
+    let (devnet, _funded_sats) = match RiftDevnet::builder().using_esplora(true).build().await {
         Ok(result) => result,
         Err(e) => {
             panic!("Failed to build devnet: {:?}", e);
@@ -311,12 +305,10 @@ async fn test_whitelist_verification() {
     let auction_owner = MultichainAccount::new(3);
 
     let (devnet, _funded_sats) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .using_esplora(true)
         .funded_evm_address(whitelisted_maker.ethereum_address.to_string())
         .funded_evm_address(non_whitelisted_maker.ethereum_address.to_string())
         .funded_evm_address(auction_owner.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -480,12 +472,10 @@ async fn test_auction_claimer_end_to_end() {
 
         info!("Setting up devnet...");
         let (devnet, _funded_sats) = RiftDevnet::builder()
-            .using_bitcoin(true)
             .using_esplora(true)
             .funded_evm_address(market_maker.ethereum_address.to_string())
             .funded_evm_address(filler_account.ethereum_address.to_string())
             .funded_evm_address(auction_owner.ethereum_address.to_string())
-            .data_engine_db_location(DatabaseLocation::InMemory)
             .build()
             .await
             .expect("Failed to build devnet");
@@ -542,8 +532,8 @@ async fn test_auction_claimer_end_to_end() {
             .unwrap();
         info!("Token decimals: {}", token_decimals);
 
-        let mmr_root = devnet.contract_data_engine.get_mmr_root().await.unwrap();
-        let tip_proof = devnet.contract_data_engine.get_tip_proof().await.unwrap();
+        let mmr_root = devnet.rift_indexer.get_mmr_root().await.unwrap();
+        let tip_proof = devnet.rift_indexer.get_tip_proof().await.unwrap();
         let tip_block_leaf = sol_bindings::BTCDutchAuctionHouse::BlockLeaf {
             blockHash: tip_proof.0.block_hash.into(),
             height: tip_proof.0.height,

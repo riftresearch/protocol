@@ -104,9 +104,7 @@ async fn test_data_engine_handles_restart() {
 
     // Setup devnet with in-memory database (we'll create our own data engine)
     let (devnet, _funded_sats) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .funded_evm_address(maker.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -166,7 +164,7 @@ async fn test_data_engine_handles_restart() {
 
         // Get safe block proof data from devnet's data engine
         let (safe_leaf, safe_siblings, safe_peaks) =
-            devnet.contract_data_engine.get_tip_proof().await?;
+            devnet.rift_indexer.get_tip_proof().await?;
 
         // Create order parameters
         let deposit_params = CreateOrderParams {
@@ -380,10 +378,8 @@ async fn test_data_engine_handles_block_reorg() {
 
     // Setup devnet with in-memory database (we'll create our own data engine)
     let (mut devnet, _funded_sats) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .funded_evm_address(maker.ethereum_address.to_string())
         .funded_evm_address(hypernode_account.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -458,7 +454,7 @@ async fn test_data_engine_handles_block_reorg() {
 
     // Get safe block proof data from devnet's data engine
     let (safe_leaf, safe_siblings, safe_peaks) = devnet
-        .contract_data_engine
+        .rift_indexer
         .get_tip_proof()
         .await
         .expect("Failed to get tip proof");
@@ -556,11 +552,11 @@ async fn test_data_engine_handles_block_reorg() {
         evm_ws_rpc: devnet.ethereum.anvil.ws_endpoint_url().to_string(),
         btc_rpc: devnet.bitcoin.rpc_url_with_cookie.clone(),
         private_key: hex::encode(hypernode_account.secret_bytes),
-        checkpoint_file: devnet.checkpoint_file_path.clone(),
+        checkpoint_file: devnet.checkpoint_file_handle.path().to_string_lossy().to_string(),
         database_location: DatabaseLocation::InMemory,
         rift_exchange_address: devnet.ethereum.rift_exchange_contract.address().to_string(),
         deploy_block_number: 0, // Start from beginning as independent data engine should catch up
-        log_chunk_size: 10000,
+        evm_log_chunk_size: 10000,
         btc_batch_rpc_size: 100,
         proof_generator: ProofGeneratorType::Execute,
         enable_auto_light_client_update: true,
@@ -766,9 +762,7 @@ async fn test_data_engine_handles_reorg_while_down() {
 
     // Setup devnet with in-memory database (we'll create our own data engine)
     let (mut devnet, _funded_sats) = RiftDevnet::builder()
-        .using_bitcoin(true)
         .funded_evm_address(maker.ethereum_address.to_string())
-        .data_engine_db_location(DatabaseLocation::InMemory)
         .build()
         .await
         .expect("Failed to build devnet");
@@ -832,7 +826,7 @@ async fn test_data_engine_handles_reorg_while_down() {
 
     // Get safe block proof data from devnet's data engine
     let (safe_leaf, safe_siblings, safe_peaks) = devnet
-        .contract_data_engine
+        .rift_indexer
         .get_tip_proof()
         .await
         .expect("Failed to get tip proof");

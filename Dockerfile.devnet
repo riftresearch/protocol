@@ -27,7 +27,7 @@ COPY . .
 # Build the devnet binary
 RUN cargo build --release --bin devnet
 
-# Default entrypoint
+# Default entrypoint - runs server mode by default
 ENTRYPOINT ["/app/target/release/devnet"]
-CMD []
+CMD ["server"]
 

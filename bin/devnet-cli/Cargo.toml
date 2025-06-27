@@ -1,5 +1,5 @@
 [package]
-name = "devnet-server"
+name = "devnet-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,3 +18,4 @@ rift-sdk = { workspace = true}
 tokio = { workspace = true}
 env_logger = { workspace = true}
 alloy = {workspace = true}
+tracing-subscriber = {workspace = true}

@@ -56,9 +56,9 @@ pub struct HypernodeArgs {
     #[arg(long, env)]
     pub deploy_block_number: u64,
 
-    /// Log chunk size
+    /// Log chunk size for Ethereum RPC calls
     #[arg(long, env, default_value = "10000")]
-    pub log_chunk_size: u64,
+    pub evm_log_chunk_size: u64,
 
     /// Chunk download size, number of bitcoin rpc requests to execute in a single batch
     #[arg(long, env, default_value = "100")]
@@ -133,14 +133,14 @@ impl HypernodeArgs {
             Arc::new(RiftProofGenerator::new(proof_generator_type))
         });
 
-        let contract_data_engine = {
+        let rift_indexer = {
             info!("Starting contract data engine initialization");
             let engine = rift_indexer::engine::RiftIndexer::start(
                 &self.database_location,
                 evm_rpc.clone(),
                 rift_exchange_address,
                 self.deploy_block_number,
-                self.log_chunk_size,
+                self.evm_log_chunk_size,
                 checkpoint_leaves,
                 &mut join_set,
             )
@@ -189,7 +189,7 @@ impl HypernodeArgs {
 
         info!("Starting hypernode watchtowers...");
         SwapWatchtower::run(
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             bitcoin_data_engine.clone(),
             evm_rpc.clone(),
             btc_rpc.clone(),
@@ -204,13 +204,13 @@ impl HypernodeArgs {
             rift_exchange_address,
             transaction_broadcaster.clone(),
             evm_rpc.clone(),
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             &mut join_set,
         )
         .await?;
 
         ForkWatchtower::run(
-            contract_data_engine.clone(),
+            rift_indexer.clone(),
             bitcoin_data_engine.clone(),
             btc_rpc.clone(),
             evm_rpc.clone(),
@@ -226,7 +226,7 @@ impl HypernodeArgs {
             LightClientUpdateWatchtower::run(
                 self.auto_light_client_update_block_lag_threshold,
                 Duration::from_secs(self.auto_light_client_update_check_interval_secs),
-                contract_data_engine.clone(),
+                rift_indexer.clone(),
                 bitcoin_data_engine.clone(),
                 btc_rpc.clone(),
                 evm_rpc.clone(),

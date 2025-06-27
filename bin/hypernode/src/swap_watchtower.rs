@@ -68,7 +68,7 @@ pub struct SwapWatchtower;
 
 impl SwapWatchtower {
     pub fn run(
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         evm_rpc: DynProvider,
         btc_rpc: Arc<AsyncBitcoinClient>,
@@ -83,7 +83,7 @@ impl SwapWatchtower {
 
         let evm_rpc_clone = evm_rpc.clone();
         let btc_rpc_clone = btc_rpc.clone();
-        let contract_data_engine_clone = contract_data_engine.clone();
+        let rift_indexer_clone = rift_indexer.clone();
         let bitcoin_data_engine_clone = bitcoin_data_engine.clone();
 
         join_set.spawn(
@@ -91,7 +91,7 @@ impl SwapWatchtower {
                 Self::search_for_swap_payments(
                     evm_rpc_clone,
                     btc_rpc_clone,
-                    contract_data_engine_clone,
+                    rift_indexer_clone,
                     bitcoin_data_engine_clone,
                     bitcoin_concurrency_limit,
                     confirmed_swaps_tx,
@@ -104,7 +104,7 @@ impl SwapWatchtower {
         let btc_rpc_clone = btc_rpc.clone();
         let evm_rpc_clone = evm_rpc.clone();
         let transaction_broadcaster_clone = transaction_broadcaster.clone();
-        let contract_data_engine_clone = contract_data_engine.clone();
+        let rift_indexer_clone = rift_indexer.clone();
         let bitcoin_data_engine_clone = bitcoin_data_engine.clone();
         let proof_generator_clone = proof_generator.clone();
         join_set.spawn(
@@ -113,7 +113,7 @@ impl SwapWatchtower {
                     confirmed_swaps_rx,
                     btc_rpc_clone,
                     bitcoin_data_engine_clone,
-                    contract_data_engine_clone,
+                    rift_indexer_clone,
                     bitcoin_concurrency_limit,
                     proof_generator_clone,
                     rift_exchange_address,
@@ -130,7 +130,7 @@ impl SwapWatchtower {
     async fn search_for_swap_payments(
         evm_rpc: DynProvider,
         btc_rpc: Arc<AsyncBitcoinClient>,
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         bitcoin_concurrency_limit: usize,
         confirmed_swaps_tx: UnboundedSender<Vec<ConfirmedPayment>>,
@@ -143,7 +143,7 @@ impl SwapWatchtower {
             compute_block_search_range(
                 evm_rpc,
                 btc_rpc.clone(),
-                contract_data_engine.clone(),
+                rift_indexer.clone(),
                 bitcoin_data_engine.clone(),
             )
             .await?;
@@ -211,7 +211,7 @@ impl SwapWatchtower {
                 .await?;
 
             pending_payments.extend(
-                find_new_swaps_in_blocks(contract_data_engine.clone(), &full_blocks).await?,
+                find_new_swaps_in_blocks(rift_indexer.clone(), &full_blocks).await?,
             );
 
             let confirmed_payments = find_pending_swaps_with_sufficient_confirmations(
@@ -239,7 +239,7 @@ impl SwapWatchtower {
         mut confirmed_swaps_rx: UnboundedReceiver<Vec<ConfirmedPayment>>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
-        contract_data_engine: Arc<RiftIndexer>,
+        rift_indexer: Arc<RiftIndexer>,
         bitcoin_concurrency_limit: usize,
         proof_generator: Arc<RiftProofGenerator>,
         evm_address: Address,
@@ -270,7 +270,7 @@ impl SwapWatchtower {
             // 2. If it's equal to the locally stored chain, do nothing
 
             // lock both the light client and bitcoin core mmrs while we finalize the swaps
-            let light_client_mmr = contract_data_engine.checkpointed_block_tree.read().await;
+            let light_client_mmr = rift_indexer.checkpointed_block_tree.read().await;
             let bitcoin_mmr = bitcoin_data_engine.indexed_mmr.read().await;
             let btc_light_client_root = light_client_mmr.get_root().await?;
             let btc_local_root = bitcoin_mmr.get_root().await?;
@@ -404,7 +404,7 @@ impl SwapWatchtower {
 async fn compute_block_search_range(
     evm_rpc: DynProvider,
     btc_rpc: Arc<AsyncBitcoinClient>,
-    contract_data_engine: Arc<RiftIndexer>,
+    rift_indexer: Arc<RiftIndexer>,
     bitcoin_data_engine: Arc<BitcoinDataEngine>,
 ) -> eyre::Result<(u32, u32)> {
     let current_evm_timestamp = evm_rpc
@@ -422,7 +422,7 @@ async fn compute_block_search_range(
         .await?
         - 1;
 
-    let oldest_active_deposit = contract_data_engine
+    let oldest_active_deposit = rift_indexer
         .get_oldest_active_order(current_evm_timestamp)
         .await?;
 
@@ -453,9 +453,9 @@ async fn compute_block_search_range(
     ))
 }
 
-#[instrument(level = "info", skip(contract_data_engine, blocks))]
+#[instrument(level = "info", skip(rift_indexer, blocks))]
 async fn find_new_swaps_in_blocks(
-    contract_data_engine: Arc<RiftIndexer>,
+    rift_indexer: Arc<RiftIndexer>,
     blocks: &[Block],
 ) -> eyre::Result<Vec<PendingPayment>> {
     /*
@@ -526,7 +526,7 @@ async fn find_new_swaps_in_blocks(
                     .map(|output| (output.script_pubkey.as_bytes(), output.value.to_sat()))
                     .collect::<Vec<_>>();
 
-                let nested_potential_orders = contract_data_engine
+                let nested_potential_orders = rift_indexer
                     .get_live_orders_by_script_and_amounts(&script_pub_key_amount_pairs)
                     .await?;
 
@@ -854,7 +854,7 @@ fn get_leaf_and_block_header_from_block_info(
 /// # Arguments
 ///
 /// * `bitcoin_data_engine` - The Bitcoin data engine that contains the latest chain data
-/// * `contract_data_engine` - The contract data engine that contains the current on-chain state
+/// * `rift_indexer` - The contract data engine that contains the current on-chain state
 ///
 /// # Returns
 ///
