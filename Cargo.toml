@@ -100,8 +100,8 @@ bitcoincore-rpc-async = { git = "https://github.com/riftresearch/rust-bitcoincor
 esplora-client = { git = "https://github.com/riftresearch/rust-esplora-client.git", rev = "a571328ff799993f877d87db8dad6e4c6b313225", features = ["async", "tokio"] }
 bitcoin-coin-selection =  { version = "0.7.0", features = ["rand"]}
 
-corepc-node = { git = "https://github.com/riftresearch/corepc/", rev = "ae028263e24da26fed31a9c32232ecdefcb1cb37", features = ["29_0", "download"] }
-electrsd = { git = "https://github.com/riftresearch/electrsd", rev = "247221d4f3b2954fb5a21d4652babfdea4cf85ca", features = ["corepc-node_29_0", "esplora_a33e97e1", "legacy"] }
+corepc-node = { git = "https://github.com/riftresearch/corepc/", rev = "8cf7555501cbcebd6c9eeec4054ef042b929156b", features = ["29_0", "download"] }
+electrsd = { git = "https://github.com/riftresearch/electrsd", rev = "bf207ce9cf4eb5441e7a27920798bb03f5a4cc41", features = ["corepc-node_29_0", "esplora_a33e97e1", "legacy"] }
 
 dotenv = "0.15.0"
 bip39 = "2.1.0"
