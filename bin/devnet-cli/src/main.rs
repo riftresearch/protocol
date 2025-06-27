@@ -17,7 +17,7 @@ use tracing_subscriber::EnvFilter;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    
+
     /// Address to fund with cbBTC and Ether (used when no subcommand provided)
     #[arg(short = 'a', long, global = true)]
     fund_address: Vec<String>,
@@ -76,6 +76,12 @@ async fn run_server(
     fork_url: String,
     fork_block_number: Option<u64>,
 ) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .try_init()
+        .ok();
     let server_start = tokio::time::Instant::now();
     info!("[Devnet Server] Starting devnet server...");
 
@@ -85,7 +91,11 @@ async fn run_server(
         .get_chain_id()
         .await
         .expect("Failed to get chain id");
-    info!("[Devnet Server] Retrieved chain ID {} in {:?}", chain_id, chain_id_start.elapsed());
+    info!(
+        "[Devnet Server] Retrieved chain ID {} in {:?}",
+        chain_id,
+        chain_id_start.elapsed()
+    );
 
     if !BUNDLER_CHAIN_MAP.contains_key(&chain_id) {
         eyre::bail!("Chain ID {} is not supported", chain_id);
@@ -109,8 +119,14 @@ async fn run_server(
     info!("[Devnet Server] Building devnet...");
     let build_start = tokio::time::Instant::now();
     let (mut devnet, _funding_sats) = devnet_builder.build().await?;
-    info!("[Devnet Server] Devnet built in {:?}", build_start.elapsed());
-    info!("[Devnet Server] Total startup time: {:?}", server_start.elapsed());
+    info!(
+        "[Devnet Server] Devnet built in {:?}",
+        build_start.elapsed()
+    );
+    info!(
+        "[Devnet Server] Total startup time: {:?}",
+        server_start.elapsed()
+    );
 
     tokio::select! {
         _ = signal::ctrl_c() => {
@@ -155,7 +171,10 @@ async fn run_cache() -> Result<()> {
     cache.save_devnet(devnet).await?;
     info!("[Devnet Cache] Cache saved in {:?}", save_start.elapsed());
 
-    info!("[Devnet Cache] Devnet cached successfully! Total time: {:?}", cache_start.elapsed());
+    info!(
+        "[Devnet Cache] Devnet cached successfully! Total time: {:?}",
+        cache_start.elapsed()
+    );
 
     Ok(())
 }

@@ -3,7 +3,7 @@ pub mod db;
 pub mod order_filler;
 pub mod tokenized_btc_redeemer;
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy::primitives::Address;
 use alloy::providers::Provider;
@@ -15,11 +15,11 @@ use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use bitcoincore_rpc_async::Auth;
 use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
-use rift_indexer::engine::RiftIndexer;
 use esplora_client::AsyncClient as EsploraClient;
 use eyre::Result;
 use log::error;
 use order_filler::{OrderFiller, OrderFillerConfig};
+use rift_indexer::engine::RiftIndexer;
 use rift_sdk::btc_txn_broadcaster::BitcoinTransactionBroadcasterTrait;
 use rift_sdk::btc_txn_broadcaster::SimpleBitcoinTransactionBroadcaster;
 use rift_sdk::fee_provider::EthFeeOracle;
@@ -174,6 +174,25 @@ fn parse_network(s: &str) -> Result<Network, String> {
 
 impl MakerConfig {
     pub async fn run(&self) -> Result<()> {
+        let rift_indexer_database_location = match &self.database_location {
+            DatabaseLocation::InMemory => DatabaseLocation::InMemory,
+            DatabaseLocation::Directory(path) => DatabaseLocation::Directory(
+                PathBuf::from_str(path)?
+                    .join("rift_indexer")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        };
+        let bitcoin_data_engine_database_location = match &self.database_location {
+            DatabaseLocation::InMemory => DatabaseLocation::InMemory,
+            DatabaseLocation::Directory(path) => DatabaseLocation::Directory(
+                PathBuf::from_str(path)?
+                    .join("bitcoin_data_engine")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        };
+
         let mut join_set = JoinSet::new();
         let wallet_provider = Arc::new(
             create_websocket_wallet_provider(
@@ -238,7 +257,7 @@ impl MakerConfig {
         let rift_indexer = {
             info!("Starting contract data engine initialization");
             let engine = rift_indexer::engine::RiftIndexer::start(
-                &self.database_location,
+                &rift_indexer_database_location,
                 evm_rpc.clone(),
                 auction_house_address,
                 self.deploy_block_number,
@@ -271,7 +290,7 @@ impl MakerConfig {
 
         let bitcoin_data_engine = Arc::new(
             BitcoinDataEngine::new(
-                &self.database_location,
+                &bitcoin_data_engine_database_location,
                 bitcoin_rpc.clone(),
                 self.btc_batch_rpc_size,
                 Duration::from_secs(10),
@@ -356,7 +375,6 @@ impl MakerConfig {
             rift_exchange_address: auction_house_address,
             delay_seconds: self.order_delay_seconds,
             max_batch_size: self.order_max_batch_size,
-            database_location: self.database_location.clone(),
             required_confirmations: self.order_required_confirmations,
             confirmation_timeout: self.order_confirmation_timeout,
         };

@@ -6,7 +6,6 @@ use alloy::{
 use rift_sdk::{txn_builder::P2WPKHBitcoinWallet, MultichainAccount};
 
 use std::sync::Arc;
-use tracing_subscriber::{util::SubscriberInitExt, EnvFilter};
 
 use bitcoincore_rpc_async::RpcApi;
 

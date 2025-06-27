@@ -10,9 +10,8 @@ use alloy::hex;
 use serde::{Deserialize, Serialize};
 
 use accumulators::mmr::{
-    element_index_to_leaf_index, elements_count_to_leaf_count,
-    map_leaf_index_to_element_index, AppendResult, PeaksOptions, Proof as ClientMMRProof,
-    ProofOptions, MMR as ClientMMR,
+    element_index_to_leaf_index, elements_count_to_leaf_count, map_leaf_index_to_element_index,
+    AppendResult, PeaksOptions, Proof as ClientMMRProof, ProofOptions, MMR as ClientMMR,
 };
 use accumulators::{
     hasher::keccak::KeccakHasher as AccumulatorsKeccakHasher,
@@ -280,6 +279,15 @@ impl<H: LeafHasher> IndexedMMR<H> {
         let store: Arc<dyn Store + Send + Sync> = match database_location {
             DatabaseLocation::InMemory => Arc::new(InMemoryStore::default()),
             DatabaseLocation::Directory(path) => {
+                // create the dir if it doesn't exist
+                if !PathBuf::from(path).exists() {
+                    tokio::fs::create_dir_all(path).await.map_err(|e| {
+                        RiftSdkError::MMRError(format!(
+                            "[IndexedMMR] Failed to create dir: {:?}",
+                            e
+                        ))
+                    })?;
+                }
                 let mmr_db_path = PathBuf::from(path).join("mmr.db");
                 let mmr_db_path_str = mmr_db_path.to_str().expect("Invalid path");
                 let sqlite = SQLiteStore::new(mmr_db_path_str, Some(true), None)

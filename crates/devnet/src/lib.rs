@@ -14,7 +14,7 @@ use rift_sdk::proof_generator::ProofGeneratorType;
 use sol_bindings::RiftExchangeHarnessInstance;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
@@ -436,6 +436,8 @@ pub struct RiftDevnet {
     pub join_set: JoinSet<eyre::Result<()>>,
     pub checkpoint_file_handle: NamedTempFile,
     pub rift_indexer_datadir: tempfile::TempDir,
+    hypernode_db_dir: Option<TempDir>,
+    market_maker_db_dir: Option<TempDir>,
     _rift_indexer_server: Option<RiftIndexerServer>,
 }
 
@@ -649,6 +651,11 @@ impl RiftDevnetBuilder {
                     );
                     let tip_block_leaf = *checkpoint_leaves.last().unwrap();
                     let rift_indexer_datadir = get_new_temp_dir()?;
+                    println!("tip_block_leaf: {:?}", tip_block_leaf);
+                    println!(
+                        "last checkpoint_leaf: {:?}",
+                        checkpoint_leaves.last().unwrap()
+                    );
 
                     // 4) Create/seed DataEngine
                     info!("[Devnet Builder] Seeding data engine with checkpoint leaves...");
@@ -812,20 +819,22 @@ impl RiftDevnetBuilder {
         }
 
         // 10) Setup interactive mode if enabled
-        if self.interactive {
-            self.setup_interactive_mode(
-                &bitcoin_devnet,
-                &ethereum_devnet,
-                &checkpoint_file_handle.path().to_string_lossy().to_string(),
-                &DatabaseLocation::Directory(
-                    rift_indexer_datadir.path().to_string_lossy().to_string(),
-                ),
-                deployment_block_number,
-                self.using_esplora,
-                &mut join_set,
-            )
-            .await?;
-        }
+        let (hypernode_db_dir, market_maker_db_dir) = if self.interactive {
+            let (hypernode_db_dir, market_maker_db_dir) = self
+                .setup_interactive_mode(
+                    &bitcoin_devnet,
+                    &ethereum_devnet,
+                    &checkpoint_file_handle.path().to_string_lossy().to_string(),
+                    deployment_block_number,
+                    self.using_esplora,
+                    &mut join_set,
+                )
+                .await?;
+
+            (Some(hypernode_db_dir), Some(market_maker_db_dir))
+        } else {
+            (None, None)
+        };
 
         // 11) Return the final devnet
         let devnet = crate::RiftDevnet {
@@ -836,6 +845,8 @@ impl RiftDevnetBuilder {
             join_set,
             _rift_indexer_server: rift_indexer_server,
             checkpoint_file_handle,
+            hypernode_db_dir,
+            market_maker_db_dir,
         };
         info!(
             "[Devnet Builder] Devnet setup took {:?}",
@@ -851,11 +862,10 @@ impl RiftDevnetBuilder {
         bitcoin_devnet: &BitcoinDevnet,
         ethereum_devnet: &EthDevnet,
         checkpoint_file_path: &str,
-        rift_indexer_db_location: &DatabaseLocation,
         deployment_block_number: u64,
         using_esplora: bool,
         join_set: &mut JoinSet<eyre::Result<()>>,
-    ) -> Result<()> {
+    ) -> Result<(TempDir, TempDir)> {
         let setup_start = Instant::now();
         let hypernode_account = MultichainAccount::new(151);
         let market_maker_account = MultichainAccount::new(152);
@@ -909,6 +919,9 @@ impl RiftDevnetBuilder {
         );
 
         // Start hypernode
+        let hypernode_db_dir = get_new_temp_dir()?;
+        let hypernode_db_location = DatabaseLocation::InMemory;
+        // DatabaseLocation::Directory(hypernode_db_dir.path().to_string_lossy().to_string());
         let hypernode_start = Instant::now();
         info!("[Interactive Setup] Starting hypernode...");
         let hypernode_args = hypernode::HypernodeArgs {
@@ -916,7 +929,7 @@ impl RiftDevnetBuilder {
             btc_rpc: bitcoin_devnet.rpc_url_with_cookie.clone(),
             private_key: hex::encode(hypernode_account.secret_bytes),
             checkpoint_file: checkpoint_file_path.to_string(),
-            database_location: rift_indexer_db_location.clone(),
+            database_location: hypernode_db_location.clone(),
             rift_exchange_address: ethereum_devnet.rift_exchange_contract.address().to_string(),
             deploy_block_number: deployment_block_number,
             evm_log_chunk_size: LOG_CHUNK_SIZE,
@@ -941,6 +954,9 @@ impl RiftDevnetBuilder {
         // Start market maker
         let market_maker_start = Instant::now();
         info!("[Interactive Setup] Starting market maker...");
+        let market_maker_db_dir = get_new_temp_dir()?;
+        let market_maker_db_location = DatabaseLocation::InMemory;
+        // DatabaseLocation::Directory(market_maker_db_dir.path().to_string_lossy().to_string());
         let maker_config = market_maker::MakerConfig {
             evm_ws_rpc: ethereum_devnet.anvil.ws_endpoint_url().to_string(),
             btc_rpc: bitcoin_devnet.rpc_url_with_cookie.clone(),
@@ -959,7 +975,7 @@ impl RiftDevnetBuilder {
                 .clone()
                 .expect("Esplora URL is required for market maker"),
             checkpoint_file: checkpoint_file_path.to_string(),
-            database_location: rift_indexer_db_location.clone(),
+            database_location: market_maker_db_location.clone(),
             deploy_block_number: deployment_block_number,
             evm_log_chunk_size: LOG_CHUNK_SIZE,
             btc_batch_rpc_size: 100,
@@ -990,20 +1006,21 @@ impl RiftDevnetBuilder {
         info!("[Interactive Setup] Starting Bitcoin auto-mining task...");
         let bitcoin_rpc_url = bitcoin_devnet.rpc_url_with_cookie.clone();
         let miner_address = bitcoin_devnet.miner_address.clone();
+        let cookie = bitcoin_devnet.cookie.clone();
 
         join_set.spawn(async move {
             use bitcoincore_rpc_async::{Auth, Client as AsyncBitcoinRpcClient, RpcApi};
 
             // Create dedicated RPC client for mining
             // Use Auth::None since credentials are already embedded in the URL
-            let mining_client = match AsyncBitcoinRpcClient::new(bitcoin_rpc_url, Auth::None).await
-            {
-                Ok(client) => client,
-                Err(e) => {
-                    log::error!("Failed to create mining RPC client: {}", e);
-                    return Ok(());
-                }
-            };
+            let mining_client =
+                match AsyncBitcoinRpcClient::new(bitcoin_rpc_url, Auth::CookieFile(cookie)).await {
+                    Ok(client) => client,
+                    Err(e) => {
+                        log::error!("Failed to create mining RPC client: {}", e);
+                        return Ok(());
+                    }
+                };
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
@@ -1081,6 +1098,6 @@ impl RiftDevnetBuilder {
         println!("Anvil Auto-mining:          Every 1 second");
         println!("---RIFT DEVNET---");
 
-        Ok(())
+        Ok((hypernode_db_dir, market_maker_db_dir))
     }
 }

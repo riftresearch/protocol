@@ -67,7 +67,8 @@ impl RiftIndexer {
         let swap_database_connection = Arc::new(match database_location.clone() {
             DatabaseLocation::InMemory => tokio_rusqlite::Connection::open_in_memory().await?,
             DatabaseLocation::Directory(path) => {
-                tokio_rusqlite::Connection::open(get_qualified_swaps_database_path(path)).await?
+                tokio_rusqlite::Connection::open(get_qualified_swaps_database_path(path).await?)
+                    .await?
             }
         });
 
@@ -350,10 +351,15 @@ impl RiftIndexer {
     }
 }
 
-fn get_qualified_swaps_database_path(database_location: String) -> String {
+async fn get_qualified_swaps_database_path(database_location: String) -> Result<String> {
     let path = PathBuf::from(database_location);
     let swaps_db_path = path.join("swaps.db");
-    swaps_db_path.to_str().expect("Invalid path").to_string()
+    if !swaps_db_path.exists() {
+        tokio::fs::create_dir_all(path)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to create swaps database dir: {:?}", e))?;
+    }
+    Ok(swaps_db_path.to_str().unwrap().to_string())
 }
 
 /// Validate stored events against current chain state on startup.

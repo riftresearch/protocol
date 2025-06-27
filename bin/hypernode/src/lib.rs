@@ -17,6 +17,7 @@ use rift_sdk::txn_broadcast::TransactionBroadcaster;
 use rift_sdk::{
     create_websocket_wallet_provider, handle_background_thread_result, DatabaseLocation,
 };
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -91,6 +92,24 @@ const BITCOIN_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 impl HypernodeArgs {
     pub async fn run(&self) -> Result<()> {
         let rift_exchange_address = Address::from_str(&self.rift_exchange_address)?;
+        let rift_indexer_database_location = match &self.database_location {
+            DatabaseLocation::InMemory => DatabaseLocation::InMemory,
+            DatabaseLocation::Directory(path) => DatabaseLocation::Directory(
+                PathBuf::from_str(path)?
+                    .join("rift_indexer")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        };
+        let bitcoin_data_engine_database_location = match &self.database_location {
+            DatabaseLocation::InMemory => DatabaseLocation::InMemory,
+            DatabaseLocation::Directory(path) => DatabaseLocation::Directory(
+                PathBuf::from_str(path)?
+                    .join("bitcoin_data_engine")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        };
 
         let checkpoint_leaves = decompress_checkpoint_file(&self.checkpoint_file)?;
         info!(
@@ -136,7 +155,7 @@ impl HypernodeArgs {
         let rift_indexer = {
             info!("Starting contract data engine initialization");
             let engine = rift_indexer::engine::RiftIndexer::start(
-                &self.database_location,
+                &rift_indexer_database_location,
                 evm_rpc.clone(),
                 rift_exchange_address,
                 self.deploy_block_number,
@@ -160,7 +179,7 @@ impl HypernodeArgs {
         let bitcoin_data_engine = {
             info!("Starting bitcoin data engine initialization");
             let engine = bitcoin_data_engine::BitcoinDataEngine::new(
-                &self.database_location,
+                &bitcoin_data_engine_database_location,
                 btc_rpc.clone(),
                 self.btc_batch_rpc_size,
                 BITCOIN_BLOCK_POLL_INTERVAL,

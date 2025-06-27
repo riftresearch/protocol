@@ -38,7 +38,6 @@ pub struct OrderFillerConfig {
     pub rift_exchange_address: Address,
     pub delay_seconds: u64,
     pub max_batch_size: usize,
-    pub database_location: DatabaseLocation,
     pub required_confirmations: u32,
     pub confirmation_timeout: u64,
 }
@@ -50,7 +49,6 @@ impl Default for OrderFillerConfig {
             rift_exchange_address: Address::ZERO,
             delay_seconds: 30,
             max_batch_size: 10,
-            database_location: DatabaseLocation::InMemory,
             required_confirmations: 6,
             confirmation_timeout: 86400,
         }
