@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy::{
-    primitives::{Address, TxHash, U256},
+    primitives::{Address, U256},
     providers::{ext::AnvilApi, Provider},
     sol_types::SolEvent,
 };
@@ -10,36 +10,16 @@ use bitcoin::Amount;
 use devnet::RiftDevnet;
 use eyre::Result;
 use hypernode::HypernodeArgs;
-use log::{error, info, warn};
+use log::{info, warn};
 use market_maker::MakerConfig;
 use rift_indexer::models::SwapStatus;
 use rift_sdk::{
     create_websocket_wallet_provider, txn_builder::P2WPKHBitcoinWallet, DatabaseLocation,
     MultichainAccount,
 };
-use sol_bindings::{AuctionUpdated, BTCDutchAuctionHouse, DutchAuctionParams, MappingWhitelist};
+use sol_bindings::{AuctionUpdated, BTCDutchAuctionHouse, DutchAuctionParams};
 use tokio::time::timeout;
 
-use bitcoin_data_engine::BitcoinDataEngine;
-use bitcoincore_rpc_async::Auth;
-use hypernode::{
-    fork_watchtower::ForkWatchtower, release_watchtower::ReleaseWatchtower,
-    swap_watchtower::SwapWatchtower,
-};
-use market_maker::{
-    auction_claimer::{AuctionClaimer, AuctionClaimerConfig},
-    order_filler::{OrderFiller, OrderFillerConfig},
-};
-use rift_sdk::{
-    bitcoin_utils::AsyncBitcoinClient,
-    btc_txn_broadcaster::{
-        BitcoinTransactionBroadcasterTrait, SimpleBitcoinTransactionBroadcaster,
-    },
-    fee_provider::{BtcFeeOracle, EthFeeOracle},
-    proof_generator::{ProofGeneratorType, RiftProofGenerator},
-    txn_broadcast::TransactionBroadcaster,
-};
-use tokio::task::JoinSet;
 
 #[tokio::test]
 async fn test_market_maker_hypernode_end_to_end() {
@@ -416,7 +396,7 @@ async fn monitor_workflow_fn(
     devnet: &DevnetConfig,
     mm_handle: &tokio::task::JoinHandle<Result<()>>,
     hn_handle: &tokio::task::JoinHandle<Result<()>>,
-    market_maker_evm_address: Address,
+    _market_maker_evm_address: Address,
 ) -> Result<()> {
     tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -426,7 +406,7 @@ async fn monitor_workflow_fn(
         devnet,
         mm_handle,
         hn_handle,
-        market_maker_evm_address,
+        _market_maker_evm_address,
     )
     .await
 }
@@ -500,7 +480,7 @@ async fn create_auction(
         .await?;
 
     for log in receipt.inner.logs() {
-        if log.topics().len() > 0 && log.topics()[0] == AuctionUpdated::SIGNATURE_HASH {
+        if !log.topics().is_empty() && log.topics()[0] == AuctionUpdated::SIGNATURE_HASH {
             if let Ok(event) = AuctionUpdated::decode_log(&log.inner) {
                 let auction_index = event.data.auction.index.to::<u64>();
                 info!("Auction created with index: {}", auction_index);
@@ -518,7 +498,7 @@ async fn monitor_workflow(
     devnet: &DevnetConfig,
     mm_handle: &tokio::task::JoinHandle<Result<()>>,
     hn_handle: &tokio::task::JoinHandle<Result<()>>,
-    market_maker_evm_address: Address,
+    _market_maker_evm_address: Address,
 ) -> Result<()> {
     info!(
         "Monitoring end-to-end workflow for auction {}...",
@@ -606,9 +586,6 @@ async fn monitor_workflow(
                         }
                         SwapStatus::Refunded => {
                             return Err(eyre::eyre!("Swap was refunded - workflow failed"));
-                        }
-                        _ => {
-                            info!("Swap status: {:?}", current_status);
                         }
                     }
                     last_status = Some(current_status);

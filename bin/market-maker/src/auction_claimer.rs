@@ -2,21 +2,18 @@ use alloy::providers::{DynProvider, Provider};
 use alloy::rpc::types::{Filter, Log};
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{SolEvent, SolValue};
-use bitcoin_light_client_core::hasher::Keccak256Hasher;
-use rift_indexer::{engine::RiftIndexer, models::ChainAwareOrder};
+use rift_indexer::engine::RiftIndexer;
 use eyre::{eyre, Result};
 use log::{debug, error, info, warn};
-use rift_sdk::checkpoint_mmr::CheckpointedBlockTree;
-use rift_sdk::create_websocket_wallet_provider;
 use rift_sdk::fee_provider::BtcFeeProvider;
 use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
-use sol_bindings::BTCDutchAuctionHouse::{BTCDutchAuctionHouseErrors, BlockLeaf};
+use sol_bindings::BTCDutchAuctionHouse::BTCDutchAuctionHouseErrors;
 use sol_bindings::{
-    AuctionUpdated, BTCDutchAuctionHouseInstance, BitcoinLightClientInstance, DutchAuction, MappingWhitelistInstance
+    AuctionUpdated, BTCDutchAuctionHouseInstance, DutchAuction, MappingWhitelistInstance
 };
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 use tokio::{
-    sync::{mpsc, Mutex, RwLock},
+    sync::{mpsc, Mutex},
     task::JoinSet,
 };
 use rift_sdk::fee_provider::EthFeeProvider;
@@ -28,8 +25,6 @@ const AUCTION_CLAIM_GAS_LIMIT: u64 = 300_000;
 // Default BTC transaction size calculation
 const BTC_P2WPKH_INPUT_VBYTES: u64 = 68;  // Witness input size
 const BTC_P2WPKH_OUTPUT_VBYTES: u64 = 31; // P2WPKH output size
-const BTC_P2PKH_OUTPUT_VBYTES: u64 = 34;  // P2PKH output size
-const BTC_P2SH_OUTPUT_VBYTES: u64 = 32;   // P2SH output size
 const BTC_TX_OVERHEAD_VBYTES: u64 = 11;   // Version (4) + locktime (4) + input/output counts (1-3)
 const BTC_OP_RETURN_OUTPUT_VBYTES: u64 = 43; // OP_RETURN with 32 bytes of data
 
@@ -218,7 +213,7 @@ pub async fn calculate_optimal_claim_block(
     // t(a) = t_0 + (t_1 - t_0)(a - a_0)/(a_1 - a_0)
 
     let t_0 = start_block;
-    let t_1 = start_block + decay_blocks;
+    let _t_1 = start_block + decay_blocks;
     let a_0_f64 = start_btc_out_f64;
     let a_1_f64 = end_btc_out_f64;
     let a_f64 = max_sent_sats_f64;
@@ -306,9 +301,9 @@ impl AuctionClaimer {
 
         // Block processor task
         let provider_for_processor = provider.clone();
-        let pending_auctions_for_processor = pending_auctions.clone();
+        let pending_auctions_for_processor = pending_auctions;
         let config_for_processor = config.clone();
-        let auction_tx_for_processor = auction_tx.clone();
+        let auction_tx_for_processor = auction_tx;
 
         join_set.spawn(Self::run_block_processor(
             provider_for_processor,
@@ -318,10 +313,10 @@ impl AuctionClaimer {
         ));
 
         // Claim auctions task
-        let config_for_claimer = config.clone();
-        let provider_for_claimer = provider.clone();
-        let rift_indexer_for_claimer = rift_indexer.clone();
-        let transaction_broadcaster_for_claimer = transaction_broadcaster.clone();
+        let config_for_claimer = config;
+        let provider_for_claimer = provider;
+        let rift_indexer_for_claimer = rift_indexer;
+        let transaction_broadcaster_for_claimer = transaction_broadcaster;
 
         join_set.spawn(Self::run_auction_claimer(
             provider_for_claimer,
@@ -551,7 +546,7 @@ impl AuctionClaimer {
                     .get_tip_proof()
                     .await;
                 
-                let (leaf, siblings, peaks) = match proof_result {
+                let (_leaf, siblings, peaks) = match proof_result {
                     Ok((leaf, siblings, peaks)) => {
                         let leaf_height = leaf.height;
                         let current_block = match provider.get_block_number().await {

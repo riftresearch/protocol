@@ -595,7 +595,7 @@ mod tests {
             .unwrap();
 
         let current_tip_leaf = last_appended_leaf;
-        let current_tip_header = last_appended_header;
+        let _current_tip_header = last_appended_header;
 
         let parent_retarget_height = get_retarget_height(parent_leaf.height) as usize;
         println!("Parent retarget height: {}", parent_retarget_height);
@@ -618,11 +618,11 @@ mod tests {
             .await
             .unwrap();
 
-        let parent_retarget_observed_leaf_hash = parent_retarget_proof.element_hash.clone();
+        let parent_retarget_observed_leaf_hash = &parent_retarget_proof.element_hash;
 
         println!(
             "Parent retarget observed leaf hash: {}",
-            &parent_retarget_observed_leaf_hash
+            parent_retarget_observed_leaf_hash
         );
 
         println!(
@@ -631,10 +631,12 @@ mod tests {
         );
 
         assert!(
-            parent_retarget_observed_leaf_hash
+            *parent_retarget_observed_leaf_hash
                 == digest_to_hex(&parent_retarget_leaf.hash::<Keccak256Hasher>()),
             "Parent retarget proof is not for the correct leaf"
         );
+        
+        let parent_retarget_proof_for_circuit = client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof);
 
         let current_mmr_root = circuit_mmr.get_root();
         let current_mmr_bagged_peak = circuit_mmr.bag_peaks().unwrap();
@@ -658,7 +660,7 @@ mod tests {
                 header: parent_retarget_header,
                 mmr_data: ProvenLeaf {
                     leaf: parent_retarget_leaf,
-                    proof: client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof),
+                    proof: parent_retarget_proof_for_circuit,
                 },
             },
             ProvenLeaf {

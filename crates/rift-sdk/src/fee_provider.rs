@@ -3,8 +3,6 @@ use crate::quote::fetch_weth_cbbtc_conversion_rates;
 use alloy::providers::DynProvider;
 use alloy::providers::Provider;
 use esplora_client::r#async::AsyncClient;
-use esplora_client::MempoolInfo;
-use reqwest::Url;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -225,11 +223,11 @@ impl EthFeeOracle {
 
     async fn update_fee_cache(&self) -> Result<u64, RiftSdkError> {
         let gas_price_wei = {
-            let gas_price = self.provider.get_gas_price().await.map_err(|e| {
+            
+            self.provider.get_gas_price().await.map_err(|e| {
                 error!("Failed to fetch ETH gas price (wei): {:?}", e);
                 RiftSdkError::Generic(format!("Failed to fetch ETH gas price (wei): {:?}", e))
-            })?;
-            gas_price
+            })?
         };
 
         let conversion_rates =
@@ -287,7 +285,7 @@ impl EthFeeOracle {
     }
 
     async fn updater_loop(&self) -> eyre::Result<()> {
-        let chain_id = self.provider.get_chain_id().await?;
+        let _chain_id = self.provider.get_chain_id().await?;
         loop {
             if let Err(e) = self.update_fee_cache().await {
                 if self.chain_id != 1337 {
@@ -339,7 +337,7 @@ pub fn eth_gas_to_satoshis(gas_units: u64, gas_price_wei: u128, cbbtc_per_eth: f
     let total_wei = gas_units as u128 * gas_price_wei;
     let total_eth = total_wei as f64 / 1e18;
     let total_cbbtc = total_eth * cbbtc_per_eth;
-    let total_sats = (total_cbbtc * 1e8).round() as u64;
+    
 
-    total_sats
+    (total_cbbtc * 1e8).round() as u64
 }

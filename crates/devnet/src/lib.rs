@@ -21,25 +21,23 @@ use tokio::time::Instant;
 use rift_indexer::engine::RiftIndexer;
 use rift_indexer_server::RiftIndexerServer;
 
-use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation, MultichainAccount};
+use rift_sdk::{DatabaseLocation, MultichainAccount};
 
 use bitcoincore_rpc_async::RpcApi;
 
-use bitcoin_light_client_core::leaves::BlockLeaf;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 
 // ================== Contract ABIs ================== //
 
 const TOKEN_ADDRESS: &str = "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf";
 const TOKEN_SYMBOL: &str = "cbBTC";
-const TOKEN_NAME: &str = "Coinbase Wrapped BTC";
-const TOKEN_DECIMALS: u8 = 8;
+const _TOKEN_NAME: &str = "Coinbase Wrapped BTC";
+const _TOKEN_DECIMALS: u8 = 8;
 const TAKER_FEE_BIPS: u16 = 10;
 const RIFT_INDEXER_SERVER_PORT: u16 = 50100;
 
 use alloy::{hex, sol};
 
-/// The mock token artifact
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -47,7 +45,6 @@ sol!(
     "../../contracts/artifacts/TokenizedBTC.json"
 );
 
-/// The SP1 mock verifier
 sol!(
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -55,8 +52,6 @@ sol!(
     "../../contracts/artifacts/SP1MockVerifier.json"
 );
 
-use alloy::network::EthereumWallet;
-use alloy::primitives::Address as EvmAddress;
 use alloy::providers::{DynProvider, Provider};
 
 pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>;
@@ -65,7 +60,6 @@ pub type TokenizedBTCWebsocket = TokenizedBTC::TokenizedBTCInstance<DynProvider>
 
 // ================== Deploy Function ================== //
 
-use alloy::node_bindings::AnvilInstance;
 
 use crate::evm_devnet::Mode;
 
@@ -105,6 +99,12 @@ pub fn get_new_temp_dir() -> Result<tempfile::TempDir> {
 
 pub fn get_new_temp_file() -> Result<NamedTempFile> {
     Ok(NamedTempFile::new()?)
+}
+
+impl Default for RiftDevnetCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RiftDevnetCache {
@@ -436,7 +436,9 @@ pub struct RiftDevnet {
     pub join_set: JoinSet<eyre::Result<()>>,
     pub checkpoint_file_handle: NamedTempFile,
     pub rift_indexer_datadir: tempfile::TempDir,
+    #[allow(dead_code)]
     hypernode_db_dir: Option<TempDir>,
+    #[allow(dead_code)]
     market_maker_db_dir: Option<TempDir>,
     _rift_indexer_server: Option<RiftIndexerServer>,
 }
@@ -824,7 +826,7 @@ impl RiftDevnetBuilder {
                 .setup_interactive_mode(
                     &bitcoin_devnet,
                     &ethereum_devnet,
-                    &checkpoint_file_handle.path().to_string_lossy().to_string(),
+                    checkpoint_file_handle.path().to_string_lossy().as_ref(),
                     deployment_block_number,
                     self.using_esplora,
                     &mut join_set,
@@ -929,7 +931,7 @@ impl RiftDevnetBuilder {
             btc_rpc: bitcoin_devnet.rpc_url_with_cookie.clone(),
             private_key: hex::encode(hypernode_account.secret_bytes),
             checkpoint_file: checkpoint_file_path.to_string(),
-            database_location: hypernode_db_location.clone(),
+            database_location: hypernode_db_location,
             rift_exchange_address: ethereum_devnet.rift_exchange_contract.address().to_string(),
             deploy_block_number: deployment_block_number,
             evm_log_chunk_size: LOG_CHUNK_SIZE,
@@ -975,7 +977,7 @@ impl RiftDevnetBuilder {
                 .clone()
                 .expect("Esplora URL is required for market maker"),
             checkpoint_file: checkpoint_file_path.to_string(),
-            database_location: market_maker_db_location.clone(),
+            database_location: market_maker_db_location,
             deploy_block_number: deployment_block_number,
             evm_log_chunk_size: LOG_CHUNK_SIZE,
             btc_batch_rpc_size: 100,

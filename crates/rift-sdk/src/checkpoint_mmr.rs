@@ -6,9 +6,7 @@ use std::sync::Arc;
 use alloy::hex;
 use serde::{Deserialize, Serialize};
 
-use accumulators::mmr::{
-    element_index_to_leaf_index, Proof as ClientMMRProof,
-};
+use accumulators::mmr::{element_index_to_leaf_index, Proof as ClientMMRProof};
 use accumulators::store::{memory::InMemoryStore, sqlite::SQLiteStore, Store};
 
 use bitcoin_light_client_core::hasher::{Digest as LeafDigest, Hasher as LeafHasher};
@@ -88,6 +86,7 @@ impl CheckpointMap {
         }
     }
 
+    /*
     async fn delete_many(&self, leaf_hashes_hex: Vec<String>) -> Result<()> {
         let keys: Vec<String> = leaf_hashes_hex
             .into_iter()
@@ -102,6 +101,7 @@ impl CheckpointMap {
             .map_err(|e| RiftSdkError::StoreError(format!("Store delete_many error: {e}")))?;
         Ok(())
     }
+    */
 }
 
 // -----------------------------------------------------------------------------
@@ -215,6 +215,7 @@ impl<H: LeafHasher> BlockTree<H> {
         }
     }
 
+    /*
     async fn delete_many(&self, leaf_hashes_hex: Vec<String>) -> Result<()> {
         let keys: Vec<String> = leaf_hashes_hex
             .into_iter()
@@ -229,6 +230,7 @@ impl<H: LeafHasher> BlockTree<H> {
             .map_err(|e| RiftSdkError::StoreError(format!("Store delete_many error: {e}")))?;
         Ok(())
     }
+    */
 
     /// Find the Lowest Common Ancestor (LCA) between two leaf hashes in the block tree.
     /// Returns the LCA leaf hash, and the paths from the LCA to the two leaves.
@@ -465,7 +467,7 @@ impl<H: LeafHasher> CheckpointedBlockTree<H> {
             })?;
 
         // Find the lowest common ancestor (LCA)
-        let (lca_leaf_hash, current_tip_path, prior_checkpoint_tip_path) = self
+        let (lca_leaf_hash, _current_tip_path, prior_checkpoint_tip_path) = self
             .block_tree
             .find_lca(
                 &current_tip_block_tree_value,

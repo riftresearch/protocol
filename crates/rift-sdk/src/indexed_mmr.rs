@@ -172,12 +172,14 @@ impl ReverseIndex {
         format!("{}{}", self.key_prefix, leaf_hash_hex)
     }
 
+    /*
     async fn insert(
         &self,
         leaf_hash: &LeafDigest,
         element_index: usize,
         leaf_data: &BlockLeaf,
     ) -> Result<()> {
+
         let leaf_hash_hex = digest_to_hex(leaf_hash);
         let key = self.make_key(&leaf_hash_hex);
 
@@ -194,6 +196,7 @@ impl ReverseIndex {
             .map_err(|e| RiftSdkError::StoreError(format!("Store set error: {e}")))?;
         Ok(())
     }
+    */
 
     async fn batch_insert(&self, data: Vec<(&LeafDigest, usize, &BlockLeaf)>) -> Result<()> {
         let mut entries = HashMap::new();

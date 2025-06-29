@@ -4,7 +4,7 @@ use std::time::Duration;
 use alloy::primitives::Address;
 use alloy::providers::DynProvider;
 use bitcoin_data_engine::BitcoinDataEngine;
-use bitcoin_light_client_core::{hasher::Keccak256Hasher, leaves::BlockLeaf, ChainTransition};
+use bitcoin_light_client_core::{hasher::Keccak256Hasher, ChainTransition};
 use rift_indexer::engine::RiftIndexer;
 use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
@@ -18,10 +18,10 @@ use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::swap_watchtower::build_chain_transition_for_light_client_update;
 use rift_sdk::txn_broadcast::{
-    PreflightCheck, RevertInfo, TransactionBroadcaster, TransactionExecutionResult,
+    PreflightCheck, TransactionBroadcaster, TransactionExecutionResult,
 };
 
-const LIGHT_CLIENT_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const _LIGHT_CLIENT_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const TRANSACTION_BROADCAST_RETRY_MAX: usize = 5;
 
 #[derive(Debug, Error)]
@@ -82,7 +82,7 @@ impl LightClientUpdateWatchtower {
         let (event_sender, mut event_receiver) = mpsc::channel::<LightClientUpdateEvent>(10);
 
         let rift_exchange =
-            RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc.clone());
+            RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
 
         // Periodic lag check task
         let event_sender_timer = event_sender.clone();
@@ -309,8 +309,8 @@ impl LightClientUpdateWatchtower {
 
         // Prepare transaction parameters
         let block_proof_params = BlockProofParams {
-            priorMmrRoot: public_input.priorMmrRoot.into(),
-            newMmrRoot: public_input.newMmrRoot.into(),
+            priorMmrRoot: public_input.priorMmrRoot,
+            newMmrRoot: public_input.newMmrRoot,
             tipBlockLeaf: public_input.tipBlockLeaf,
             compressedBlockLeaves: auxiliary_data.compressed_leaves.into(),
         };

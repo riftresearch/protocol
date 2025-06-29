@@ -11,23 +11,19 @@ use alloy::providers::WalletProvider;
 use auction_claimer::AuctionClaimer;
 use bitcoin::Network;
 use bitcoin_data_engine::BitcoinDataEngine;
-use bitcoin_light_client_core::hasher::Keccak256Hasher;
 use bitcoincore_rpc_async::Auth;
 use checkpoint_downloader::decompress_checkpoint_file;
 use clap::Parser;
-use esplora_client::AsyncClient as EsploraClient;
 use eyre::Result;
 use log::error;
 use order_filler::{OrderFiller, OrderFillerConfig};
-use rift_indexer::engine::RiftIndexer;
 use rift_sdk::btc_txn_broadcaster::BitcoinTransactionBroadcasterTrait;
 use rift_sdk::btc_txn_broadcaster::SimpleBitcoinTransactionBroadcaster;
 use rift_sdk::fee_provider::EthFeeOracle;
 use rift_sdk::{
     bitcoin_utils::AsyncBitcoinClient,
-    checkpoint_mmr::CheckpointedBlockTree,
     create_websocket_wallet_provider,
-    fee_provider::{BtcFeeOracle, BtcFeeProvider},
+    fee_provider::BtcFeeOracle,
     handle_background_thread_result,
     txn_broadcast::TransactionBroadcaster,
     txn_builder::P2WPKHBitcoinWallet,
@@ -35,9 +31,8 @@ use rift_sdk::{
 };
 use std::str::FromStr;
 use tokenized_btc_redeemer::{
-    create_redeemer_actor, trigger_redemption_on_order_settled, TokenizedBTCRedeemerConfig,
+    create_redeemer_actor, TokenizedBTCRedeemerConfig,
 };
-use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_rusqlite::Connection;
 use tracing::info;

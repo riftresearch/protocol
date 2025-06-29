@@ -1,4 +1,3 @@
-use alloy::primitives::U256;
 use eyre::Result;
 use rift_core::order_hasher::SolidityHash;
 use sol_bindings::Order;
@@ -7,26 +6,6 @@ use tokio_rusqlite::Connection;
 pub const ORDER_STATUS_SENT: &str = "sent";
 pub const ORDER_STATUS_CONFIRMED: &str = "confirmed";
 pub const ORDER_STATUS_FAILED: &str = "failed";
-
-pub async fn setup_utxo_database(connection: &Connection) -> Result<()> {
-    // Initialize the database table
-    connection
-        .call(|conn| {
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS processed_swaps (
-                    deposit_commitment TEXT PRIMARY KEY,
-                    txid TEXT NOT NULL,
-                    amount_sats INTEGER NOT NULL,
-                    timestamp INTEGER NOT NULL
-                )",
-                [],
-            )?;
-            Ok::<_, tokio_rusqlite::Error>(())
-        })
-        .await?;
-
-    Ok(())
-}
 
 pub async fn setup_order_filler_database(connection: &Connection) -> Result<()> {
     connection

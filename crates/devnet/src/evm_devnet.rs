@@ -1,21 +1,16 @@
 use std::sync::Arc;
 
-use bitcoin::hex;
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use eyre::{eyre, Result};
 use log::info;
 use rift_sdk::create_websocket_wallet_provider;
 use sol_bindings::{
-    Bundler3::Bundler3Instance, GeneralAdapter1::GeneralAdapter1Instance,
-    ParaswapAdapter::ParaswapAdapterInstance, RiftAuctionAdaptor::RiftAuctionAdaptorInstance,
+    RiftAuctionAdaptor::RiftAuctionAdaptorInstance,
     RiftExchangeHarnessInstance,
 };
-use tempfile::NamedTempFile;
 use tokio::time::Instant;
 
 use alloy::{
-    dyn_abi::abi::token,
-    eips::eip7251::ConsolidationRequest,
     network::TransactionBuilder,
     node_bindings::{Anvil, AnvilInstance},
     primitives::{Address, U256},
@@ -261,7 +256,7 @@ pub async fn deploy_contracts(
     u64,
 )> {
     let contracts_start = Instant::now();
-    use alloy::{primitives::Address, providers::ext::AnvilApi, signers::local::PrivateKeySigner};
+    use alloy::{primitives::Address, providers::ext::AnvilApi};
 
     use std::str::FromStr;
 

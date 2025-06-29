@@ -1,5 +1,4 @@
 use alloy::{
-    dyn_abi::SolType,
     hex,
     primitives::{Address, FixedBytes},
     providers::{ext::TraceApi, DynProvider, Provider},
@@ -468,7 +467,7 @@ pub async fn listen_for_events(
 
     // Subscribe to block headers for reorg detection
     let block_sub = provider.subscribe_blocks().await?;
-    let mut block_stream = block_sub.into_stream();
+    let block_stream = block_sub.into_stream();
 
     // 2. Unbounded buffer for live logs
     let (tx, mut rx): (_, UnboundedReceiver<Log>) = unbounded_channel();

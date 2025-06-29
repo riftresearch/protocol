@@ -1,15 +1,10 @@
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
 };
-use alloy::providers::{Identity, Provider, RootProvider};
-use rand::seq::SliceRandom;
-use serde_json::Value;
+use alloy::providers::{Identity, RootProvider};
 use std::time::Duration;
-use tokio::time::timeout;
 
-use anyhow::Result;
 
-use crate::quote::FetchEthPrice;
 
 pub type RpcProvider = FillProvider<
     JoinFill<

@@ -1,7 +1,7 @@
 use crate::RIFT_PROGRAM_ELF;
 use rift_core::giga::RiftProgramInput;
 use sp1_sdk::{
-    EnvProver, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey,
+    EnvProver, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey,
     SP1Stdin, SP1VerifyingKey,
 };
 use std::str::FromStr;
@@ -67,7 +67,10 @@ impl RiftProofGenerator {
         let input = input.clone();
 
         // Spawn a blocking task on the Tokio thread pool dedicated to blocking calls.
-        let proof_result = tokio::task::spawn_blocking(move || {
+         // first `?` handles JoinError from the spawned task
+
+        // The returned value is `Result<Proof, Box<dyn std::error::Error + Send + Sync>>`
+        tokio::task::spawn_blocking(move || {
             let start = Instant::now();
 
             // Prepare the SP1Stdin for the proving/execute call
@@ -120,10 +123,7 @@ impl RiftProofGenerator {
 
             Ok::<Proof, Box<dyn std::error::Error + Send + Sync>>(proof_outcome)
         })
-        .await?; // first `?` handles JoinError from the spawned task
-
-        // The returned value is `Result<Proof, Box<dyn std::error::Error + Send + Sync>>`
-        proof_result
+        .await?
     }
 }
 

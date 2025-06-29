@@ -1,14 +1,12 @@
 /// Fetch ETH->USD price from Uniswap v3 on Ethereum mainnet
 use crate::chains::RpcProvider;
-use crate::chains::{CHUNK_SIZE, RPC_TIMEOUT};
+use crate::chains::RPC_TIMEOUT;
 use alloy::providers::DynProvider;
 use alloy::{
-    primitives::{address, Address, U160, U256},
+    primitives::{address, Address, U160},
     sol,
 };
-use rand::seq::SliceRandom;
 use std::collections::HashMap;
-use std::time::Duration;
 use tokio::time::timeout;
 
 pub const UNISWAP_V3_USDC_ETH_POOL_ADDRESS: Address =

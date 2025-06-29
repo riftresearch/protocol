@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bitcoin::{
-    absolute::LockTime, address::NetworkChecked, transaction, Amount, FeeRate, OutPoint, Script,
+    absolute::LockTime, address::NetworkChecked, transaction, Amount, FeeRate, OutPoint,
     ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Weight, Witness,
 };
 use bitcoin_coin_selection::{self as cs, WeightedUtxo};

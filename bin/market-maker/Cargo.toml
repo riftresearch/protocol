@@ -31,18 +31,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-futures = { workspace = true }
 hex = { workspace = true }
 alloy = { workspace = true }
-backoff = { workspace = true, features = ["tokio"] }
 chrono = { workspace = true }
-dashmap = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
-anyhow = { workspace = true }
 log = { workspace = true }
 async-trait = { workspace = true }
 esplora-client = { workspace = true }
-base64 = { workspace = true }
-ring = { workspace = true }
 jsonwebtoken = { workspace = true }

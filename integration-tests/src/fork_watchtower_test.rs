@@ -7,7 +7,6 @@ use bitcoincore_rpc_async::RpcApi;
 use corepc_node::serde_json;
 use crypto_bigint::{CheckedAdd, Encoding};
 use hypernode::fork_watchtower::{ForkDetectionResult, ForkWatchtower};
-use hypernode::Provider;
 use std::time::Duration;
 
 use tokio::time::timeout;
@@ -18,7 +17,7 @@ use sol_bindings::{ChainworkTooLow, CheckpointNotEstablished};
 /// Tests that the fork watchtower correctly identifies when there is no fork
 #[tokio::test]
 async fn test_fork_watchtower_no_fork_detection() {
-    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, _rift_exchange, _, _maker, _transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
@@ -44,7 +43,7 @@ async fn test_fork_watchtower_no_fork_detection() {
 /// Tests that the fork watchtower correctly identifies a stale chain
 #[tokio::test]
 async fn test_fork_watchtower_stale_chain_detection() {
-    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, _rift_exchange, _, _maker, _transaction_broadcaster) = create_deposit(true).await;
 
     let bitcoin_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
     println!("Initial Bitcoin height: {}", bitcoin_height);
@@ -182,7 +181,7 @@ async fn test_fork_watchtower_error_handling() {
 /// Tests that the fork watchtower correctly detects and resolves a simulated fork
 #[tokio::test]
 async fn test_fork_watchtower_fork_detection_and_resolution() {
-    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, _rift_exchange, _, _maker, _transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
@@ -388,7 +387,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
             println!("detected fork");
 
             assert!(
-                chain_transition.new_headers.len() > 0,
+                !chain_transition.new_headers.is_empty(),
                 "Chain transition should have new headers"
             );
             assert_eq!(
@@ -508,7 +507,7 @@ async fn test_fork_watchtower_fork_detection_and_resolution() {
 
 #[tokio::test]
 async fn test_fork_watchtower_light_client_tip_not_in_bde() {
-    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, _rift_exchange, _, _maker, _transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();
@@ -682,7 +681,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
             println!("detected fork, light client tip not in BDE chain");
 
             assert!(
-                chain_transition.new_headers.len() > 0,
+                !chain_transition.new_headers.is_empty(),
                 "Chain transition should have new headers"
             );
             assert_eq!(
@@ -736,7 +735,7 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
 
 #[tokio::test]
 async fn test_fork_watchtower_equal_chainwork() {
-    let (devnet, rift_exchange, _, maker, transaction_broadcaster) = create_deposit(true).await;
+    let (devnet, _rift_exchange, _, _maker, _transaction_broadcaster) = create_deposit(true).await;
 
     let btc_rpc = devnet.bitcoin.rpc_client.clone();
     let bitcoin_data_engine = devnet.bitcoin.data_engine.clone();

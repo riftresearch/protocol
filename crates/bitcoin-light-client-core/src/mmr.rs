@@ -4,34 +4,18 @@ use crate::hasher::{Digest, Hasher};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
 
-/// Trait for different MMR data storage strategies
-pub trait MMRStorageStrategy: Clone {
-    fn new() -> Self;
-}
-
-/// Minimal state for circuit verification
-#[derive(Clone)]
-pub struct CompactMMR {}
-
-impl MMRStorageStrategy for CompactMMR {
-    fn new() -> Self {
-        CompactMMR {}
-    }
-}
-
-/// Base MMR implementation that works with different storage strategies (compact or full)
-pub struct MerkleMountainRange<H: Hasher, S: MMRStorageStrategy> {
+/// Compact Merkle Mountain Range implementation for circuit verification
+pub struct CompactMerkleMountainRange<H: Hasher> {
     // Peaks are stored in descending order of their tree heights.
     // For example, if we have peaks representing trees of heights 3, 2, and 1,
     // they will be stored as [peak_h3, peak_h2, peak_h1]
     pub peaks: Vec<Digest>,
     // Leaf count is the number of leaves in the MMR
     pub leaf_count: u32,
-    pub data: S,
     _hasher: std::marker::PhantomData<H>,
 }
 
-impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
+impl<H: Hasher> CompactMerkleMountainRange<H> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -47,6 +31,27 @@ impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
         }
 
         self.peaks.push(current_peak);
+    }
+
+    pub fn append(&mut self, leaf: &Digest) {
+        self.update_mmr_peaks(leaf);
+    }
+
+    pub fn from_peaks(peaks: &[Digest], leaf_count: u32) -> Self {
+        let expected_peak_count = Self::get_mmr_peak_heights(leaf_count).len();
+
+        assert_eq!(
+            peaks.len(),
+            expected_peak_count,
+            "Invalid peak count for compact MMR with leaf count {}",
+            leaf_count
+        );
+
+        CompactMerkleMountainRange {
+            peaks: peaks.to_vec(),
+            leaf_count,
+            _hasher: std::marker::PhantomData,
+        }
     }
 
     pub fn bag_peaks(&self) -> Option<Digest> {
@@ -88,56 +93,28 @@ impl<H: Hasher, S: MMRStorageStrategy> MerkleMountainRange<H, S> {
     }
 }
 
-impl<H: Hasher, S: MMRStorageStrategy> Default for MerkleMountainRange<H, S> {
+impl<H: Hasher> Default for CompactMerkleMountainRange<H> {
     fn default() -> Self {
         Self {
             peaks: vec![],
             leaf_count: 0,
-            data: S::new(),
             _hasher: std::marker::PhantomData,
         }
     }
 }
 
-// Impl for compact MMR
-impl<H: Hasher> MerkleMountainRange<H, CompactMMR> {
-    pub fn append(&mut self, leaf: &Digest) {
-        self.update_mmr_peaks(leaf);
-    }
 
-    pub fn from_peaks(peaks: &[Digest], leaf_count: u32) -> Self {
-        let expected_peak_count = Self::get_mmr_peak_heights(leaf_count).len();
-
-        assert_eq!(
-            peaks.len(),
-            expected_peak_count,
-            "Invalid peak count for compact MMR with leaf count {}",
-            leaf_count
-        );
-
-        MerkleMountainRange {
-            peaks: peaks.to_vec(),
-            leaf_count,
-            data: CompactMMR::new(),
-            _hasher: std::marker::PhantomData,
-        }
-    }
-}
-
-//
-// Implement Clone for the base type
-impl<H: Hasher, S: MMRStorageStrategy + Clone> Clone for MerkleMountainRange<H, S> {
+impl<H: Hasher> Clone for CompactMerkleMountainRange<H> {
     fn clone(&self) -> Self {
-        MerkleMountainRange {
+        CompactMerkleMountainRange {
             peaks: self.peaks.clone(),
             leaf_count: self.leaf_count,
-            data: self.data.clone(),
             _hasher: std::marker::PhantomData,
         }
     }
 }
 
-impl<H: Hasher> fmt::Display for MerkleMountainRange<H, CompactMMR> {
+impl<H: Hasher> fmt::Display for CompactMerkleMountainRange<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "CompactMerkleMountainRange {{")?;
         writeln!(f, "  Leaf count: {}", self.leaf_count)?;
@@ -175,7 +152,6 @@ pub fn bag_peaks<H: Hasher>(peaks: &[Digest]) -> Option<Digest> {
     })
 }
 
-pub type CompactMerkleMountainRange<H> = MerkleMountainRange<H, CompactMMR>;
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct MMRProof {
@@ -239,7 +215,7 @@ pub mod tests {
     use crate::hasher::Keccak256Hasher;
     use accumulators::mmr::{
         element_index_to_leaf_index, elements_count_to_leaf_count, find_peaks,
-        leaf_count_to_mmr_size, map_leaf_index_to_element_index, Proof as ClientMMRProof,
+        leaf_count_to_mmr_size, Proof as ClientMMRProof,
     };
     use accumulators::{
         hasher::keccak::KeccakHasher as ClientKeccakHasher, mmr::MMR as ClientMMR,
@@ -293,7 +269,7 @@ pub mod tests {
 
     #[test]
     fn test_peak_count_calculation() {
-        let leaf_index = 166;
+        let _leaf_index = 166;
         for leaf_index in 0..100 {
             let leaf_count = leaf_index + 1;
             let elements_count = leaf_count_to_mmr_size(leaf_count);
@@ -306,8 +282,8 @@ pub mod tests {
             //println!("Leaf index: {}", leaf_index);
             //println!("Elements count: {}", elements_count);
             //println!("Element count alt: {}", element_count_alt);
-            let peaks = find_peaks(elements_count);
-            let heights = MerkleMountainRange::<Keccak256Hasher, CompactMMR>::get_mmr_peak_heights(
+            let _peaks = find_peaks(elements_count);
+            let _heights = CompactMerkleMountainRange::<Keccak256Hasher>::get_mmr_peak_heights(
                 leaf_count as u32,
             );
         }

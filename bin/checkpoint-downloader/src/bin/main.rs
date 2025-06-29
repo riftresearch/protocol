@@ -3,7 +3,6 @@ use checkpoint_downloader::compress_checkpoint_leaves;
 use clap::Parser;
 use rift_sdk::bitcoin_utils::BitcoinClientExt;
 use std::time::Duration;
-use tokio;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

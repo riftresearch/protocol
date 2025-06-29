@@ -237,7 +237,7 @@ async fn test_hypernode_simple_swap() {
         .await
         .unwrap();
 
-    let txid = funding_utxo.txid;
+    let _txid = funding_utxo.txid;
     let wallet = &taker.bitcoin_wallet;
     let fee_sats = 1000;
     let transaction: Transaction =
@@ -259,7 +259,7 @@ async fn test_hypernode_simple_swap() {
 
     println!(
         "Funding UTXO: {:?}",
-        hex::encode(&serialize_no_segwit(&transaction).unwrap())
+        hex::encode(serialize_no_segwit(&transaction).unwrap())
     );
 
     let serialized = bitcoincore_rpc_async::bitcoin::consensus::encode::serialize(&transaction);
@@ -286,7 +286,7 @@ async fn test_hypernode_simple_swap() {
     let current_block_height = devnet.bitcoin.rpc_client.get_block_count().await.unwrap();
 
     // broadcast it
-    let broadcast_tx = devnet
+    let _broadcast_tx = devnet
         .bitcoin
         .rpc_client
         .send_raw_transaction(payment_tx_serialized)
@@ -295,9 +295,9 @@ async fn test_hypernode_simple_swap() {
     println!("Bitcoin tx sent");
 
     let payment_tx_id = payment_tx.compute_txid();
-    let bitcoin_txid: [u8; 32] = payment_tx_id.as_raw_hash().to_byte_array();
+    let _bitcoin_txid: [u8; 32] = payment_tx_id.as_raw_hash().to_byte_array();
 
-    let swap_block_height = current_block_height + 1;
+    let _swap_block_height = current_block_height + 1;
 
     // now mine enough blocks for confirmations (1 + 1 additional)
     devnet.bitcoin.mine_blocks(2).await.unwrap();
@@ -488,7 +488,7 @@ async fn test_hypernode_simple_swap() {
         .consensus_encode(payment_tx_serialized2)
         .unwrap();
 
-    let broadcast_tx2 = devnet
+    let _broadcast_tx2 = devnet
         .bitcoin
         .rpc_client
         .send_raw_transaction(payment_tx_serialized2.as_slice())

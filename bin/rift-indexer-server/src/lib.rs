@@ -67,7 +67,7 @@ impl RiftIndexerServer {
             .route("/contract-bitcoin-tip", get(get_latest_contract_block))
             .route("/health", get(health))
             .layer(cors)
-            .with_state(data_engine.clone());
+            .with_state(data_engine);
 
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         tracing::info!("Listening on {}", addr);
@@ -135,11 +135,9 @@ impl RiftIndexerServer {
 
 fn allow_rift_exchange_and_localhost() -> tower_http::cors::AllowOrigin {
     tower_http::cors::AllowOrigin::predicate(|origin, _| {
-        let allowed_domains = vec![
-            "http://localhost:3000",
+        let allowed_domains = ["http://localhost:3000",
             "http://localhost:8000",
-            "https://app.rift.exchange",
-        ];
+            "https://app.rift.exchange"];
         let regex = Regex::new(r"^https://.*\.rift\.exchange$").unwrap();
         let origin_str = origin.to_str().unwrap_or("");
         allowed_domains.contains(&origin_str) || regex.is_match(origin_str)

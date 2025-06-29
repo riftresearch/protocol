@@ -78,7 +78,7 @@ pub enum ForkDetectionResult {
 
 #[derive(Debug)]
 enum ForkWatchtowerEvent {
-    NewTip(BlockLeaf),
+    NewTip(#[allow(dead_code)] BlockLeaf),
     CheckForFork,
     MmrRootUpdated([u8; 32]),
 }
@@ -102,7 +102,7 @@ impl ForkWatchtower {
         let (event_sender, mut event_receiver) = mpsc::channel::<ForkWatchtowerEvent>(10);
 
         let rift_exchange =
-            RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc.clone());
+            RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
 
         let fork_in_progress = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -145,7 +145,7 @@ impl ForkWatchtower {
         );
 
         let mut mmr_root_subscription = rift_indexer.subscribe_to_mmr_root_updates();
-        let event_sender_mmr = event_sender.clone();
+        let event_sender_mmr = event_sender;
         let mmr_root_subscription_cde = Arc::clone(&rift_indexer);
 
         join_set.spawn(
@@ -196,7 +196,7 @@ impl ForkWatchtower {
             let btc_rpc = Arc::clone(&btc_rpc);
             let proof_generator = Arc::clone(&proof_generator);
             let transaction_broadcaster = Arc::clone(&transaction_broadcaster);
-            let rift_exchange = rift_exchange.clone();
+            let rift_exchange = rift_exchange;
             let fork_in_progress = Arc::clone(&fork_in_progress);
             let fork_detection_lock = Arc::clone(&fork_detection_lock);
 
@@ -640,7 +640,9 @@ impl ForkWatchtower {
             ExponentialBackoff::default();
         backoff.max_elapsed_time = Some(Duration::from_secs(300));
 
-        let proof_result = loop {
+        
+
+        loop {
             match proof_generator.prove(&program_input).await {
                 Ok(proof) => break Ok(proof),
                 Err(e) => {
@@ -653,9 +655,7 @@ impl ForkWatchtower {
                     }
                 }
             }
-        };
-
-        proof_result
+        }
     }
 
     pub fn handle_transaction_revert(revert_info: &RevertInfo) -> bool {

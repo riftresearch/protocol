@@ -140,9 +140,9 @@ async fn generate_fake_block_mmr_proof(height: u32, debug: bool) {
     let root_hash: FixedBytes<32> = root_hash.into();
     let sol_mmr_proof = sol_bindings::nonpublic::MMRProof {
         blockLeaf: sol_bindings::nonpublic::BlockLeaf {
-            blockHash: block_leaf.blockHash.into(),
+            blockHash: block_leaf.blockHash,
             height: block_leaf.height,
-            cumulativeChainwork: block_leaf.cumulativeChainwork.into(),
+            cumulativeChainwork: block_leaf.cumulativeChainwork,
         },
         siblings,
         peaks,
@@ -236,9 +236,9 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
     let root_hash_fixed: FixedBytes<32> = root_hash.into();
     let sol_mmr_proof = sol_bindings::nonpublic::MMRProof {
         blockLeaf: sol_bindings::nonpublic::BlockLeaf {
-            blockHash: block_leaf.blockHash.into(),
+            blockHash: block_leaf.blockHash,
             height: block_leaf.height,
-            cumulativeChainwork: block_leaf.cumulativeChainwork.into(),
+            cumulativeChainwork: block_leaf.cumulativeChainwork,
         },
         siblings,
         peaks,
@@ -256,9 +256,9 @@ async fn generate_fake_block_with_confirmations_mmr_proof(
         tip_proof.peaks.iter().map(|s| s.into()).collect::<Vec<_>>();
     let tip_sol_mmr_proof = sol_bindings::nonpublic::MMRProof {
         blockLeaf: sol_bindings::nonpublic::BlockLeaf {
-            blockHash: tip_block_leaf.blockHash.into(),
+            blockHash: tip_block_leaf.blockHash,
             height: tip_block_leaf.height,
-            cumulativeChainwork: tip_block_leaf.cumulativeChainwork.into(),
+            cumulativeChainwork: tip_block_leaf.cumulativeChainwork,
         },
         siblings: tip_siblings,
         peaks: tip_peaks,
@@ -310,9 +310,9 @@ async fn get_deployment_params(checkpoint_file: &str, debug: bool) {
 
     let deployment_params = sol_bindings::nonpublic::DeploymentParams {
         tipBlockLeaf: sol_bindings::nonpublic::BlockLeaf {
-            blockHash: tip_block_leaf.blockHash.into(),
+            blockHash: tip_block_leaf.blockHash,
             height: tip_block_leaf.height,
-            cumulativeChainwork: tip_block_leaf.cumulativeChainwork.into(),
+            cumulativeChainwork: tip_block_leaf.cumulativeChainwork,
         },
         mmrRoot: mmr_root.into(),
         circuitVerificationKey: circuit_verification_key.into(),

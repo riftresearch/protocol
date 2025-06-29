@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     let checkpoint_leaves =
         checkpoint_downloader::decompress_checkpoint_file(&config.checkpoint_file).unwrap();
     let mut join_set = JoinSet::new();
-    let rift_indexer_server =
+    let _rift_indexer_server =
         RiftIndexerServer::start(config, checkpoint_leaves, &mut join_set).await?;
     join_set.join_all().await;
     Ok(())

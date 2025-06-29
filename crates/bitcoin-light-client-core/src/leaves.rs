@@ -131,7 +131,7 @@ pub fn create_new_leaves(
     new_headers
         .iter()
         .map(|header| {
-            bitcoin_core_rs::get_block_hash(&header.as_bytes()).expect("Failed to get block hash")
+            bitcoin_core_rs::get_block_hash(header.as_bytes()).expect("Failed to get block hash")
         })
         .zip(new_chain_works.iter())
         .zip(parent_leaf.height + 1..)
@@ -209,7 +209,7 @@ mod tests {
         // Get first 4 headers after genesis
         let new_headers: Vec<Header> = TEST_HEADERS[1..5]
             .iter()
-            .map(|(_, header)| Header(header.clone()))
+            .map(|(_, header)| Header(*header))
             .collect();
 
         // Calculate expected chainworks
@@ -246,7 +246,7 @@ mod tests {
         for (i, leaf) in new_leaves.iter().enumerate() {
             let expected_header = &TEST_HEADERS[i + 1].1;
             let expected_hash =
-                bitcoin_core_rs::get_block_hash(&Header(*expected_header).as_bytes())
+                bitcoin_core_rs::get_block_hash(Header(*expected_header).as_bytes())
                     .expect("Failed to get block hash");
             assert!(leaf.compare_by_natural_block_hash(&expected_hash));
         }

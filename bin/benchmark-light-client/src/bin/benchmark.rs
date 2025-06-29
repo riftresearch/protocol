@@ -217,7 +217,7 @@ async fn create_bch_overwrite_chain_transition(
     let start = Instant::now();
 
     // 1) Append n BCH blocks
-    let (current_tip_leaf, current_tip_header, current_tip_proof, bch_leaves) =
+    let (current_tip_leaf, _current_tip_header, current_tip_proof, bch_leaves) =
         extend_with_bch_blocks(state, n).await;
 
     // 2) Collect their leaf hashes (to "dispose" them)

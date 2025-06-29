@@ -101,12 +101,12 @@ impl SwapWatchtower {
             .instrument(info_span!("Bitcoin Payment Watchtower")),
         );
 
-        let btc_rpc_clone = btc_rpc.clone();
-        let evm_rpc_clone = evm_rpc.clone();
-        let transaction_broadcaster_clone = transaction_broadcaster.clone();
-        let rift_indexer_clone = rift_indexer.clone();
-        let bitcoin_data_engine_clone = bitcoin_data_engine.clone();
-        let proof_generator_clone = proof_generator.clone();
+        let btc_rpc_clone = btc_rpc;
+        let evm_rpc_clone = evm_rpc;
+        let transaction_broadcaster_clone = transaction_broadcaster;
+        let rift_indexer_clone = rift_indexer;
+        let bitcoin_data_engine_clone = bitcoin_data_engine;
+        let proof_generator_clone = proof_generator;
         join_set.spawn(
             async move {
                 Self::finalize_confirmed_swaps(
@@ -744,7 +744,7 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                     .try_into()
                     .map_err(|e| eyre::eyre!("Failed to serialize block header: {}", e))?;
 
-            let (merkle_proof, block_merkle_root) = generate_bitcoin_txn_merkle_proof(
+            let (merkle_proof, _block_merkle_root) = generate_bitcoin_txn_merkle_proof(
                 &block_info
                     .tx
                     .iter()
@@ -839,7 +839,7 @@ fn get_leaf_and_block_header_from_block_info(
         block_header.block_hash().to_string(),
         "Block hash mismatch: {} != {}",
         block.hash,
-        block_header.block_hash().to_string()
+        block_header.block_hash()
     );
 
     Ok((leaf, block_header))

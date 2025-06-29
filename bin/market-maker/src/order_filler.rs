@@ -10,7 +10,7 @@ use alloy::rpc::types::{Filter, Log};
 use alloy_sol_types::SolEvent;
 use eyre::Result;
 use log::info;
-use rift_sdk::{btc_txn_broadcaster::SimpleBitcoinTransactionBroadcaster, DatabaseLocation};
+use rift_sdk::btc_txn_broadcaster::SimpleBitcoinTransactionBroadcaster;
 use rift_sdk::btc_txn_broadcaster::BitcoinTransactionBroadcasterTrait;
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_core::order_hasher::SolidityHash;

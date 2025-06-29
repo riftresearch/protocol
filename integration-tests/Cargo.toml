@@ -17,36 +17,22 @@ bitcoin-light-client-core.workspace = true
 rift-core = { workspace = true }
 rift-sdk = { workspace = true }
 rift-indexer = { workspace = true }
-rift-indexer-server = { workspace = true }
 corepc-node = { workspace = true }
 sol-bindings= { workspace = true }
 bitcoin-data-engine = { workspace = true }
 accumulators = { workspace = true }
 hypernode = { workspace = true }
-tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tokio-util = { workspace = true }
 hex = { workspace = true }
 alloy = { workspace = true }
-clap = { workspace = true }
 bitcoin = { workspace = true }
 eyre = { workspace = true }
 log = { workspace = true }
-env_logger = { workspace = true }
-chrono = { workspace = true }
-futures = { workspace = true }
-futures-util = { workspace = true }
 bitcoincore-rpc-async = { workspace = true }
-serial_test = { workspace = true }
-once_cell = { workspace = true }
 test-data-utils = { workspace = true }
 crypto-bigint = { workspace = true }
-mockall = { workspace = true }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-async-trait = { workspace = true }
 market-maker = { workspace = true }
 anyhow = { workspace = true }
-rand = { workspace = true }
-esplora-client = { workspace = true }
 ctor = { workspace = true }

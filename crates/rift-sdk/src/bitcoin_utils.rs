@@ -14,9 +14,7 @@ use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoincore_rpc_async::jsonrpc::Transport;
 use bitcoincore_rpc_async::jsonrpc::{Request, Response};
 use bitcoincore_rpc_async::{Auth, Client as BitcoinClient, RpcApi};
-use futures::stream::TryStreamExt;
 use futures::Future;
-use futures::StreamExt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -376,19 +374,19 @@ impl AsyncBitcoinClient {
                 json_rpc_client
                     .send_batch(&request_data)
                     .await
-                    .map_err(|e| bitcoincore_rpc_async::Error::JsonRpc(e.into()))
+                    .map_err(bitcoincore_rpc_async::Error::JsonRpc)
             })
             .await?;
 
             // Process responses for this chunk
-            for (i, response) in responses.iter().enumerate() {
+            for (_i, response) in responses.iter().enumerate() {
                 let result = response
                     .as_ref()
                     .ok_or(bitcoincore_rpc_async::Error::JsonRpc(
                         bitcoincore_rpc_async::jsonrpc::error::Error::EmptyBatch,
                     ))?
                     .result::<T>()
-                    .map_err(|e| bitcoincore_rpc_async::Error::JsonRpc(e.into()))?;
+                    .map_err(bitcoincore_rpc_async::Error::JsonRpc)?;
                 results.push(result);
             }
         }

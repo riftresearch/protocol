@@ -6,13 +6,11 @@ edition.workspace = true
 exclude.workspace = true
 
 [dependencies]
-tokio-util = { workspace = true }
 bitcoincore-rpc-async = { workspace = true } 
 bitcoin-light-client-core = { workspace = true }
-rift-sdk = { workspace = true }
 tokio = { workspace = true }
-hex = { workspace = true }
 eyre = { workspace = true }
 tracing = { workspace = true }
+rift-sdk = { workspace = true }
 [dev-dependencies]
 corepc-node = { workspace = true }

@@ -1,4 +1,4 @@
-use alloy::providers::ext::AnvilApi;
+use alloy::providers::{ext::AnvilApi, Provider};
 use bitcoin_light_client_core::{
     leaves::{create_new_leaves, get_genesis_leaf, BlockLeaf},
     light_client::{calculate_cumulative_work, Header},
@@ -85,10 +85,10 @@ async fn test_data_engine_in_memory_db() {
 
 #[tokio::test]
 async fn test_data_engine_handles_restart() {
-    use alloy::{primitives::U256, providers::Provider, sol_types::SolEvent};
+    use alloy::{primitives::U256, sol_types::SolEvent};
     use devnet::RiftDevnet;
     use rift_sdk::{
-        create_websocket_wallet_provider, handle_background_thread_result, DatabaseLocation,
+        create_websocket_wallet_provider, DatabaseLocation,
         MultichainAccount,
     };
     use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
@@ -361,7 +361,7 @@ async fn test_data_engine_handles_block_reorg() {
     use devnet::RiftDevnet;
     use hypernode::HypernodeArgs;
     use rift_sdk::{
-        create_websocket_wallet_provider, handle_background_thread_result, DatabaseLocation,
+        create_websocket_wallet_provider, DatabaseLocation,
         MultichainAccount, proof_generator::ProofGeneratorType, txn_broadcast::TransactionBroadcaster,
     };
     use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
@@ -543,7 +543,7 @@ async fn test_data_engine_handles_block_reorg() {
 
     let _transaction_broadcaster = TransactionBroadcaster::new(
         std::sync::Arc::new(hypernode_evm_provider),
-        devnet.ethereum.anvil.endpoint().to_string(),
+        devnet.ethereum.anvil.endpoint(),
         &mut devnet.join_set,
     );
 
@@ -743,7 +743,7 @@ async fn test_data_engine_handles_block_reorg() {
 
 #[tokio::test]
 async fn test_data_engine_handles_reorg_while_down() {
-    use alloy::{hex, primitives::U256, providers::Provider, sol_types::SolEvent};
+    use alloy::{primitives::U256, sol_types::SolEvent};
     use devnet::RiftDevnet;
     use rift_sdk::{
         create_websocket_wallet_provider, DatabaseLocation,
@@ -761,7 +761,7 @@ async fn test_data_engine_handles_reorg_while_down() {
     let db_dir = temp_dir.path().to_str().unwrap().to_string();
 
     // Setup devnet with in-memory database (we'll create our own data engine)
-    let (mut devnet, _funded_sats) = RiftDevnet::builder()
+    let (devnet, _funded_sats) = RiftDevnet::builder()
         .funded_evm_address(maker.ethereum_address.to_string())
         .build()
         .await

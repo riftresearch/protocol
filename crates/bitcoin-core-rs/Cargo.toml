@@ -10,10 +10,9 @@ default = ["std"]
 std = []
 
 [dependencies]
-eyre = {workspace = true} 
-thiserror = {workspace = true} 
 sha2 = {workspace = true} 
-crypto-bigint = {workspace = true} 
+crypto-bigint = {workspace = true}
+thiserror = {workspace = true} 
 
 
 [dev-dependencies]

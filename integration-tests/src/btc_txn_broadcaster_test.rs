@@ -1,15 +1,11 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use bitcoin::{Amount, Network, ScriptBuf, TxOut};
-use devnet::{BitcoinDevnet, RiftDevnet};
+use bitcoin::{Amount, Network, TxOut};
+use devnet::RiftDevnet;
 use rift_sdk::{
     btc_txn_broadcaster::{
         BitcoinTransactionBroadcasterTrait, SimpleBitcoinTransactionBroadcaster,
-    },
-    handle_background_thread_result,
-    txn_builder::P2WPKHBitcoinWallet,
-    DatabaseLocation, MultichainAccount,
+    }, MultichainAccount,
 };
 use tokio::task::JoinSet;
 

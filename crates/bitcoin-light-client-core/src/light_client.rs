@@ -102,10 +102,10 @@ pub fn validate_header_chain(
         );
 
         let next_retarget = bitcoin_core_rs::validate_next_work_required(
-            &retarget_header.as_bytes(),
+            retarget_header.as_bytes(),
             previous_height,
-            &previous_header.as_bytes(),
-            &current_header.as_bytes(),
+            previous_header.as_bytes(),
+            current_header.as_bytes(),
         );
 
         assert!(
@@ -115,7 +115,7 @@ pub fn validate_header_chain(
         );
 
         assert!(
-            bitcoin_core_rs::check_proof_of_work(&current_header.as_bytes()),
+            bitcoin_core_rs::check_proof_of_work(current_header.as_bytes()),
             "Header fails PoW check"
         );
 
@@ -132,7 +132,7 @@ pub fn calculate_cumulative_work(
     let works: Vec<U256> = header_chain
         .iter()
         .scan(parent_cumulative_work, |acc, header| {
-            let header_proof = bitcoin_core_rs::get_block_proof(&header.as_bytes())
+            let header_proof = bitcoin_core_rs::get_block_proof(header.as_bytes())
                 .expect("Header proof calculation failed");
             *acc = U256::from_le_bytes(header_proof)
                 .checked_add(acc)
@@ -283,7 +283,7 @@ pub mod tests {
         // Modify the nonce to invalidate PoW (bytes 76..=79)
         let mut header_bytes = *Header(TEST_HEADERS[1].1).as_bytes();
         header_bytes[76..=79].copy_from_slice(&[0; 4]);
-        let invalid_header = Header(header_bytes.try_into().unwrap());
+        let invalid_header = Header(header_bytes);
 
         validate_header_chain(0, genesis_header, genesis_header, &[invalid_header]);
     }
@@ -296,7 +296,7 @@ pub mod tests {
         // Modify the previous block hash (bytes 4..=35)
         let mut header_bytes = *Header(TEST_HEADERS[1].1).as_bytes();
         header_bytes[4..=35].copy_from_slice(&[190; 32]);
-        let disconnected_header = Header(header_bytes.try_into().unwrap());
+        let disconnected_header = Header(header_bytes);
 
         validate_header_chain(0, genesis_header, genesis_header, &[disconnected_header]);
     }
@@ -325,7 +325,7 @@ pub mod tests {
         let mut overflow_header = Header(TEST_HEADERS[0].1);
         let mut header_bytes = *overflow_header.as_bytes();
         header_bytes[28..32].copy_from_slice(&[0x01; 4]);
-        overflow_header = Header(header_bytes.try_into().unwrap());
+        overflow_header = Header(header_bytes);
 
         let max_work = U256::MAX.wrapping_sub(&U256::ONE);
         calculate_cumulative_work(max_work, &[overflow_header]);

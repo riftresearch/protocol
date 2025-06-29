@@ -177,7 +177,7 @@ async fn search_for_releases(
 
         let bitcoin_swap_block_siblings = proof.siblings.iter().map(From::from).collect();
         let bitcoin_swap_block_peaks = proof.peaks.iter().map(From::from).collect();
-        let utilized_vault = swap_with_deposit.order.order.clone();
+        let _utilized_vault = swap_with_deposit.order.order.clone();
 
         release_liquidity_params.push(SettleOrderParams {
             payment: swap_with_deposit.payment.payment.clone(),

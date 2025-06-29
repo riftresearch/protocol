@@ -11,7 +11,6 @@ path = "src/bin/benchmark.rs"
 [dependencies]
 bitcoin-light-client-core = { workspace = true }
 bitcoin-core-rs = { workspace = true }
-rift-program = { workspace = true }
 rift-core = { workspace = true }
 test-data-utils = { workspace = true }
 rift-sdk = { workspace = true }
@@ -19,14 +18,7 @@ rift-sdk = { workspace = true }
 
 tokio = { workspace = true }
 sp1-sdk = { workspace = true }
-sp1-cuda = { workspace = true }
-serde_json = { workspace = true }
-serde = { workspace = true }
 clap = { workspace = true }
-tracing = { workspace = true }
-hex = { workspace = true }
-alloy-sol-types= { workspace = true }
-once_cell = { workspace = true }
 accumulators = { workspace = true }
 prettytable = { workspace = true }
 

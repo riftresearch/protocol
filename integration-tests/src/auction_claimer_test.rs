@@ -1,34 +1,23 @@
-use alloy::eips::eip6110::DEPOSIT_REQUEST_TYPE;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{DynProvider, Provider};
-use alloy::rpc::types::Log as AlloyLog;
 use alloy::rpc::types::Log;
-use alloy::signers::local::LocalWallet;
 use alloy::sol_types::SolEvent;
-use alloy_primitives::{FixedBytes, LogData, B256};
-use alloy_sol_types::SolValue;
+use alloy_primitives::{FixedBytes, LogData};
 use devnet::RiftDevnet;
-use eyre::Result;
-use hex;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use market_maker::auction_claimer::{
     calculate_optimal_claim_block, extract_auction_from_log, AuctionClaimer, AuctionClaimerConfig,
-    PendingAuction,
 };
-use rift_sdk::fee_provider::{BtcFeeOracle, BtcFeeProvider, EthFeeOracle, EthFeeProvider};
-use rift_sdk::{create_websocket_wallet_provider, DatabaseLocation, MultichainAccount};
+use rift_sdk::fee_provider::{BtcFeeOracle, EthFeeOracle};
+use rift_sdk::{create_websocket_wallet_provider, MultichainAccount};
 use sol_bindings::{
-    AuctionUpdated, BTCDutchAuctionHouse, BTCDutchAuctionHouseInstance, DutchAuction,
-    DutchAuctionParams, MappingWhitelist, MappingWhitelistInstance, RiftExchangeInstance,
+    AuctionUpdated, BTCDutchAuctionHouse, DutchAuction,
+    DutchAuctionParams, MappingWhitelist,
 };
-use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use std::{cmp::Reverse, collections::BinaryHeap};
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::timeout;
 
 fn create_test_auction(
     index: u64,
@@ -76,7 +65,7 @@ fn create_log_from_auction(auction: &DutchAuction) -> Log {
     let event_data = event.encode_data();
     let topic = AuctionUpdated::SIGNATURE_HASH;
 
-    let log_data = LogData::new_unchecked(vec![topic.into()], event_data.into());
+    let log_data = LogData::new_unchecked(vec![topic], event_data.into());
 
     Log {
         inner: alloy_primitives::Log {
@@ -767,7 +756,7 @@ async fn test_auction_claimer_end_to_end() {
         for (i, log) in logs.iter().enumerate() {
             println!("Processing auction event {}/{}", i + 1, logs.len());
 
-            match extract_auction_from_log(&log) {
+            match extract_auction_from_log(log) {
                 Ok(auction) => {
                     println!(
                         "Extracted auction #{} with state {}",

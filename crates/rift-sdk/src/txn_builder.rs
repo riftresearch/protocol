@@ -401,10 +401,8 @@ mod tests {
         let txid1 = Txid::from_slice(&[1u8; 32]).unwrap();
         let txid2 = Txid::from_slice(&[2u8; 32]).unwrap();
 
-        let utxos = vec![
-            (OutPoint::new(txid1, 0), Amount::from_sat(50_000)),
-            (OutPoint::new(txid2, 1), Amount::from_sat(75_000)),
-        ];
+        let utxos = [(OutPoint::new(txid1, 0), Amount::from_sat(50_000)),
+            (OutPoint::new(txid2, 1), Amount::from_sat(75_000))];
 
         let total_amount: u64 = utxos.iter().map(|u| u.1.to_sat()).sum();
         assert_eq!(total_amount, 125_000);

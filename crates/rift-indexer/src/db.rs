@@ -738,7 +738,7 @@ pub async fn get_payments_ready_to_be_settled(
                 //
                 // --- Payment portion ---
                 //
-                let payment_index: i64 = row.get(0)?;
+                let _payment_index: i64 = row.get(0)?;
                 let payment_block_number: i64 = row.get(1)?;
                 let payment_block_hash_vec: Vec<u8> = row.get(2)?;
                 let payment_block_hash: [u8; 32] =

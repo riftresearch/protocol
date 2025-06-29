@@ -1,8 +1,6 @@
-use alloy::providers::Provider;
 use bitcoincore_rpc_async::RpcApi;
 use devnet::RiftDevnet;
 use hypernode::HypernodeArgs;
-use rift_indexer::engine::RiftIndexer;
 use rift_sdk::{
     create_websocket_wallet_provider, proof_generator::ProofGeneratorType,
     txn_broadcast::TransactionBroadcaster, DatabaseLocation, MultichainAccount,
@@ -49,7 +47,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
 
     let _transaction_broadcaster = TransactionBroadcaster::new(
         std::sync::Arc::new(evm_provider),
-        devnet.ethereum.anvil.endpoint().to_string(),
+        devnet.ethereum.anvil.endpoint(),
         &mut devnet.join_set,
     );
 

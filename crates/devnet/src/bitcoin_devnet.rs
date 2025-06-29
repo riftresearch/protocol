@@ -56,7 +56,7 @@ impl BitcoinDevnet {
         devnet_cache: Option<Arc<RiftDevnetCache>>,
     ) -> Result<(Self, u32)> {
         info!("Instantiating Bitcoin Regtest...");
-        let WALLET_NAME = "alice";
+        let wallet_name = "alice";
         let t = Instant::now();
         let mut conf = Conf::default();
         conf.args.push("-txindex");
@@ -146,27 +146,27 @@ impl BitcoinDevnet {
         }
 
         // Try to load the wallet, create it if it doesn't exist
-        match bitcoin_rpc_client.load_wallet(WALLET_NAME).await {
-            Ok(_) => info!("Loaded existing wallet '{}'", WALLET_NAME),
+        match bitcoin_rpc_client.load_wallet(wallet_name).await {
+            Ok(_) => info!("Loaded existing wallet '{}'", wallet_name),
             Err(e) => {
                 // Check if wallet already loaded (error code -35)
                 if e.to_string().contains("already loaded") {
-                    info!("Wallet '{}' already loaded", WALLET_NAME);
+                    info!("Wallet '{}' already loaded", wallet_name);
                 } else {
                     // Wallet doesn't exist or failed to load, create it
                     info!(
                         "Wallet '{}' not found or failed to load ({}), creating new wallet...",
-                        WALLET_NAME, e
+                        wallet_name, e
                     );
                     match bitcoin_rpc_client
-                        .create_wallet(WALLET_NAME, None, None, None, None)
+                        .create_wallet(wallet_name, None, None, None, None)
                         .await
                     {
-                        Ok(_) => info!("Created new wallet '{}'", WALLET_NAME),
+                        Ok(_) => info!("Created new wallet '{}'", wallet_name),
                         Err(create_err) => {
                             return Err(eyre!(
                                 "Failed to create wallet '{}': {}",
-                                WALLET_NAME,
+                                wallet_name,
                                 create_err
                             ));
                         }
@@ -181,7 +181,7 @@ impl BitcoinDevnet {
             cookie_str,
             bitcoin_regtest.params.rpc_socket.ip(),
             bitcoin_regtest.params.rpc_socket.port(),
-            WALLET_NAME
+            wallet_name
         );
         let bitcoin_rpc_client = Arc::new(
             AsyncBitcoinClient::new(wallet_rpc_url, Auth::None, Duration::from_millis(10000))
@@ -385,7 +385,7 @@ impl BitcoinDevnet {
             time.elapsed()
         );
 
-        let client_creation_start = Instant::now();
+        let _client_creation_start = Instant::now();
         let (esplora_client, esplora_url) = if using_esplora {
             let esplora_url = if fixed_esplora_url {
                 "0.0.0.0:50103".to_string()

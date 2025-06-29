@@ -10,21 +10,12 @@ name = "sol-utils"
 path = "src/main.rs"
 
 [dependencies]
-rift-core = { workspace = true }
 rift-sdk = { workspace = true }
 bitcoin-light-client-core = { workspace = true }
 checkpoint-downloader = { workspace = true }
 sol-bindings= { workspace = true }
 
-accumulators.workspace = true
 hex.workspace = true
 alloy = { workspace = true }
 clap = { workspace = true }
-bitcoin = { workspace = true }
-eyre = { workspace = true }
 tokio = { workspace = true }
-log = { workspace = true }
-env_logger = { workspace = true }
-chrono = { workspace = true }
-futures = { workspace = true }
-futures-util = { workspace = true }

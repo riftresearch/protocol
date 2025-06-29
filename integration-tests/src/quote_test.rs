@@ -1,10 +1,6 @@
-use alloy::{
-    primitives::{address, U256},
-    providers::{Provider, ProviderBuilder},
-    sol,
-};
+use alloy::{primitives::address, providers::ProviderBuilder, sol};
 use anyhow::Result;
-use rift_sdk::quote::{fetch_weth_cbbtc_conversion_rates, q64_96_to_float};
+use rift_sdk::quote::q64_96_to_float;
 
 sol!(
     #[sol(rpc)]
@@ -51,8 +47,6 @@ sol!(
 #[tokio::test]
 async fn test_weth_cbbtc_conversion_base_mainnet() -> Result<()> {
     println!("\n=== Testing WETH/cbBTC Conversion Rates on Base Mainnet ===\n");
-
-    const BASE_CHAIN_ID: u64 = 8453;
 
     println!("Fetching WETH/cbBTC conversion rates...");
 
