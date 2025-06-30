@@ -2,6 +2,7 @@
 // Actual storage of leaves and proof generation is left to the client
 use crate::hasher::{Digest, Hasher};
 use serde::{Deserialize, Serialize};
+use snafu::prelude::*;
 use std::fmt::{self};
 
 /// Compact Merkle Mountain Range implementation for circuit verification
@@ -37,21 +38,23 @@ impl<H: Hasher> CompactMerkleMountainRange<H> {
         self.update_mmr_peaks(leaf);
     }
 
-    pub fn from_peaks(peaks: &[Digest], leaf_count: u32) -> Self {
+    pub fn from_peaks(peaks: &[Digest], leaf_count: u32) -> crate::error::Result<Self> {
         let expected_peak_count = Self::get_mmr_peak_heights(leaf_count).len();
 
-        assert_eq!(
-            peaks.len(),
-            expected_peak_count,
-            "Invalid peak count for compact MMR with leaf count {}",
-            leaf_count
+        ensure!(
+            peaks.len() == expected_peak_count,
+            crate::error::InvalidPeakCount {
+                leaf_count,
+                expected_peak_count,
+                actual_peak_count: peaks.len(),
+            }
         );
 
-        CompactMerkleMountainRange {
+        Ok(CompactMerkleMountainRange {
             peaks: peaks.to_vec(),
             leaf_count,
             _hasher: std::marker::PhantomData,
-        }
+        })
     }
 
     pub fn bag_peaks(&self) -> Option<Digest> {
@@ -64,16 +67,27 @@ impl<H: Hasher> CompactMerkleMountainRange<H> {
         get_root::<H>(leaf_count, &bagged_peaks)
     }
 
-    pub fn validate_mmr_transition(&self, leaf_hashes: &[Digest], expected_root: &Digest) {
+    pub fn validate_mmr_transition(
+        &self,
+        leaf_hashes: &[Digest],
+        expected_root: &Digest,
+    ) -> crate::error::Result<()> {
         let mut new_mmr = self.clone();
 
         for leaf_hash in leaf_hashes {
             new_mmr.update_mmr_peaks(leaf_hash);
         }
 
-        if new_mmr.get_root() != *expected_root {
-            panic!("Invalid MMR: root mismatch");
-        }
+        let computed_root = new_mmr.get_root();
+        ensure!(
+            computed_root == *expected_root,
+            crate::error::MmrRootValidationFailed {
+                computed_root: computed_root.to_vec(),
+                expected_root: expected_root.to_vec(),
+            }
+        );
+
+        Ok(())
     }
 
     pub fn get_mmr_peak_heights(n: u32) -> Vec<u32> {
@@ -102,7 +116,6 @@ impl<H: Hasher> Default for CompactMerkleMountainRange<H> {
         }
     }
 }
-
 
 impl<H: Hasher> Clone for CompactMerkleMountainRange<H> {
     fn clone(&self) -> Self {
@@ -151,7 +164,6 @@ pub fn bag_peaks<H: Hasher>(peaks: &[Digest]) -> Option<Digest> {
         Some(prev) => Some(hash_nodes::<H>(peak.as_ref(), prev.as_ref())),
     })
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct MMRProof {
@@ -203,10 +215,13 @@ pub fn verify_mmr_proof<H: Hasher>(root: &Digest, proof: &MMRProof) -> bool {
     }
 
     // Verify the peaks produce the expected root
-    let bagged_peaks = bag_peaks::<H>(&proof.peaks).unwrap();
-
-    let computed_root = get_root::<H>(proof.leaf_count, &bagged_peaks);
-    computed_root == *root
+    match bag_peaks::<H>(&proof.peaks) {
+        Some(bagged_peaks) => {
+            let computed_root = get_root::<H>(proof.leaf_count, &bagged_peaks);
+            computed_root == *root
+        }
+        None => false,
+    }
 }
 
 #[cfg(test)]
@@ -371,7 +386,8 @@ pub mod tests {
             let circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(
                 &minimal_proof.peaks,
                 minimal_proof.leaf_count,
-            );
+            )
+            .unwrap();
 
             assert!(verify_mmr_proof::<Keccak256Hasher>(
                 &circuit_mmr.get_root(),
@@ -399,7 +415,8 @@ pub mod tests {
         let circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(
             &minimal_proof.peaks,
             minimal_proof.leaf_count,
-        );
+        )
+        .unwrap();
 
         assert!(verify_mmr_proof::<Keccak256Hasher>(
             &circuit_mmr.get_root(),
@@ -430,7 +447,8 @@ pub mod tests {
             let circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(
                 &minimal_proof.peaks,
                 minimal_proof.leaf_count,
-            );
+            )
+            .unwrap();
 
             assert!(verify_mmr_proof::<Keccak256Hasher>(
                 &circuit_mmr.get_root(),
@@ -469,7 +487,8 @@ pub mod tests {
             let circuit_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(
                 &minimal_proof.peaks,
                 minimal_proof.leaf_count,
-            );
+            )
+            .unwrap();
 
             assert!(verify_mmr_proof::<Keccak256Hasher>(
                 &circuit_mmr.get_root(),
@@ -479,11 +498,14 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Invalid peak count")]
     fn test_invalid_peak_count() {
         // Try to create MMR with incorrect number of peaks
         let peaks = vec![Digest::from([1u8; 32])];
-        CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(&peaks, 3); // 3 leaves should have 2 peaks
+        match CompactMerkleMountainRange::<Keccak256Hasher>::from_peaks(&peaks, 3) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(e, crate::error::BitcoinLightClientError::InvalidPeakCount { .. })),
+        }
+        // 3 leaves should have 2 peaks
     }
 
     #[test]
@@ -507,11 +529,12 @@ pub mod tests {
         let expected_root = expected_final_mmr.get_root();
 
         // Validate the transition
-        initial_mmr.validate_mmr_transition(&new_leaves, &expected_root);
+        initial_mmr
+            .validate_mmr_transition(&new_leaves, &expected_root)
+            .unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Invalid MMR: root mismatch")]
     fn test_validate_mmr_transition_invalid() {
         let mut initial_mmr = CompactMerkleMountainRange::<Keccak256Hasher>::new();
 
@@ -527,8 +550,11 @@ pub mod tests {
         // Create an invalid expected root
         let invalid_root = Digest::from([0xff; 32]);
 
-        // This should panic due to root mismatch
-        initial_mmr.validate_mmr_transition(&new_leaves, &invalid_root);
+        // This should error due to root mismatch
+        match initial_mmr.validate_mmr_transition(&new_leaves, &invalid_root) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(e, crate::error::BitcoinLightClientError::MmrRootValidationFailed { .. })),
+        }
     }
 
     #[tokio::test]

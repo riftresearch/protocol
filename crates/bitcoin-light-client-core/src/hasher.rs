@@ -1,4 +1,4 @@
-use std::fmt::{Debug};
+use std::fmt::Debug;
 
 use sha2::{Digest as Sha2Digest, Sha256};
 use tiny_keccak::{Hasher as TinyKeccakHasher, Keccak};
@@ -20,7 +20,6 @@ pub trait Hasher {
     fn name() -> &'static str;
 }
 
-/// Sha256 implementation
 #[derive(Debug)]
 pub struct Sha256Hasher;
 

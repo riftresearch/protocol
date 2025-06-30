@@ -87,8 +87,8 @@ impl BchOverwriteMMRState {
             .map(|(_, h)| Header(*h))
             .collect::<Vec<_>>();
 
-        let (chain_works, _) = validate_chainwork(&genesis_leaf, &genesis_leaf, &headers);
-        let leaves = create_new_leaves(&genesis_leaf, &headers, &chain_works);
+        let (chain_works, _) = validate_chainwork(&genesis_leaf, &genesis_leaf, &headers).unwrap();
+        let leaves = create_new_leaves(&genesis_leaf, &headers, &chain_works).unwrap();
 
         for leaf in leaves.iter() {
             let result = indexed_mmr
@@ -176,8 +176,8 @@ async fn extend_with_bch_blocks(
         .collect::<Vec<_>>();
 
     // chainwork and leaves
-    let (chain_works, _) = validate_chainwork(&parent_leaf, &parent_leaf, &bch_headers);
-    let bch_leaves = create_new_leaves(&parent_leaf, &bch_headers, &chain_works);
+    let (chain_works, _) = validate_chainwork(&parent_leaf, &parent_leaf, &bch_headers).unwrap();
+    let bch_leaves = create_new_leaves(&parent_leaf, &bch_headers, &chain_works).unwrap();
 
     // append them
     for leaf in bch_leaves.iter() {

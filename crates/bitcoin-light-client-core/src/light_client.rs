@@ -5,6 +5,10 @@ use crypto_bigint::CheckedAdd;
 use crypto_bigint::Encoding;
 use crypto_bigint::U256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use snafu::prelude::*;
+use snafu::OptionExt;
+
+use crate::error::{Result, *};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Header(pub [u8; 80]);
@@ -32,7 +36,7 @@ impl Default for Header {
 }
 
 impl Serialize for Header {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -42,7 +46,7 @@ impl Serialize for Header {
 }
 
 impl<'de> Deserialize<'de> for Header {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -60,7 +64,7 @@ impl<'de> Deserialize<'de> for Header {
 impl TryFrom<Vec<u8>> for Header {
     type Error = &'static str;
 
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<u8>) -> std::result::Result<Self, Self::Error> {
         if value.len() != 80 {
             return Err("Header must be exactly 80 bytes");
         }
@@ -71,15 +75,13 @@ impl TryFrom<Vec<u8>> for Header {
 }
 
 // parent_ variables are assumed to be valid in the context of the header chain
-// panics on any failures
-// TODO: No panics, return proper errors
 pub fn validate_header_chain(
     parent_height: u32,
     parent_header: &Header,
     parent_retarget_header: &Header,
     header_chain: &[Header],
-) {
-    assert!(!header_chain.is_empty(), "Header chain must not be empty");
+) -> Result<()> {
+    ensure!(!header_chain.is_empty(), HeaderChainEmpty);
 
     let mut retarget_header = *parent_retarget_header;
 
@@ -93,12 +95,12 @@ pub fn validate_header_chain(
         let previous_height = parent_height + i as u32;
         let current_header = pair[1];
 
-        assert!(
+        ensure!(
             bitcoin_core_rs::check_header_connection(
                 current_header.as_bytes(),
                 previous_header.as_bytes(),
             ),
-            "Header chain link is not connected"
+            HeaderChainLinkNotConnected
         );
 
         let next_retarget = bitcoin_core_rs::validate_next_work_required(
@@ -106,46 +108,44 @@ pub fn validate_header_chain(
             previous_height,
             previous_header.as_bytes(),
             current_header.as_bytes(),
-        );
+        )?;
 
-        assert!(
-            next_retarget.is_ok(),
-            "Failed to validate work requirement: {:?}",
-            next_retarget.err().unwrap()
-        );
-
-        assert!(
+        ensure!(
             bitcoin_core_rs::check_proof_of_work(current_header.as_bytes()),
-            "Header fails PoW check"
+            HeaderProofOfWorkFailed
         );
 
-        retarget_header = Header(next_retarget.unwrap());
+        retarget_header = Header(next_retarget);
     }
+
+    Ok(())
 }
 
 // Returns the cumulative chainwork for each new header and the final cumulative chainwork for the chain
 pub fn calculate_cumulative_work(
     parent_cumulative_work: U256,
     header_chain: &[Header],
-) -> (Vec<U256>, U256) {
-    assert!(!header_chain.is_empty(), "Header chain must not be empty");
-    let works: Vec<U256> = header_chain
-        .iter()
-        .scan(parent_cumulative_work, |acc, header| {
-            let header_proof = bitcoin_core_rs::get_block_proof(header.as_bytes())
-                .expect("Header proof calculation failed");
-            *acc = U256::from_le_bytes(header_proof)
-                .checked_add(acc)
-                .expect("Chainwork addition overflow");
-            Some(*acc)
-        })
-        .collect();
+) -> Result<(Vec<U256>, U256)> {
+    ensure!(!header_chain.is_empty(), HeaderChainEmpty);
+
+    let mut works = Vec::with_capacity(header_chain.len());
+    let mut acc = parent_cumulative_work;
+
+    for header in header_chain {
+        let header_proof = bitcoin_core_rs::get_block_proof(header.as_bytes())
+            .map_err(|_| HeaderProofCalculationFailed.build())?;
+
+        acc = U256::from_le_bytes(header_proof)
+            .checked_add(&acc)
+            .into_option()
+            .context(ChainworkAdditionOverflow)?;
+
+        works.push(acc);
+    }
 
     let final_work = works.last().copied().unwrap_or(parent_cumulative_work);
-    let mut all_works = Vec::with_capacity(works.len());
-    all_works.extend(works);
 
-    (all_works, final_work)
+    Ok((works, final_work))
 }
 
 #[cfg(test)]
@@ -170,7 +170,7 @@ pub mod tests {
 
         let header_chain: Vec<Header> = vec![Header(TEST_HEADERS[1].1)];
 
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
@@ -182,7 +182,7 @@ pub mod tests {
             .map(|(_, header)| Header(*header))
             .collect();
 
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
@@ -194,7 +194,7 @@ pub mod tests {
             .map(|(_, header)| Header(*header))
             .collect();
 
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
@@ -205,7 +205,7 @@ pub mod tests {
             .iter()
             .map(|(_, header)| Header(*header))
             .collect();
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
@@ -216,7 +216,7 @@ pub mod tests {
             .iter()
             .map(|(_, header)| Header(*header))
             .collect();
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
@@ -227,7 +227,7 @@ pub mod tests {
             .iter()
             .map(|(_, header)| Header(*header))
             .collect();
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
@@ -238,20 +238,22 @@ pub mod tests {
             .iter()
             .map(|(_, header)| Header(*header))
             .collect();
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        validate_header_chain(0, genesis_header, genesis_header, &header_chain).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Header chain must not be empty")]
     fn test_validate_header_chain_empty() {
         let parent_header = &Header(TEST_HEADERS[0].1);
 
-        validate_header_chain(
+        match validate_header_chain(
             0,
             parent_header,
             parent_header, // Using same header as retarget for simplicity
             &[],
-        );
+        ) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(e, BitcoinLightClientError::HeaderChainEmpty { .. })),
+        }
     }
 
     #[test]
@@ -263,7 +265,8 @@ pub mod tests {
         let parent_work = U256::from_u8(0);
         let header_chain: Vec<Header> = window.iter().map(|(_, header)| Header(*header)).collect();
 
-        let (all_works, final_work) = calculate_cumulative_work(parent_work, &header_chain);
+        let (all_works, final_work) =
+            calculate_cumulative_work(parent_work, &header_chain).unwrap();
 
         // Basic sanity checks
         assert_eq!(all_works.len(), header_chain.len());
@@ -276,7 +279,6 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Header fails PoW check")]
     fn test_validate_header_chain_invalid_pow() {
         let genesis_header = &Header(TEST_HEADERS[0].1);
 
@@ -285,11 +287,16 @@ pub mod tests {
         header_bytes[76..=79].copy_from_slice(&[0; 4]);
         let invalid_header = Header(header_bytes);
 
-        validate_header_chain(0, genesis_header, genesis_header, &[invalid_header]);
+        match validate_header_chain(0, genesis_header, genesis_header, &[invalid_header]) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(
+                e,
+                BitcoinLightClientError::HeaderProofOfWorkFailed { .. }
+            )),
+        }
     }
 
     #[test]
-    #[should_panic(expected = "Header chain link is not connected")]
     fn test_validate_header_chain_broken_link() {
         let genesis_header = &Header(TEST_HEADERS[0].1);
 
@@ -298,11 +305,16 @@ pub mod tests {
         header_bytes[4..=35].copy_from_slice(&[190; 32]);
         let disconnected_header = Header(header_bytes);
 
-        validate_header_chain(0, genesis_header, genesis_header, &[disconnected_header]);
+        match validate_header_chain(0, genesis_header, genesis_header, &[disconnected_header]) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(
+                e,
+                BitcoinLightClientError::HeaderChainLinkNotConnected { .. }
+            )),
+        }
     }
 
     #[test]
-    #[should_panic(expected = "Failed to validate work requirement")]
     fn test_validate_header_chain_invalid_difficulty_update() {
         let genesis_header = &Header(TEST_HEADERS[0].1);
         let mut chain = TEST_HEADERS[1..2017]
@@ -315,11 +327,16 @@ pub mod tests {
         modified_bytes[72..=75].copy_from_slice(&[0xff; 4]);
         chain[2015] = Header(modified_bytes);
 
-        validate_header_chain(0, genesis_header, genesis_header, &chain);
+        match validate_header_chain(0, genesis_header, genesis_header, &chain) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(
+                e,
+                BitcoinLightClientError::WorkRequirementValidationFailed { .. }
+            )),
+        }
     }
 
     #[test]
-    #[should_panic]
     fn test_calculate_cumulative_work_overflow() {
         // Create a header that would cause work calculation overflow
         let mut overflow_header = Header(TEST_HEADERS[0].1);
@@ -328,11 +345,17 @@ pub mod tests {
         overflow_header = Header(header_bytes);
 
         let max_work = U256::MAX.wrapping_sub(&U256::ONE);
-        calculate_cumulative_work(max_work, &[overflow_header]);
+        match calculate_cumulative_work(max_work, &[overflow_header]) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(
+                e,
+                BitcoinLightClientError::ChainworkAdditionOverflow { .. }
+                    | BitcoinLightClientError::HeaderProofCalculationFailed { .. }
+            )),
+        }
     }
 
     #[test]
-    #[should_panic(expected = "Header chain link is not connected")]
     fn test_validate_header_chain_with_gap() {
         let genesis_header = &Header(TEST_HEADERS[0].1);
 
@@ -347,6 +370,12 @@ pub mod tests {
                 .map(|(_, header)| Header(*header)),
         );
 
-        validate_header_chain(0, genesis_header, genesis_header, &header_chain);
+        match validate_header_chain(0, genesis_header, genesis_header, &header_chain) {
+            Ok(_) => panic!("Expected error"),
+            Err(e) => assert!(matches!(
+                e,
+                BitcoinLightClientError::HeaderChainLinkNotConnected { .. }
+            )),
+        }
     }
 }

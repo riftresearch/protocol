@@ -712,7 +712,9 @@ async fn test_fork_watchtower_light_client_tip_not_in_bde() {
                 .build()
                 .expect("Failed to build rift program input");
 
-            let (public_values, _) = rift_program_input.get_auxiliary_light_client_data();
+            let (public_values, _) = rift_program_input
+                .get_auxiliary_light_client_data()
+                .unwrap();
 
             assert_ne!(
                 public_values.priorMmrRoot, public_values.newMmrRoot,

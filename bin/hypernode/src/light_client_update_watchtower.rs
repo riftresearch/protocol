@@ -5,8 +5,8 @@ use alloy::primitives::Address;
 use alloy::providers::DynProvider;
 use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::{hasher::Keccak256Hasher, ChainTransition};
-use rift_indexer::engine::RiftIndexer;
 use rift_core::giga::{RiftProgramInput, RustProofType};
+use rift_indexer::engine::RiftIndexer;
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
 use sol_bindings::{BlockProofParams, RiftExchangeHarnessInstance};
@@ -17,9 +17,7 @@ use tokio::time;
 use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::swap_watchtower::build_chain_transition_for_light_client_update;
-use rift_sdk::txn_broadcast::{
-    PreflightCheck, TransactionBroadcaster, TransactionExecutionResult,
-};
+use rift_sdk::txn_broadcast::{PreflightCheck, TransactionBroadcaster, TransactionExecutionResult};
 
 const _LIGHT_CLIENT_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const TRANSACTION_BROADCAST_RETRY_MAX: usize = 5;
@@ -81,8 +79,7 @@ impl LightClientUpdateWatchtower {
 
         let (event_sender, mut event_receiver) = mpsc::channel::<LightClientUpdateEvent>(10);
 
-        let rift_exchange =
-            RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
+        let rift_exchange = RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
 
         // Periodic lag check task
         let event_sender_timer = event_sender.clone();
@@ -298,8 +295,9 @@ impl LightClientUpdateWatchtower {
             Self::generate_light_client_update_proof(&chain_transition, proof_generator).await?;
 
         // Generate auxiliary data from chain transition for the proof
-        let (public_input, auxiliary_data_option) =
-            chain_transition.verify::<Keccak256Hasher>(true);
+        let (public_input, auxiliary_data_option) = chain_transition
+            .verify::<Keccak256Hasher>(true)
+            .map_err(|e| eyre::eyre!("Failed to verify chain transition: {}", e))?;
 
         let auxiliary_data = auxiliary_data_option.ok_or_else(|| {
             LightClientUpdateWatchtowerError::ChainTransitionBuildError(
@@ -334,11 +332,11 @@ impl LightClientUpdateWatchtower {
         chain_transition: &ChainTransition,
         proof_generator: &Arc<RiftProofGenerator>,
     ) -> Result<Proof, LightClientUpdateWatchtowerError> {
-        let input = RiftProgramInput {
-            proof_type: RustProofType::LightClientOnly,
-            light_client_input: Some(chain_transition.clone()),
-            order_filling_transaction_input: None,
-        };
+        let input = RiftProgramInput::builder()
+            .proof_type(RustProofType::LightClientOnly)
+            .light_client_input(chain_transition.clone())
+            .build()
+            .map_err(|e| eyre::eyre!("Failed to build RiftProgramInput: {}", e))?;
 
         let proof = proof_generator.prove(&input).await.map_err(|e| {
             LightClientUpdateWatchtowerError::ProofGenerationError(format!(

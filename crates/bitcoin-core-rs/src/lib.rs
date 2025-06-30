@@ -25,12 +25,22 @@ trait U256Ext {
 impl U256Ext for U256 {
     fn to_u128_pair(&self) -> (u128, u128) {
         let bytes = self.to_le_bytes();
+        // This guarantees the u128 conversion of the limbs will succeed
+        assert!(bytes.len() == 32, "U256 must be 32 bytes");
 
         // The first 16 bytes are the least-significant bits (the "lower" 128)
-        let lower_128 = u128::from_le_bytes(bytes[0..16].try_into().unwrap());
+        let lower_128 = u128::from_le_bytes(
+            bytes[0..16]
+                .try_into()
+                .expect("conversion should never fail"),
+        );
 
         // The last 16 bytes are the more-significant bits (the "upper" 128)
-        let upper_128 = u128::from_le_bytes(bytes[16..32].try_into().unwrap());
+        let upper_128 = u128::from_le_bytes(
+            bytes[16..32]
+                .try_into()
+                .expect("conversion should never fail"),
+        );
 
         (lower_128, upper_128)
     }
@@ -101,50 +111,30 @@ fn bits_to_target(bits: &[u8; 4]) -> U256 {
 }
 
 pub fn sha256(input: &[u8]) -> [u8; 32] {
-    // step 1: create new sha256 hash
     let mut hasher = Sha256::new();
-
-    // step 2: update hash blocks with input
     hasher.update(input);
-
-    // return the hash result via .finalize
-    let result = hasher.finalize();
-
-    // initialize hash array
-    let hash: [u8; 32] = result.into();
-
-    // step 3: return hash
-    hash
+    hasher.finalize().into()
 }
 
-pub fn get_block_hash(header: &[u8; 80]) -> Result<[u8; 32]> {
-    // step 1: hash the header via double sha256
-    let hash: [u8; 32] = sha256(&sha256(header));
-
-    // step 2: return hash
-    Ok(hash)
+pub fn get_natural_block_hash(header: &[u8; 80]) -> [u8; 32] {
+    // block hash is the double sha256 of the header
+    sha256(&sha256(header))
 }
 
 pub fn check_proof_of_work(header: &[u8; 80]) -> bool {
-    // step 1: Extract the 'bits' field in the header and convert into byte array
+    // Extract the 'bits' field in the header and convert into byte array
     let bit_bytes: [u8; 4] = header.bits();
 
-    // step 2: pass array to convert the compressed target into fully expanded form
+    // pass array to convert the compressed target into fully expanded form
     let target = bits_to_target(&bit_bytes);
 
-    // step 3: Calculate the hash of the header
-    let hash = get_block_hash(header);
+    // Calculate the hash of the header
+    let hash = get_natural_block_hash(header);
 
-    // if hash returns expected type continue, else, fail.
-    if let Ok(value) = hash {
-        // Convert the hash to a little endian U256
-        let hash_int = U256::from_le_slice(&value); // reverse order
+    let hash_int = U256::from_le_slice(&hash);
 
-        // step 4: Compare the hash to the target
-        hash_int <= target
-    } else {
-        false
-    }
+    // Compare the hash to the target
+    hash_int <= target
 }
 
 pub fn get_retarget_height(height: u32) -> u32 {
@@ -175,7 +165,7 @@ fn calculate_next_work_required(
     new_target = new_target.wrapping_mul(&U256::from(timespan));
     new_target = new_target
         .checked_div(&U256::from(TARGET_BLOCK_TIME))
-        .expect("Division succeeds");
+        .expect("TARGET_BLOCK_TIME must be a non-zero constant");
 
     if new_target > pow_limit {
         new_target = pow_limit;
@@ -214,7 +204,7 @@ pub fn get_block_proof(header: &[u8; 80]) -> Result<[u8; 32]> {
     } else {
         let result: [u8; 32] = (U256::MAX)
             .checked_div(&target.saturating_add(&U256::ONE))
-            .expect("Division succeeds")
+            .expect("target + 1 is always non-zero since target > 0")
             .to_le_bytes();
 
         Ok(result)
@@ -222,13 +212,13 @@ pub fn get_block_proof(header: &[u8; 80]) -> Result<[u8; 32]> {
 }
 
 pub fn check_header_connection(header: &[u8; 80], previous_header: &[u8; 80]) -> bool {
-    // step 1: get previous block hash in current header
+    // Get previous block hash field in current header
     let curr_header: [u8; 32] = header.previous_block_hash();
 
-    // step 2: get the hash of the previous header
-    let last_header_hash: [u8; 32] = get_block_hash(previous_header).unwrap();
+    // Compute the hash of the previous header
+    let last_header_hash: [u8; 32] = get_natural_block_hash(previous_header);
 
-    // step 3: compare and see if the hashes connect - if true, connection valid.
+    // Compare and see if the hashes connect - if true, connection valid.
     curr_header == last_header_hash
 }
 
@@ -297,7 +287,7 @@ mod tests {
             hex!("0000000015bb50096055846954f7120e30d6aa2bd5ab8d4a4055ceacc853328a");
         expected_hash.reverse();
         let header = hex!("01000000858a5c6d458833aa83f7b7e56d71c604cb71165ebb8104b82f64de8d00000000e408c11029b5fdbb92ea0eeb8dfa138ffa3acce0f69d7deebeb1400c85042e01723f6b4bc38c001d09bd8bd5");
-        let hash = get_block_hash(&header).unwrap();
+        let hash = get_natural_block_hash(&header);
         assert_eq!(hash, expected_hash);
     }
 

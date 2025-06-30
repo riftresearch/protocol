@@ -13,8 +13,8 @@ fn get_test_data() -> Vec<BlockLeaf> {
         .iter()
         .map(|(_, h)| Header::new(h))
         .collect::<Vec<_>>();
-    let (cumulative_chainworks, _) = calculate_cumulative_work(crypto_bigint::U256::ZERO, &headers);
-    create_new_leaves(&get_genesis_leaf(), &headers, &cumulative_chainworks)
+    let (cumulative_chainworks, _) = calculate_cumulative_work(crypto_bigint::U256::ZERO, &headers).unwrap();
+    create_new_leaves(&get_genesis_leaf(), &headers, &cumulative_chainworks).unwrap()
 }
 
 // TODO: Compared with test_data_engine_in_memory_db, it's obvious* the file based DB is much slower

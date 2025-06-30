@@ -10,8 +10,8 @@ use bitcoin_data_engine::BitcoinDataEngine;
 use bitcoin_light_client_core::{hasher::Keccak256Hasher, leaves::BlockLeaf, ChainTransition};
 use bitcoincore_rpc_async::bitcoin::hashes::Hash;
 use bitcoincore_rpc_async::RpcApi;
-use rift_indexer::engine::RiftIndexer;
 use rift_core::giga::{RiftProgramInput, RustProofType};
+use rift_indexer::engine::RiftIndexer;
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
 use sol_bindings::{
@@ -101,8 +101,7 @@ impl ForkWatchtower {
 
         let (event_sender, mut event_receiver) = mpsc::channel::<ForkWatchtowerEvent>(10);
 
-        let rift_exchange =
-            RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
+        let rift_exchange = RiftExchangeHarnessInstance::new(rift_exchange_address, evm_rpc);
 
         let fork_in_progress = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -307,7 +306,13 @@ impl ForkWatchtower {
                 }
             };
 
-            rift_program_input.get_auxiliary_light_client_data()
+            match rift_program_input.get_auxiliary_light_client_data() {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("Failed to get auxiliary light client data: {}", e);
+                    return;
+                }
+            }
         };
 
         let block_proof_params = BlockProofParams {
@@ -639,8 +644,6 @@ impl ForkWatchtower {
         let mut backoff: backoff::exponential::ExponentialBackoff<backoff::SystemClock> =
             ExponentialBackoff::default();
         backoff.max_elapsed_time = Some(Duration::from_secs(300));
-
-        
 
         loop {
             match proof_generator.prove(&program_input).await {

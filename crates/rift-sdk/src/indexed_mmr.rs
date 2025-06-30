@@ -24,7 +24,7 @@ use bitcoin_light_client_core::mmr::get_root as circuit_get_root;
 use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
 use tracing::info;
 
-use crate::errors::{Result, RiftSdkError};
+use crate::error::{Result, RiftSdkError};
 use crate::DatabaseLocation;
 
 // -----------------------------------------------------------------------------
@@ -50,7 +50,8 @@ pub fn hex_to_leaf(hex_str: &str) -> Result<BlockLeaf> {
     let bytes = hex::decode(without_prefix)
         .map_err(|e| RiftSdkError::MMRError(format!("Failed to decode leaf hex: {e}")))?;
     // If BlockLeaf::deserialize returns a BlockLeaf directly:
-    Ok(BlockLeaf::deserialize(&bytes))
+    BlockLeaf::deserialize(&bytes)
+        .map_err(|e| RiftSdkError::MMRError(format!("Failed to deserialize leaf: {e}")))
 }
 
 /// Convert a rust-accumulators `ClientMMRProof` into the circuit's `CircuitMMRProof`.

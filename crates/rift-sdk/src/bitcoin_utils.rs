@@ -6,7 +6,7 @@ use bitcoincore_rpc_async::json::GetBlockHeaderVerbose;
 use serde_json::value::RawValue;
 use tracing::{error, info, warn};
 
-use crate::errors::RiftSdkError;
+use crate::error::RiftSdkError;
 use backoff::future::retry;
 use backoff::Error as BackoffError;
 use backoff::ExponentialBackoff;
@@ -528,7 +528,7 @@ pub trait BitcoinClientExt {
         end_block_height: u32,
         concurrency_limit: usize,
         expected_parent: Option<[u8; 32]>,
-    ) -> crate::errors::Result<Vec<BlockLeaf>>;
+    ) -> crate::error::Result<Vec<BlockLeaf>>;
 
     // sorted
     async fn get_headers_from_block_range(
@@ -537,32 +537,32 @@ pub trait BitcoinClientExt {
         end_block_height: u32,
         concurrency_limit: usize,
         expected_parent: Option<[u8; 32]>,
-    ) -> crate::errors::Result<Vec<Header>>;
+    ) -> crate::error::Result<Vec<Header>>;
 
     // unsorted
     async fn get_blocks_from_leaves(
         &self,
         leaves: &[BlockLeaf],
         concurrency_limit: usize,
-    ) -> crate::errors::Result<Vec<Block>>;
+    ) -> crate::error::Result<Vec<Block>>;
 
-    async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>>;
-    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<Header>;
+    async fn get_chain_tips(&self) -> crate::error::Result<Vec<ChainTip>>;
+    async fn get_block_header_by_height(&self, height: u32) -> crate::error::Result<Header>;
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
-    ) -> crate::errors::Result<GetBlockHeaderVerbose>;
+    ) -> crate::error::Result<GetBlockHeaderVerbose>;
 
     async fn find_oldest_block_before_timestamp(
         &self,
         target_timestamp: u64,
-    ) -> crate::errors::Result<u32>;
+    ) -> crate::error::Result<u32>;
 
     async fn get_headers_from_hashes(
         &self,
         hashes: &[BlockHash],
         concurrency_limit: usize,
-    ) -> crate::errors::Result<Vec<Header>>;
+    ) -> crate::error::Result<Vec<Header>>;
 }
 
 #[async_trait::async_trait]
@@ -570,7 +570,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
     async fn get_block_header_info_by_height(
         &self,
         height: u32,
-    ) -> crate::errors::Result<GetBlockHeaderVerbose> {
+    ) -> crate::error::Result<GetBlockHeaderVerbose> {
         let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!(
                 "Error getting block hash for height {}: {}",
@@ -596,7 +596,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
     async fn find_oldest_block_before_timestamp(
         &self,
         target_timestamp: u64,
-    ) -> crate::errors::Result<u32> {
+    ) -> crate::error::Result<u32> {
         let tip_height = self.get_block_count().await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!("Error getting block count: {}", e))
         })?;
@@ -637,7 +637,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         &self,
         hashes: &[BlockHash],
         concurrency_limit: usize,
-    ) -> crate::errors::Result<Vec<Header>> {
+    ) -> crate::error::Result<Vec<Header>> {
         use bitcoincore_rpc_async::bitcoin::consensus::encode::deserialize;
         use bitcoincore_rpc_async::bitcoin::hashes::hex::FromHex;
 
@@ -681,7 +681,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         Ok(block_headers)
     }
 
-    async fn get_block_header_by_height(&self, height: u32) -> crate::errors::Result<Header> {
+    async fn get_block_header_by_height(&self, height: u32) -> crate::error::Result<Header> {
         let block_hash = self.get_block_hash(height as u64).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!(
                 "Error getting block hash for height {}: {}",
@@ -698,7 +698,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
 
         Ok(header)
     }
-    async fn get_chain_tips(&self) -> crate::errors::Result<Vec<ChainTip>> {
+    async fn get_chain_tips(&self) -> crate::error::Result<Vec<ChainTip>> {
         let chain_tips = self.call("getchaintips", &[]).await.map_err(|e| {
             RiftSdkError::BitcoinRpcError(format!("Error getting chain tips: {}", e))
         })?;
@@ -709,7 +709,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         &self,
         leaves: &[BlockLeaf],
         concurrency_limit: usize,
-    ) -> crate::errors::Result<Vec<Block>> {
+    ) -> crate::error::Result<Vec<Block>> {
         let block_hashes: Vec<[u8; 32]> = leaves.iter().map(|leaf| leaf.block_hash).collect();
 
         let blocks_requests: Vec<BitcoinCoreJsonRpcRequest<String>> = block_hashes
@@ -749,7 +749,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         end_block_height: u32,
         concurrency_limit: usize,
         expected_parent: Option<[u8; 32]>,
-    ) -> crate::errors::Result<Vec<BlockLeaf>> {
+    ) -> crate::error::Result<Vec<BlockLeaf>> {
         // Calculate number of blocks to fetch.
         let num_blocks = (end_block_height - start_block_height + 1) as usize;
 
@@ -873,7 +873,7 @@ impl BitcoinClientExt for AsyncBitcoinClient {
         end_block_height: u32,
         concurrency_limit: usize,
         expected_parent: Option<[u8; 32]>,
-    ) -> crate::errors::Result<Vec<Header>> {
+    ) -> crate::error::Result<Vec<Header>> {
         // Number of blocks in the requested range
         let num_blocks = (end_block_height - start_block_height + 1) as usize;
 

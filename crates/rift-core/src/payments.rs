@@ -1,9 +1,13 @@
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::Transaction;
+use snafu::prelude::*;
 use tiny_keccak::{Hasher, Keccak};
 
 use sol_bindings::Order;
 
+use crate::error::{
+    PaymentValidationFailed, Result, TransactionDeserializationFailed,
+};
 use crate::order_hasher::SolidityHash;
 
 // Constants
@@ -42,37 +46,55 @@ pub fn validate_bitcoin_payments(
     txn_data: &[u8],
     orders: &[Order],
     op_return_index: usize,
-) -> Result<Vec<[u8; 32]>, &'static str> {
+) -> Result<Vec<[u8; 32]>> {
     // [0] deserialize txn data
     let transaction: Transaction =
-        deserialize(txn_data).map_err(|_| "Failed to deserialize transaction")?;
+        deserialize(txn_data).map_err(|e| TransactionDeserializationFailed {
+            txn_bytes: txn_data.to_vec(),
+            source: e,
+        }.build())?;
 
     // [1] Ensure orders length and op_return index are all valid for this transaction
-    if orders.is_empty() {
-        return Err("No orders to validate");
-    }
+    ensure!(
+        !orders.is_empty(),
+        PaymentValidationFailed {
+            reason: "No orders to validate".to_string()
+        }
+    );
 
-    if orders.len() != op_return_index {
-        return Err("Number of orders doesn't match the number of payment outputs");
-    }
+    ensure!(
+        orders.len() == op_return_index,
+        PaymentValidationFailed {
+            reason: "Number of orders doesn't match the number of payment outputs".to_string()
+        }
+    );
 
     let output_counter = transaction.output.len();
-    if output_counter < (op_return_index + 1) {
-        return Err("Transaction doesn't have enough outputs");
-    }
+    ensure!(
+        output_counter >= (op_return_index + 1),
+        PaymentValidationFailed {
+            reason: "Transaction doesn't have enough outputs".to_string()
+        }
+    );
     let payment_outputs = &transaction.output[0..op_return_index];
 
     // interleave orders and payment outputs, and check each pair
     for (order, payment_output) in orders.iter().zip(payment_outputs.iter()) {
         // [3] check payment output value matches order specified expected sats
-        if payment_output.value.to_sat() != order.expectedSats {
-            return Err("Transaction output value doesn't match expected sats");
-        }
+        ensure!(
+            payment_output.value.to_sat() == order.expectedSats,
+            PaymentValidationFailed {
+                reason: "Transaction output value doesn't match expected sats".to_string()
+            }
+        );
 
         // [4] check payment output script pubkey matches order specified wallet
-        if payment_output.script_pubkey.as_bytes() != order.bitcoinScriptPubKey.to_vec() {
-            return Err("Transaction recipient doesn't match LP wallet");
-        }
+        ensure!(
+            payment_output.script_pubkey.as_bytes() == order.bitcoinScriptPubKey.to_vec(),
+            PaymentValidationFailed {
+                reason: "Transaction recipient doesn't match LP wallet".to_string()
+            }
+        );
     }
 
     let all_order_hashes = orders.iter().map(|order| order.hash()).collect::<Vec<_>>();
@@ -82,23 +104,36 @@ pub fn validate_bitcoin_payments(
     let op_return_output = &transaction.output[op_return_index];
     let op_return_script_pubkey = op_return_output.script_pubkey.as_bytes();
 
-    if op_return_script_pubkey.len() < 34 {
-        return Err("OP_RETURN output script is too short");
-    }
+    ensure!(
+        op_return_script_pubkey.len() >= 34,
+        PaymentValidationFailed {
+            reason: "OP_RETURN output script is too short".to_string()
+        }
+    );
 
-    if op_return_script_pubkey[0] != OP_RETURN_CODE {
-        return Err("Second output is not an OP_RETURN");
-    }
+    ensure!(
+        op_return_script_pubkey[0] == OP_RETURN_CODE,
+        PaymentValidationFailed {
+            reason: "Second output is not an OP_RETURN".to_string()
+        }
+    );
 
-    if op_return_script_pubkey[1] != OP_PUSHBYTES_32 {
-        return Err("OP_RETURN output is not pushing 32 bytes");
-    }
+    ensure!(
+        op_return_script_pubkey[1] == OP_PUSHBYTES_32,
+        PaymentValidationFailed {
+            reason: "OP_RETURN script is not pushing 32 bytes".to_string()
+        }
+    );
 
     let inscribed_aggregate_order_hash = &op_return_script_pubkey[2..34];
 
-    if inscribed_aggregate_order_hash != aggregate_order_hash {
-        return Err("Inscribed aggregate order hash doesn't match computed aggregate order hash");
-    }
+    ensure!(
+        inscribed_aggregate_order_hash == aggregate_order_hash,
+        PaymentValidationFailed {
+            reason: "Inscribed aggregate order hash doesn't match computed aggregate order hash"
+                .to_string()
+        }
+    );
 
     Ok(all_order_hashes)
 }

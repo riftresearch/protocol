@@ -210,9 +210,8 @@ impl SwapWatchtower {
                 .get_blocks_from_leaves(&block_leaves, bitcoin_concurrency_limit)
                 .await?;
 
-            pending_payments.extend(
-                find_new_swaps_in_blocks(rift_indexer.clone(), &full_blocks).await?,
-            );
+            pending_payments
+                .extend(find_new_swaps_in_blocks(rift_indexer.clone(), &full_blocks).await?);
 
             let confirmed_payments = find_pending_swaps_with_sufficient_confirmations(
                 btc_rpc.clone(),
@@ -344,8 +343,9 @@ impl SwapWatchtower {
                 .build()
                 .map_err(|e| eyre::eyre!("Failed to build rift program input: {}", e))?;
 
-            let (public_values_simulated, auxiliary_data) =
-                rift_program_input.get_auxiliary_light_client_data();
+            let (public_values_simulated, auxiliary_data) = rift_program_input
+                .get_auxiliary_light_client_data()
+                .map_err(|e| eyre::eyre!("Failed to get auxiliary light client data: {}", e))?;
 
             let proof = proof_generator
                 .prove(&rift_program_input)
@@ -757,7 +757,8 @@ async fn find_pending_swaps_with_sufficient_confirmations(
                     })
                     .collect::<Vec<[u8; 32]>>(),
                 tx_hash,
-            );
+            )
+            .map_err(|e| eyre::eyre!("Failed to generate merkle proof: {}", e))?;
 
             let rift_transaction_input = OrderFillingTransaction {
                 txn: serialize_no_segwit(&txn).unwrap(),

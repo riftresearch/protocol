@@ -11,6 +11,9 @@ bitcoin = { workspace = true }
 bitcoin-core-rs = { workspace = true }
 tiny-keccak = { workspace = true }
 sol-bindings= { workspace = true }
+snafu = { workspace = true }
+hex = { workspace = true }
+
 [dev-dependencies]
 alloy = { workspace = true }
 test-data-utils = { workspace = true }

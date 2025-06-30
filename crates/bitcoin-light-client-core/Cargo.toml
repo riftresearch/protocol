@@ -13,6 +13,7 @@ tiny-keccak = { workspace = true }
 serde = { workspace = true }
 sol-bindings= { workspace = true }
 hex-literal = { workspace = true }
+snafu = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

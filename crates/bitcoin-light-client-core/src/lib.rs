@@ -1,3 +1,4 @@
+pub mod error;
 pub mod hasher;
 pub mod leaves;
 pub mod light_client;
@@ -15,32 +16,37 @@ use crate::leaves::{BlockLeaf, BlockLeafCompressor};
 use crate::light_client::Header;
 use crate::mmr::{CompactMerkleMountainRange, MMRProof};
 
+use crate::error::*;
+use snafu::{prelude::*, OptionExt};
+
 fn validate_leaf_block_hashes(
     parent_header: &Header,
     parent_leaf: &BlockLeaf,
     parent_retarget_header: &Header,
     parent_retarget_leaf: &BlockLeaf,
-) {
-    assert!(
-        parent_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(parent_header.as_bytes())
-                .expect("Failed to get parent header block hash")
-        ),
-        "Parent leaf block hash {} does not match parent header block hash {}",
-        hex::encode(parent_leaf.block_hash),
-        hex::encode(
-            bitcoin_core_rs::get_block_hash(parent_header.as_bytes())
-                .expect("Failed to get parent header block hash")
-        )
+) -> Result<()> {
+    let parent_header_hash = bitcoin_core_rs::get_natural_block_hash(parent_header.as_bytes());
+
+    ensure!(
+        parent_leaf.compare_by_natural_block_hash(&parent_header_hash),
+        ParentLeafBlockHashMismatch {
+            parent_leaf_hash: parent_leaf.block_hash.to_vec(),
+            parent_header_hash: parent_header_hash.to_vec(),
+        }
     );
 
-    assert!(
-        parent_retarget_leaf.compare_by_natural_block_hash(
-            &bitcoin_core_rs::get_block_hash(parent_retarget_header.as_bytes())
-                .expect("Failed to get parent retarget header block hash")
-        ),
-        "Parent retarget leaf block hash does not match parent retarget header block hash"
+    let parent_retarget_header_hash =
+        bitcoin_core_rs::get_natural_block_hash(parent_retarget_header.as_bytes());
+
+    ensure!(
+        parent_retarget_leaf.compare_by_natural_block_hash(&parent_retarget_header_hash),
+        ParentRetargetLeafBlockHashMismatch {
+            parent_retarget_leaf_hash: parent_retarget_leaf.block_hash.to_vec(),
+            parent_retarget_header_hash: parent_retarget_header_hash.to_vec(),
+        }
     );
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,54 +59,86 @@ fn validate_mmr_proofs<H: Hasher>(
     parent_retarget_leaf_inclusion_proof: &MMRProof,
     current_mmr_root: &Digest,
     previous_mmr_leaf_count: u32,
-) {
+) -> Result<()> {
     // [1] Validate parent leaf hashes match inclusion proof leaf hashes
-    assert_eq!(
-        parent_leaf_hash, &parent_leaf_inclusion_proof.leaf_hash,
-        "Parent leaf hash does not match parent leaf inclusion proof leaf"
+    ensure!(
+        parent_leaf_hash == &parent_leaf_inclusion_proof.leaf_hash,
+        MMRProofLeafHashMismatch {
+            leaf_type: "parent".to_string(),
+            expected_hash: parent_leaf_hash.to_vec(),
+            proof_hash: parent_leaf_inclusion_proof.leaf_hash.to_vec(),
+        }
     );
 
-    assert_eq!(
-        current_tip_leaf_hash, &current_tip_leaf_inclusion_proof.leaf_hash,
-        "Previous tip leaf hash does not match previous tip leaf inclusion proof leaf"
+    ensure!(
+        current_tip_leaf_hash == &current_tip_leaf_inclusion_proof.leaf_hash,
+        MMRProofLeafHashMismatch {
+            leaf_type: "current tip".to_string(),
+            expected_hash: current_tip_leaf_hash.to_vec(),
+            proof_hash: current_tip_leaf_inclusion_proof.leaf_hash.to_vec(),
+        }
     );
 
-    assert_eq!(
-        parent_retarget_leaf_hash, &parent_retarget_leaf_inclusion_proof.leaf_hash,
-        "Parent retarget leaf hash does not match parent retarget leaf inclusion proof leaf"
+    ensure!(
+        parent_retarget_leaf_hash == &parent_retarget_leaf_inclusion_proof.leaf_hash,
+        MMRProofLeafHashMismatch {
+            leaf_type: "parent retarget".to_string(),
+            expected_hash: parent_retarget_leaf_hash.to_vec(),
+            proof_hash: parent_retarget_leaf_inclusion_proof.leaf_hash.to_vec(),
+        }
     );
 
     // [2] Ensure the leaf count is the same for all proofs
-    assert_eq!(
-        previous_mmr_leaf_count, parent_leaf_inclusion_proof.leaf_count,
-        "Previous MMR leaf count does not match parent leaf count in proof"
+    ensure!(
+        previous_mmr_leaf_count == parent_leaf_inclusion_proof.leaf_count,
+        MMRProofLeafCountMismatch {
+            leaf_type: "parent".to_string(),
+            expected_count: previous_mmr_leaf_count,
+            proof_count: parent_leaf_inclusion_proof.leaf_count,
+        }
     );
 
-    assert_eq!(
-        previous_mmr_leaf_count, current_tip_leaf_inclusion_proof.leaf_count,
-        "Previous MMR leaf count does not match previous tip leaf count in proof"
+    ensure!(
+        previous_mmr_leaf_count == current_tip_leaf_inclusion_proof.leaf_count,
+        MMRProofLeafCountMismatch {
+            leaf_type: "current tip".to_string(),
+            expected_count: previous_mmr_leaf_count,
+            proof_count: current_tip_leaf_inclusion_proof.leaf_count,
+        }
     );
 
-    assert_eq!(
-        previous_mmr_leaf_count, parent_retarget_leaf_inclusion_proof.leaf_count,
-        "Previous MMR leaf count does not match parent retarget leaf count in proof"
+    ensure!(
+        previous_mmr_leaf_count == parent_retarget_leaf_inclusion_proof.leaf_count,
+        MMRProofLeafCountMismatch {
+            leaf_type: "parent retarget".to_string(),
+            expected_count: previous_mmr_leaf_count,
+            proof_count: parent_retarget_leaf_inclusion_proof.leaf_count,
+        }
     );
 
     // [3] Verify the proofs are valid
-    assert!(
+    ensure!(
         mmr::verify_mmr_proof::<H>(current_mmr_root, parent_leaf_inclusion_proof),
-        "Parent leaf inclusion proof is invalid"
+        MmrProofValidationFailed {
+            leaf_type: "parent".to_string(),
+        }
     );
 
-    assert!(
+    ensure!(
         mmr::verify_mmr_proof::<H>(current_mmr_root, current_tip_leaf_inclusion_proof),
-        "Previous tip leaf inclusion proof is invalid"
+        MmrProofValidationFailed {
+            leaf_type: "current tip".to_string(),
+        }
     );
 
-    assert!(
+    ensure!(
         mmr::verify_mmr_proof::<H>(current_mmr_root, parent_retarget_leaf_inclusion_proof),
-        "Parent retarget leaf inclusion proof is invalid"
+        MmrProofValidationFailed {
+            leaf_type: "parent retarget".to_string(),
+        }
     );
+
+    Ok(())
 }
 
 fn validate_reorg_conditions(
@@ -109,34 +147,44 @@ fn validate_reorg_conditions(
     parent_leaf_hash: &Digest,
     current_tip_leaf_hash: &Digest,
     disposed_leaf_hashes: &[Digest],
-) {
+) -> Result<()> {
     if parent_leaf_hash != current_tip_leaf_hash {
-        assert!(
+        ensure!(
             !disposed_leaf_hashes.is_empty(),
-            "Disposed leaves should not be empty for a reorg"
+            ReorgValidationFailed {
+                reason: "Disposed leaves should not be empty for a reorg"
+            }
         );
     }
 
-    assert!(
+    ensure!(
         current_tip_leaf.height as i64 - parent_leaf.height as i64
             == disposed_leaf_hashes.len() as i64,
-        "Disposed leaves should be the difference between the previous tip leaf height and the parent leaf height"
+        ReorgValidationFailed {
+            reason: "Disposed leaves should be the difference between the previous tip leaf height and the parent leaf height"
+        }
     );
+
+    Ok(())
 }
 
 pub fn validate_chainwork(
     parent_leaf: &BlockLeaf,
     current_tip_leaf: &BlockLeaf,
     new_headers: &[Header],
-) -> (Vec<U256>, U256) {
+) -> Result<(Vec<U256>, U256)> {
     let (new_chain_works, new_chain_cumulative_work) =
-        light_client::calculate_cumulative_work(parent_leaf.chainwork_as_u256(), new_headers);
+        light_client::calculate_cumulative_work(parent_leaf.chainwork_as_u256(), new_headers)?;
 
-    if new_chain_cumulative_work <= current_tip_leaf.chainwork_as_u256() {
-        panic!("New chain cumulative work is not greater than previous tip cumulative work");
-    }
+    ensure!(
+        new_chain_cumulative_work > current_tip_leaf.chainwork_as_u256(),
+        ChainworkValidationFailed {
+            new_work: new_chain_cumulative_work.to_string(),
+            current_work: current_tip_leaf.chainwork_as_u256().to_string(),
+        }
+    );
 
-    (new_chain_works, new_chain_cumulative_work)
+    Ok((new_chain_works, new_chain_cumulative_work))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -242,14 +290,14 @@ impl ChainTransition {
     pub fn verify<H: Hasher>(
         &self,
         include_auxiliary_data: bool,
-    ) -> (LightClientPublicInput, Option<AuxiliaryLightClientData>) {
+    ) -> Result<(LightClientPublicInput, Option<AuxiliaryLightClientData>)> {
         // [0] Validate block hashes
         validate_leaf_block_hashes(
             &self.parent.header,
             &self.parent.mmr_data.leaf,
             &self.parent_retarget.header,
             &self.parent_retarget.mmr_data.leaf,
-        );
+        )?;
 
         // [1] Precompute leaf hashes and total amount of leaves
         let parent_leaf_hash = self.parent.mmr_data.leaf.hash::<H>();
@@ -266,21 +314,21 @@ impl ChainTransition {
             &self.parent.header,
             &self.parent_retarget.header,
             &self.new_headers,
-        );
+        )?;
 
         // [3] Validate chainwork and get new chain works
         let (new_chain_works, _) = validate_chainwork(
             &self.parent.mmr_data.leaf,
             &self.current_tip.leaf,
             &self.new_headers,
-        );
+        )?;
 
         // [4] Create new leaves
         let new_leaves = create_new_leaves(
             &self.parent.mmr_data.leaf,
             &self.new_headers,
             &new_chain_works,
-        );
+        )?;
 
         // [5] Validate MMR proofs
         validate_mmr_proofs::<H>(
@@ -292,7 +340,7 @@ impl ChainTransition {
             &self.parent_retarget.mmr_data.proof,
             &self.current_mmr_root,
             current_tip_chain_leaf_count,
-        );
+        )?;
 
         // [6-7] Validate reorg conditions
         validate_reorg_conditions(
@@ -301,21 +349,26 @@ impl ChainTransition {
             &parent_leaf_hash,
             &current_tip_leaf_hash,
             &self.disposed_leaf_hashes,
-        );
+        )?;
 
-        assert!(
-            mmr::get_root::<H>(current_tip_chain_leaf_count, &self.current_mmr_bagged_peak)
-                == self.current_mmr_root,
-            "Previous MMR root should be the same as the bagged peak + leaf count"
+        let computed_root =
+            mmr::get_root::<H>(current_tip_chain_leaf_count, &self.current_mmr_bagged_peak);
+
+        ensure!(
+            computed_root == self.current_mmr_root,
+            MmrRootValidationFailed {
+                computed_root: computed_root.to_vec(),
+                expected_root: self.current_mmr_root.to_vec(),
+            }
         );
 
         // [9] validate parent MMR via passing disposed leaves and asserting the root is the previous
         let mut new_mmr: CompactMerkleMountainRange<H> = CompactMerkleMountainRange::from_peaks(
             &self.parent_leaf_peaks,
             parent_chain_leaf_count,
-        );
+        )?;
 
-        new_mmr.validate_mmr_transition(&self.disposed_leaf_hashes, &self.current_mmr_root);
+        new_mmr.validate_mmr_transition(&self.disposed_leaf_hashes, &self.current_mmr_root)?;
 
         // [10] append the new leaves to the parent MMR
         for leaf in &new_leaves {
@@ -333,16 +386,16 @@ impl ChainTransition {
             priorMmrRoot: self.current_mmr_root.into(),
             newMmrRoot: new_mmr.get_root().into(),
             compressedLeavesHash: new_leaves_commitment.into(),
-            tipBlockLeaf: (*new_leaves.last().expect("New leaves should not be empty")).into(),
+            tipBlockLeaf: (*new_leaves.last().context(NewLeavesEmpty)?).into(),
         };
 
         if include_auxiliary_data {
-            (
+            Ok((
                 public_input,
                 Some(AuxiliaryLightClientData { compressed_leaves }),
-            )
+            ))
         } else {
-            (public_input, None)
+            Ok((public_input, None))
         }
     }
 }
@@ -423,9 +476,10 @@ mod tests {
             .map(|(_, header)| Header(*header))
             .collect::<Vec<_>>();
 
-        let (new_chain_works, _) = validate_chainwork(&genesis_leaf, &genesis_leaf, &new_headers);
+        let (new_chain_works, _) =
+            validate_chainwork(&genesis_leaf, &genesis_leaf, &new_headers).unwrap();
 
-        let new_leaves = create_new_leaves(&genesis_leaf, &new_headers, &new_chain_works);
+        let new_leaves = create_new_leaves(&genesis_leaf, &new_headers, &new_chain_works).unwrap();
 
         let last_header_retarget_height =
             get_retarget_height(new_leaves.last().unwrap().height) as usize;
@@ -529,7 +583,8 @@ mod tests {
             vec![],
             new_headers.to_vec(),
         )
-        .verify::<Keccak256Hasher>(false);
+        .verify::<Keccak256Hasher>(false)
+        .unwrap();
 
         println!("Public input: {:?}", public_input);
         // Verify the new MMR root and public inputs
@@ -562,10 +617,11 @@ mod tests {
             &client_mmr_state.last_leaf,
             &client_mmr_state.last_leaf,
             &bch_headers,
-        );
+        )
+        .unwrap();
 
         let bch_leaves =
-            create_new_leaves(&client_mmr_state.last_leaf, &bch_headers, &bch_chain_works);
+            create_new_leaves(&client_mmr_state.last_leaf, &bch_headers, &bch_chain_works).unwrap();
 
         // add the BCH leaves to the MMR
 
@@ -635,8 +691,9 @@ mod tests {
                 == digest_to_hex(&parent_retarget_leaf.hash::<Keccak256Hasher>()),
             "Parent retarget proof is not for the correct leaf"
         );
-        
-        let parent_retarget_proof_for_circuit = client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof);
+
+        let parent_retarget_proof_for_circuit =
+            client_mmr_proof_to_circuit_mmr_proof(&parent_retarget_proof);
 
         let current_mmr_root = circuit_mmr.get_root();
         let current_mmr_bagged_peak = circuit_mmr.bag_peaks().unwrap();
@@ -674,7 +731,8 @@ mod tests {
                 .collect(),
             btc_headers,
         )
-        .verify::<Keccak256Hasher>(false);
+        .verify::<Keccak256Hasher>(false)
+        .unwrap();
 
         println!("Public input: {:?}", public_input);
     }

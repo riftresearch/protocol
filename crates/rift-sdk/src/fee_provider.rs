@@ -1,4 +1,4 @@
-use crate::errors::RiftSdkError;
+use crate::error::RiftSdkError;
 use crate::quote::fetch_weth_cbbtc_conversion_rates;
 use alloy::providers::DynProvider;
 use alloy::providers::Provider;
@@ -223,7 +223,6 @@ impl EthFeeOracle {
 
     async fn update_fee_cache(&self) -> Result<u64, RiftSdkError> {
         let gas_price_wei = {
-            
             self.provider.get_gas_price().await.map_err(|e| {
                 error!("Failed to fetch ETH gas price (wei): {:?}", e);
                 RiftSdkError::Generic(format!("Failed to fetch ETH gas price (wei): {:?}", e))
@@ -337,7 +336,6 @@ pub fn eth_gas_to_satoshis(gas_units: u64, gas_price_wei: u128, cbbtc_per_eth: f
     let total_wei = gas_units as u128 * gas_price_wei;
     let total_eth = total_wei as f64 / 1e18;
     let total_cbbtc = total_eth * cbbtc_per_eth;
-    
 
     (total_cbbtc * 1e8).round() as u64
 }

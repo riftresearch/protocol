@@ -804,7 +804,7 @@ async fn handle_bitcoin_light_client_updated_event(
         txid,
     )
     .await?;
-    let block_leaves = decompress_block_leaves(&compressed_block_leaves);
+    let block_leaves = decompress_block_leaves(&compressed_block_leaves)?;
 
     {
         let mut checkpointed_block_tree = checkpointed_block_tree.write().await;

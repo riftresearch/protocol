@@ -22,6 +22,6 @@ pub fn decompress_checkpoint_file(input_path: &str) -> Result<Vec<BlockLeaf>, Ch
     let input_file = File::open(input_path)?;
     let reader = BufReader::new(input_file);
     let decompressed = zstd::decode_all(reader)?;
-    let leaves = decompress_block_leaves(&decompressed);
+    let leaves = decompress_block_leaves(&decompressed).unwrap();
     Ok(leaves)
 }

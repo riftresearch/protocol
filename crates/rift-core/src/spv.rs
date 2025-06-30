@@ -1,5 +1,7 @@
 use bitcoin_core_rs::sha256;
 use serde::{Deserialize, Serialize};
+use snafu::prelude::*;
+use crate::error::{Result, TransactionNotInMerkleTree, MerkleProofVerificationFailed};
 
 pub type Sha256Digest = [u8; 32];
 
@@ -12,13 +14,13 @@ pub struct MerkleProofStep {
 pub fn generate_bitcoin_txn_merkle_proof(
     transaction_hashes: &[Sha256Digest],   // natural byte order
     target_transaction_hash: Sha256Digest, // natural byte order
-) -> (Vec<MerkleProofStep>, Sha256Digest) {
+) -> Result<(Vec<MerkleProofStep>, Sha256Digest)> {
     let mut current_level = transaction_hashes.to_vec();
     let mut proof: Vec<MerkleProofStep> = Vec::new();
     let mut target_index = current_level
         .iter()
         .position(|&leaf| leaf == target_transaction_hash)
-        .expect("Desired leaf not found in the list of leaves");
+        .context(TransactionNotInMerkleTree)?;
 
     while current_level.len() > 1 {
         let mut next_level = Vec::new();
@@ -58,7 +60,7 @@ pub fn generate_bitcoin_txn_merkle_proof(
     }
 
     let merkle_root = current_level[0];
-    (proof, merkle_root)
+    Ok((proof, merkle_root))
 }
 
 pub fn bitcoin_merkle_hash_pair(hash_1: Sha256Digest, hash_2: Sha256Digest) -> Sha256Digest {
@@ -74,7 +76,7 @@ pub fn verify_bitcoin_txn_merkle_proof(
     // natural byte order
     proposed_txn_hash: Sha256Digest,
     proposed_merkle_proof: &[MerkleProofStep],
-) {
+) -> Result<()> {
     let mut current_hash: Sha256Digest = proposed_txn_hash;
     for proof_step in proposed_merkle_proof {
         if proof_step.right {
@@ -83,12 +85,14 @@ pub fn verify_bitcoin_txn_merkle_proof(
             current_hash = bitcoin_merkle_hash_pair(proof_step.hash, current_hash);
         }
     }
-    assert!(
+    ensure!(
         current_hash == merkle_root,
-        "Merkle proof verification failed, current_hash: {:?}, expected merkle_root: {:?}",
-        current_hash,
-        merkle_root
+        MerkleProofVerificationFailed {
+            computed_root: current_hash,
+            expected_root: merkle_root,
+        }
     );
+    Ok(())
 }
 
 // returns natural byte order hash of the transaction, txn_data MUST have segwit data removed
@@ -118,9 +122,9 @@ mod tests {
                 .to_byte_array();
 
             let (proof, merkle_root) =
-                generate_bitcoin_txn_merkle_proof(&txn_hashes, txn_hashes[0]);
+                generate_bitcoin_txn_merkle_proof(&txn_hashes, txn_hashes[0]).unwrap();
             assert!(merkle_root == block_merkle_root, "Merkle root mismatch");
-            verify_bitcoin_txn_merkle_proof(block_merkle_root, txn_hashes[0], &proof);
+            verify_bitcoin_txn_merkle_proof(block_merkle_root, txn_hashes[0], &proof).unwrap();
         }
     }
 }

@@ -1462,6 +1462,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "snafu",
  "sol-bindings",
  "test-data-utils",
  "tiny-keccak",
@@ -5802,7 +5803,9 @@ dependencies = [
  "bitcoin",
  "bitcoin-core-rs",
  "bitcoin-light-client-core",
+ "hex",
  "serde",
+ "snafu",
  "sol-bindings",
  "test-data-utils",
  "tiny-keccak",
@@ -6636,6 +6639,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8917285742e9f3e1683f0a9c4e6b57960b7314d0b08d30d1ecd426713ee2eee9"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "snafu"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320b01e011bf8d5d7a4a4a4be966d9160968935849c83b918827f6a435e7f627"
+dependencies = [
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1961e2ef424c1424204d3a5d6975f934f56b6d50ff5732382d84ebf460e147f7"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

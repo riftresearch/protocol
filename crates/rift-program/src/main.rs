@@ -11,7 +11,7 @@ pub fn main() {
     let circuit_input = sp1_zkvm::io::read::<RiftProgramInput>();
 
     // Verify the input and build the public input
-    let public_input = circuit_input.verify();
+    let public_input = circuit_input.verify().expect("Failed to prove input");
 
     // Commit to the public values of the program. The final proof will have a commitment to all the
     // bytes that were committed to.

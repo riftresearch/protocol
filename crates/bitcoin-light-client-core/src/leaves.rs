@@ -2,8 +2,10 @@ use alloy_sol_types::SolType;
 use crypto_bigint::{Encoding, U256};
 use hex_literal::hex;
 use serde::{Deserialize, Serialize};
+use snafu::ensure;
 use std::fmt;
 
+use crate::error::{HeadersChainWorksLengthMismatch, InvalidSerializedLeafSize, Result};
 use crate::hasher::Hasher;
 use crate::light_client::Header;
 
@@ -80,13 +82,83 @@ impl BlockLeaf {
         buffer
     }
 
-    pub fn deserialize(slice: &[u8]) -> Self {
-        assert!(slice.len() == SERIALIZED_LEAF_SIZE);
-        let block_hash: [u8; 32] = slice[..32].try_into().unwrap();
-        let height = u32::from_be_bytes(slice[32..36].try_into().unwrap());
-        let cumulative_chainwork: [u8; 32] = slice[36..].try_into().unwrap();
-        Self::new(block_hash, height, cumulative_chainwork)
+    pub fn deserialize(slice: &[u8]) -> Result<Self> {
+        ensure!(
+            slice.len() == SERIALIZED_LEAF_SIZE,
+            InvalidSerializedLeafSize {
+                expected_size: SERIALIZED_LEAF_SIZE,
+                actual_size: slice.len()
+            }
+        );
+        let block_hash: [u8; 32] = slice[..32]
+            .try_into()
+            .expect("conversion should never fail");
+        let height = u32::from_be_bytes(
+            slice[32..36]
+                .try_into()
+                .expect("conversion should never fail"),
+        );
+        let cumulative_chainwork: [u8; 32] = slice[36..]
+            .try_into()
+            .expect("conversion should never fail");
+        Ok(Self::new(block_hash, height, cumulative_chainwork))
     }
+}
+
+pub fn create_new_leaves(
+    parent_leaf: &BlockLeaf,
+    new_headers: &[Header],
+    new_chain_works: &[U256],
+) -> Result<Vec<BlockLeaf>> {
+    ensure!(
+        new_headers.len() == new_chain_works.len(),
+        HeadersChainWorksLengthMismatch {
+            headers_length: new_headers.len(),
+            chain_works_length: new_chain_works.len(),
+        }
+    );
+
+    Ok(new_headers
+        .iter()
+        .map(|header| bitcoin_core_rs::get_natural_block_hash(header.as_bytes()))
+        .zip(new_chain_works.iter())
+        .zip(parent_leaf.height + 1..)
+        .map(|((block_hash, cumulative_chainwork), height)| {
+            let chainwork_network_order = cumulative_chainwork.to_be_bytes();
+            let mut block_hash_network_order = block_hash;
+            block_hash_network_order.reverse();
+            BlockLeaf::new(block_hash_network_order, height, chainwork_network_order)
+        })
+        .collect())
+}
+
+pub fn get_genesis_leaf() -> BlockLeaf {
+    BlockLeaf::new(
+        hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
+        0,
+        hex!("0000000000000000000000000000000000000000000000000000000100010001"),
+    )
+}
+
+pub trait BlockLeafCompressor {
+    fn compress(&self) -> Vec<u8>;
+}
+
+impl BlockLeafCompressor for [BlockLeaf] {
+    fn compress(&self) -> Vec<u8> {
+        // TODO: This is just a serializer, use compression algorithm at some point
+        self.iter().flat_map(|leaf| leaf.serialize()).collect()
+    }
+}
+
+pub fn decompress_block_leaves(bytes: &[u8]) -> Result<Vec<BlockLeaf>> {
+    if bytes.is_empty() || bytes.len() % SERIALIZED_LEAF_SIZE != 0 {
+        panic!("Invalid number of bytes to decompress");
+    }
+    bytes
+        .chunks_exact(SERIALIZED_LEAF_SIZE)
+        .map(BlockLeaf::deserialize)
+        .collect()
 }
 
 impl fmt::Display for BlockLeaf {
@@ -118,61 +190,6 @@ impl std::fmt::Debug for BlockLeaf {
     }
 }
 
-pub fn create_new_leaves(
-    parent_leaf: &BlockLeaf,
-    new_headers: &[Header],
-    new_chain_works: &[U256],
-) -> Vec<BlockLeaf> {
-    assert_eq!(
-        new_headers.len(),
-        new_chain_works.len(),
-        "New headers and chain works must be the same length"
-    );
-    new_headers
-        .iter()
-        .map(|header| {
-            bitcoin_core_rs::get_block_hash(header.as_bytes()).expect("Failed to get block hash")
-        })
-        .zip(new_chain_works.iter())
-        .zip(parent_leaf.height + 1..)
-        .map(|((block_hash, cumulative_chainwork), height)| {
-            let chainwork_network_order = cumulative_chainwork.to_be_bytes();
-            let mut block_hash_network_order = block_hash;
-            block_hash_network_order.reverse();
-            BlockLeaf::new(block_hash_network_order, height, chainwork_network_order)
-        })
-        .collect()
-}
-
-pub fn get_genesis_leaf() -> BlockLeaf {
-    BlockLeaf::new(
-        hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-        0,
-        hex!("0000000000000000000000000000000000000000000000000000000100010001"),
-    )
-}
-
-pub trait BlockLeafCompressor {
-    fn compress(&self) -> Vec<u8>;
-}
-
-impl BlockLeafCompressor for [BlockLeaf] {
-    fn compress(&self) -> Vec<u8> {
-        // TODO: This is just a serializer, use compression algorithm at some point
-        self.iter().flat_map(|leaf| leaf.serialize()).collect()
-    }
-}
-
-pub fn decompress_block_leaves(bytes: &[u8]) -> Vec<BlockLeaf> {
-    if bytes.is_empty() || bytes.len() % SERIALIZED_LEAF_SIZE != 0 {
-        panic!("Invalid number of bytes to decompress");
-    }
-    bytes
-        .chunks_exact(SERIALIZED_LEAF_SIZE)
-        .map(BlockLeaf::deserialize)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::hasher::Keccak256Hasher;
@@ -196,7 +213,7 @@ mod tests {
         let compressed = leaves.compress();
 
         // Decompress back
-        let decompressed = decompress_block_leaves(&compressed);
+        let decompressed = decompress_block_leaves(&compressed).unwrap();
 
         // Verify the roundtrip
         assert_eq!(leaves, decompressed);
@@ -222,7 +239,7 @@ mod tests {
         ];
 
         // Create new leaves
-        let new_leaves = create_new_leaves(&parent_leaf, &new_headers, &chainworks);
+        let new_leaves = create_new_leaves(&parent_leaf, &new_headers, &chainworks).unwrap();
 
         // Validate results
         assert_eq!(new_leaves.len(), 4, "Should create 4 new leaves");
@@ -246,8 +263,7 @@ mod tests {
         for (i, leaf) in new_leaves.iter().enumerate() {
             let expected_header = &TEST_HEADERS[i + 1].1;
             let expected_hash =
-                bitcoin_core_rs::get_block_hash(Header(*expected_header).as_bytes())
-                    .expect("Failed to get block hash");
+                bitcoin_core_rs::get_natural_block_hash(Header(*expected_header).as_bytes());
             assert!(leaf.compare_by_natural_block_hash(&expected_hash));
         }
     }

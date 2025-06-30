@@ -2,7 +2,7 @@ pub mod bitcoin_utils;
 pub mod btc_txn_broadcaster;
 pub mod chains;
 pub mod checkpoint_mmr;
-mod errors;
+mod error;
 pub mod fee_provider;
 pub mod indexed_mmr;
 pub mod proof_generator;
@@ -110,12 +110,12 @@ impl PubSubConnect for RetryWsConnect {
 }
 
 /// Creates a type erased websocket provider
-pub async fn create_websocket_provider(evm_rpc_websocket_url: &str) -> errors::Result<DynProvider> {
+pub async fn create_websocket_provider(evm_rpc_websocket_url: &str) -> error::Result<DynProvider> {
     let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
     let client = ClientBuilder::default()
         .pubsub(ws)
         .await
-        .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
+        .map_err(|e| error::RiftSdkError::WebsocketProviderError(e.to_string()))?;
 
     Ok(ProviderBuilder::new().on_client(client).erased())
 }
@@ -125,17 +125,17 @@ pub async fn create_websocket_provider(evm_rpc_websocket_url: &str) -> errors::R
 pub async fn create_websocket_wallet_provider(
     evm_rpc_websocket_url: &str,
     private_key: [u8; 32],
-) -> errors::Result<WebsocketWalletProvider> {
+) -> error::Result<WebsocketWalletProvider> {
     let ws = RetryWsConnect(WsConnect::new(evm_rpc_websocket_url));
     let client = ClientBuilder::default()
         .pubsub(ws)
         .await
-        .map_err(|e| errors::RiftSdkError::WebsocketProviderError(e.to_string()))?;
+        .map_err(|e| error::RiftSdkError::WebsocketProviderError(e.to_string()))?;
 
     let provider = ProviderBuilder::new()
         .wallet(EthereumWallet::new(
             LocalSigner::from_str(&hex::encode(private_key))
-                .map_err(|e| errors::RiftSdkError::InvalidPrivateKey(e.to_string()))?,
+                .map_err(|e| error::RiftSdkError::InvalidPrivateKey(e.to_string()))?,
         ))
         .on_client(client);
 

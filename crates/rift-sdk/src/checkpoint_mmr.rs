@@ -13,7 +13,7 @@ use bitcoin_light_client_core::hasher::{Digest as LeafDigest, Hasher as LeafHash
 use bitcoin_light_client_core::leaves::BlockLeaf;
 use bitcoin_light_client_core::mmr::MMRProof as CircuitMMRProof;
 
-use crate::errors::{Result, RiftSdkError};
+use crate::error::{Result, RiftSdkError};
 use crate::indexed_mmr::IndexedMMR;
 use crate::DatabaseLocation;
 
