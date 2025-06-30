@@ -2,6 +2,8 @@
 # See: https://nexte.st/docs/installation/pre-built-binaries/
 sync:
 	cd contracts && ./sync-artifacts.sh
+	$(MAKE) cache-devnet
+	@echo "Sync and cache-devnet complete"
 
 build: 
 	cargo build --release

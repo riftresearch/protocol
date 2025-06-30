@@ -64,6 +64,8 @@ struct ConfirmedPayment {
     order_filling_transaction_input: OrderFillingTransaction,
 }
 
+// const MAX_CONFIRMED_PAYMENT_RETRIES: u32 = 3;
+
 pub struct SwapWatchtower;
 
 impl SwapWatchtower {

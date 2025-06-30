@@ -22,7 +22,6 @@ use sol_bindings::{BaseCreateOrderParams, CreateOrderParams, OrderCreated};
 use tokio::signal::{self};
 
 #[tokio::test]
-// Serial anything that uses alot of bitcoin mining
 async fn test_hypernode_simple_swap() {
     // ---1) Spin up devnet with default config---
 

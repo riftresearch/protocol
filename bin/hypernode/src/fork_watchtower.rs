@@ -224,6 +224,7 @@ impl ForkWatchtower {
                                             let rift_exchange_clone = rift_exchange.clone();
                                             let transaction_broadcaster_clone = transaction_broadcaster.clone();
                                             let fork_in_progress_clone = fork_in_progress.clone();
+                                            let rift_indexer_clone = Arc::clone(&rift_indexer);
 
                                             tokio::spawn(
                                                 async move {
@@ -232,6 +233,7 @@ impl ForkWatchtower {
                                                         &proof_generator_clone,
                                                         &rift_exchange_clone,
                                                         &transaction_broadcaster_clone,
+                                                        &rift_indexer_clone,
                                                     )
                                                     .await;
 
@@ -276,6 +278,7 @@ impl ForkWatchtower {
         proof_generator: &Arc<RiftProofGenerator>,
         rift_exchange: &RiftExchangeHarnessInstance<DynProvider>,
         transaction_broadcaster: &Arc<TransactionBroadcaster>,
+        _rift_indexer: &Arc<RiftIndexer>,
     ) {
         let proof_result = Self::generate_light_client_update_proof(
             chain_transition.clone(),
@@ -368,6 +371,7 @@ impl ForkWatchtower {
                         "Fork resolution transaction successful: {:?}",
                         receipt.transaction_hash
                     );
+
                     return;
                 }
                 Ok(TransactionExecutionResult::Revert(revert_info)) => {

@@ -39,6 +39,7 @@ const RIFT_INDEXER_SERVER_PORT: u16 = 50100;
 use alloy::{hex, sol};
 
 sol!(
+    #[allow(clippy::too_many_arguments)]
     #[allow(missing_docs)]
     #[sol(rpc)]
     TokenizedBTC,
@@ -59,7 +60,6 @@ pub type RiftExchangeHarnessWebsocket = RiftExchangeHarnessInstance<DynProvider>
 pub type TokenizedBTCWebsocket = TokenizedBTC::TokenizedBTCInstance<DynProvider>;
 
 // ================== Deploy Function ================== //
-
 
 use crate::evm_devnet::Mode;
 
@@ -232,6 +232,7 @@ impl RiftDevnetCache {
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&lock_file_path)?;
 
         // Try to get exclusive lock
