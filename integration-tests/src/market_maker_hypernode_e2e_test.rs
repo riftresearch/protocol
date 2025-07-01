@@ -50,7 +50,9 @@ async fn run_e2e_test() -> Result<()> {
 
     let hn_handle = start_hypernode(&accounts, &devnet, &auction_config).await?;
 
-    tokio::time::sleep(Duration::from_secs(15)).await;
+    // Wait for services to fully initialize and establish WebSocket connections
+    info!("Waiting 20 seconds for services to initialize...");
+    tokio::time::sleep(Duration::from_secs(20)).await;
 
     if mm_handle.is_finished() {
         return Err(eyre::eyre!(
@@ -78,12 +80,25 @@ async fn run_e2e_test() -> Result<()> {
         current_block
     );
 
+    // Wait for Market Maker's WebSocket subscription to be fully established
+    info!("Waiting 5 seconds for Market Maker WebSocket subscription to stabilize...");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
     info!("Creating profitable auction NOW - Market Maker WebSocket should be ready");
     let auction_index = create_auction(&accounts, &devnet, &auction_config).await?;
     info!(
         "Auction {} created at block {}",
         auction_index, current_block
     );
+
+    // Mine multiple EVM blocks to ensure auction can be claimed and orders can be processed
+    info!("Mining EVM blocks to enable auction claiming and order processing...");
+    devnet
+        .devnet
+        .ethereum
+        .funded_provider
+        .anvil_mine(Some(5), None)
+        .await?;
 
     let devnet_arc = Arc::new(devnet);
     let miner_handle = spawn_bitcoin_block_miner(devnet_arc.clone());
@@ -510,8 +525,10 @@ async fn monitor_workflow(
     let start_time = std::time::Instant::now();
     let mut no_claim_warning_shown = false;
     let mut payment_sent_time: Option<std::time::Instant> = None;
+    let mut loop_iteration = 0u32;
 
     loop {
+        loop_iteration += 1;
         if mm_handle.is_finished() {
             return Err(eyre::eyre!(
                 "Market Maker process exited unexpectedly during workflow monitoring"
@@ -617,6 +634,19 @@ async fn monitor_workflow(
             }
             Err(e) => {
                 warn!("Data engine query error: {}", e);
+            }
+        }
+
+        // Mine an EVM block every 10 iterations (5 seconds) to ensure order processing
+        if loop_iteration % 10 == 0 {
+            if let Err(e) = devnet
+                .devnet
+                .ethereum
+                .funded_provider
+                .anvil_mine(Some(1), None)
+                .await
+            {
+                warn!("Failed to mine EVM block: {}", e);
             }
         }
 
