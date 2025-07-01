@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[cfg(test)]
 mod auction_claimer_test;
 #[cfg(test)]
@@ -18,6 +20,8 @@ mod light_client_update_watchtower_test;
 mod market_maker_hypernode_e2e_test;
 #[cfg(test)]
 mod quote_test;
+#[cfg(test)]
+mod test_helpers;
 #[cfg(test)]
 mod test_utils;
 #[cfg(test)]
