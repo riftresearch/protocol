@@ -30,6 +30,7 @@ impl TestFixture {
         
         // Build devnet with funded addresses
         let mut devnet_builder = RiftDevnet::builder()
+            .using_esplora(true)
             .funded_evm_address(accounts.maker.ethereum_address.to_string())
             .funded_evm_address(accounts.taker.ethereum_address.to_string())
             .funded_evm_address(accounts.hypernode_operator.ethereum_address.to_string());

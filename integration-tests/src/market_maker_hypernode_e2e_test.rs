@@ -7,19 +7,20 @@ use alloy::{
     sol_types::SolEvent,
 };
 use bitcoin::Amount;
-use devnet::RiftDevnet;
 use eyre::Result;
-use hypernode::HypernodeArgs;
 use log::{info, warn};
 use market_maker::MakerConfig;
 use rift_indexer::models::SwapStatus;
 use rift_sdk::{
-    create_websocket_wallet_provider, txn_builder::P2WPKHBitcoinWallet, DatabaseLocation,
-    MultichainAccount,
+    txn_builder::P2WPKHBitcoinWallet, DatabaseLocation,
 };
 use sol_bindings::{AuctionUpdated, BTCDutchAuctionHouse, DutchAuctionParams};
 use tokio::time::timeout;
 
+use crate::test_helpers::{
+    fixtures::TestFixture,
+    hypernode_helpers::{spawn_hypernode, HypernodeConfig},
+};
 
 #[tokio::test]
 async fn test_market_maker_hypernode_end_to_end() {
@@ -35,20 +36,17 @@ async fn test_market_maker_hypernode_end_to_end() {
 }
 
 async fn run_e2e_test() -> Result<()> {
-    let accounts = TestAccounts::new()?;
-
-    let devnet = setup_devnet(&accounts).await?;
-    accounts.fund_accounts(&devnet).await?;
-
-    let auction_config = AuctionConfig {
-        auction_house_address: *devnet.devnet.ethereum.rift_exchange_contract.address(),
-        whitelist_address: Address::from([0x00; 20]),
-        data_engine: devnet.devnet.rift_indexer.clone(),
-    };
-
-    let mm_handle = start_market_maker(&accounts, &devnet, &auction_config).await?;
-
-    let hn_handle = start_hypernode(&accounts, &devnet, &auction_config).await?;
+    // Setup test fixture with standard configuration
+    let fixture = TestFixture::new().await;
+    
+    // Fund additional accounts needed for the test
+    fund_additional_accounts(&fixture).await?;
+    
+    // Start market maker
+    let mm_handle = start_market_maker(&fixture).await?;
+    
+    // Start hypernode
+    let hn_handle = spawn_hypernode(&fixture, HypernodeConfig::default()).await;
 
     // Wait for services to fully initialize and establish WebSocket connections
     info!("Waiting 20 seconds for services to initialize...");
@@ -63,13 +61,14 @@ async fn run_e2e_test() -> Result<()> {
         return Err(eyre::eyre!("Hypernode exited unexpectedly during startup"));
     }
 
-    devnet
+    // Mine blocks to make auctions immediately profitable
+    fixture
         .devnet
         .ethereum
         .funded_provider
         .anvil_mine(Some(20), None)
         .await?;
-    let current_block = devnet
+    let current_block = fixture
         .devnet
         .ethereum
         .funded_provider
@@ -85,7 +84,7 @@ async fn run_e2e_test() -> Result<()> {
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     info!("Creating profitable auction NOW - Market Maker WebSocket should be ready");
-    let auction_index = create_auction(&accounts, &devnet, &auction_config).await?;
+    let auction_index = create_auction(&fixture).await?;
     info!(
         "Auction {} created at block {}",
         auction_index, current_block
@@ -93,24 +92,22 @@ async fn run_e2e_test() -> Result<()> {
 
     // Mine multiple EVM blocks to ensure auction can be claimed and orders can be processed
     info!("Mining EVM blocks to enable auction claiming and order processing...");
-    devnet
+    fixture
         .devnet
         .ethereum
         .funded_provider
         .anvil_mine(Some(5), None)
         .await?;
 
-    let devnet_arc = Arc::new(devnet);
-    let miner_handle = spawn_bitcoin_block_miner(devnet_arc.clone());
+    let miner_handle = spawn_bitcoin_block_miner(fixture.devnet.clone());
     info!("Started background Bitcoin block miner for confirmation tracking");
 
-    monitor_workflow_fn(
+    monitor_workflow(
         auction_index,
-        &auction_config,
-        &devnet_arc,
+        &fixture,
         &mm_handle,
         &hn_handle,
-        accounts.market_maker.ethereum_address,
+        fixture.accounts.maker.ethereum_address,
     )
     .await?;
 
@@ -123,181 +120,103 @@ async fn run_e2e_test() -> Result<()> {
     Ok(())
 }
 
-struct TestAccounts {
-    auction_creator: MultichainAccount,
-    market_maker: MultichainAccount,
-    hypernode_operator: MultichainAccount,
-    taker: MultichainAccount,
-}
-
-impl TestAccounts {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            auction_creator: MultichainAccount::new(1),
-            market_maker: MultichainAccount::new(2),
-            hypernode_operator: MultichainAccount::new(3),
-            taker: MultichainAccount::new(4),
-        })
-    }
-
-    async fn fund_accounts(&self, devnet: &DevnetConfig) -> Result<()> {
-        let funding_amount = U256::from(10_000_000_000_000_000_000u128);
-        devnet
-            .devnet
-            .ethereum
-            .fund_eth_address(
-                self.auction_creator.ethereum_address,
-                U256::from(funding_amount),
-            )
-            .await?;
-        devnet
-            .devnet
-            .ethereum
-            .fund_eth_address(
-                self.market_maker.ethereum_address,
-                U256::from(funding_amount),
-            )
-            .await?;
-        devnet
-            .devnet
-            .ethereum
-            .fund_eth_address(
-                self.hypernode_operator.ethereum_address,
-                U256::from(funding_amount),
-            )
-            .await?;
-        devnet
-            .devnet
-            .ethereum
-            .fund_eth_address(self.taker.ethereum_address, U256::from(funding_amount))
-            .await?;
-
-        let funding_amount_sats = 200_000_000u64;
-        devnet
-            .devnet
-            .bitcoin
-            .deal_bitcoin(
-                self.auction_creator.bitcoin_wallet.address.clone(),
-                Amount::from_sat(funding_amount_sats),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("Failed to fund Market Maker Bitcoin wallet: {}", e))?;
-        devnet
-            .devnet
-            .bitcoin
-            .deal_bitcoin(
-                self.market_maker.bitcoin_wallet.address.clone(),
-                Amount::from_sat(funding_amount_sats),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("Failed to fund Hypernode Operator Bitcoin wallet: {}", e))?;
-        devnet
-            .devnet
-            .bitcoin
-            .deal_bitcoin(
-                self.hypernode_operator.bitcoin_wallet.address.clone(),
-                Amount::from_sat(funding_amount_sats),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("Failed to fund Hypernode Operator Bitcoin wallet: {}", e))?;
-        devnet
-            .devnet
-            .bitcoin
-            .deal_bitcoin(
-                self.taker.bitcoin_wallet.address.clone(),
-                Amount::from_sat(funding_amount_sats),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("Failed to fund Hypernode Operator Bitcoin wallet: {}", e))?;
-
-        Ok(())
-    }
-}
-
-struct DevnetConfig {
-    devnet: RiftDevnet,
-    chain_id: u64,
-}
-
-async fn setup_devnet(accounts: &TestAccounts) -> Result<DevnetConfig> {
-    info!("Setting up DevNet infrastructure...");
-
-    let devnet_builder = RiftDevnet::builder()
-        .using_esplora(true)
-        .funded_evm_address(accounts.auction_creator.ethereum_address.to_string())
-        .funded_evm_address(accounts.market_maker.ethereum_address.to_string())
-        .funded_evm_address(accounts.hypernode_operator.ethereum_address.to_string())
-        .funded_evm_address(accounts.taker.ethereum_address.to_string());
-
-    let (devnet, _) = devnet_builder.build().await?;
-    let chain_id = devnet.ethereum.anvil.chain_id();
-
+async fn fund_additional_accounts(fixture: &TestFixture) -> Result<()> {
+    let funding_amount = U256::from(10_000_000_000_000_000_000u128);
+    let funding_amount_sats = 200_000_000u64;
+    
+    // Fund maker with ETH
+    fixture
+        .devnet
+        .ethereum
+        .fund_eth_address(
+            fixture.accounts.maker.ethereum_address,
+            funding_amount,
+        )
+        .await?;
+    
+    // Fund taker with ETH
+    fixture
+        .devnet
+        .ethereum
+        .fund_eth_address(
+            fixture.accounts.taker.ethereum_address,
+            funding_amount,
+        )
+        .await?;
+    
+    // Fund maker with BTC
+    fixture
+        .devnet
+        .bitcoin
+        .deal_bitcoin(
+            fixture.accounts.maker.bitcoin_wallet.address.clone(),
+            Amount::from_sat(funding_amount_sats),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("Failed to fund Maker Bitcoin wallet: {}", e))?;
+    
+    // Fund taker with BTC
+    fixture
+        .devnet
+        .bitcoin
+        .deal_bitcoin(
+            fixture.accounts.taker.bitcoin_wallet.address.clone(),
+            Amount::from_sat(funding_amount_sats),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("Failed to fund Taker Bitcoin wallet: {}", e))?;
+    
+    // Fund the actual market maker wallet with BTC
     let market_maker_btc_wallet = P2WPKHBitcoinWallet::from_mnemonic(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         None,
         bitcoin::Network::Regtest,
         None,
     )?;
-
-    devnet
+    
+    fixture
+        .devnet
         .bitcoin
         .deal_bitcoin(
             market_maker_btc_wallet.address.clone(),
-            Amount::from_sat(200_000_000),
+            Amount::from_sat(funding_amount_sats),
         )
         .await?;
-
+    
     info!(
         "Funded Market Maker's actual Bitcoin wallet: {}",
         market_maker_btc_wallet.address
     );
-    let mm_provider = create_websocket_wallet_provider(
-        devnet.ethereum.anvil.ws_endpoint_url().as_str(),
-        accounts.market_maker.secret_bytes,
-    )
-    .await?;
-
-    let ac_provider = create_websocket_wallet_provider(
-        devnet.ethereum.anvil.ws_endpoint_url().as_str(),
-        accounts.auction_creator.secret_bytes,
-    )
-    .await?;
-
-    let token_address = *devnet.ethereum.token_contract.address();
-    let auction_house = *devnet.ethereum.rift_exchange_contract.address();
-
-    devnet::TokenizedBTC::new(token_address, mm_provider.erased())
+    
+    // Approve token spending for market maker and taker
+    let token_address = *fixture.devnet.ethereum.token_contract.address();
+    let auction_house = *fixture.devnet.ethereum.rift_exchange_contract.address();
+    
+    let mm_provider = fixture.create_provider_for(&fixture.accounts.maker).await;
+    devnet::TokenizedBTC::new(token_address, Box::new(mm_provider))
         .approve(auction_house, U256::MAX)
         .send()
         .await?
         .get_receipt()
         .await?;
-
-    devnet::TokenizedBTC::new(token_address, ac_provider.erased())
+    
+    let taker_provider = fixture.create_provider_for(&fixture.accounts.taker).await;
+    devnet::TokenizedBTC::new(token_address, Box::new(taker_provider))
         .approve(auction_house, U256::MAX)
         .send()
         .await?
         .get_receipt()
         .await?;
-
-    info!("DevNet setup complete");
-    Ok(DevnetConfig { devnet, chain_id })
-}
-
-struct AuctionConfig {
-    auction_house_address: Address,
-    whitelist_address: Address,
-    data_engine: Arc<rift_indexer::engine::RiftIndexer>,
+    
+    Ok(())
 }
 
 async fn start_market_maker(
-    accounts: &TestAccounts,
-    devnet: &DevnetConfig,
-    auction_config: &AuctionConfig,
+    fixture: &TestFixture,
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
     info!("Starting Market Maker...");
 
-    let esplora_url = devnet
+    let esplora_url = fixture
         .devnet
         .bitcoin
         .electrsd
@@ -305,16 +224,16 @@ async fn start_market_maker(
         .and_then(|electrsd| electrsd.esplora_url.clone());
 
     let config = MakerConfig {
-        evm_ws_rpc: devnet.devnet.ethereum.anvil.ws_endpoint_url().to_string(),
-        evm_private_key: hex::encode(accounts.market_maker.secret_bytes),
-        chain_id: devnet.chain_id,
-        btc_rpc: devnet.devnet.bitcoin.rpc_url_with_cookie.clone(),
+        evm_ws_rpc: fixture.devnet.ethereum.anvil.ws_endpoint_url().to_string(),
+        evm_private_key: hex::encode(fixture.accounts.maker.secret_bytes),
+        chain_id: fixture.devnet.ethereum.anvil.chain_id(),
+        btc_rpc: fixture.devnet.bitcoin.rpc_url_with_cookie.clone(),
         btc_rpc_timeout_ms: 10000,
         btc_mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about".to_string(),
         btc_mnemonic_passphrase: None,
         btc_mnemonic_derivation_path: None,
         btc_network: bitcoin::Network::Regtest,
-        auction_house_address: auction_config.auction_house_address.to_string(),
+        auction_house_address: fixture.devnet.ethereum.rift_exchange_contract.address().to_string(),
         spread_bps: 0,
         max_batch_size: 5,
         btc_tx_size_vbytes: None,
@@ -327,12 +246,7 @@ async fn start_market_maker(
         }).unwrap_or_else(|| {
             "http://localhost:3002".to_string()
         }),
-        checkpoint_file: devnet
-            .devnet
-            .checkpoint_file_handle
-            .path()
-            .to_string_lossy()
-            .to_string(),
+        checkpoint_file: fixture.checkpoint_file_path(),
         database_location: DatabaseLocation::InMemory,
         deploy_block_number: 0,
         evm_log_chunk_size: 10000,
@@ -364,85 +278,17 @@ async fn start_market_maker(
     Ok(handle)
 }
 
-async fn start_hypernode(
-    accounts: &TestAccounts,
-    devnet: &DevnetConfig,
-    auction_config: &AuctionConfig,
-) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    info!("Starting Hypernode...");
-
-    let config = HypernodeArgs {
-        evm_ws_rpc: devnet.devnet.ethereum.anvil.ws_endpoint_url().to_string(),
-        btc_rpc: devnet.devnet.bitcoin.rpc_url_with_cookie.clone(),
-        private_key: hex::encode(accounts.hypernode_operator.secret_bytes),
-        checkpoint_file: devnet
-            .devnet
-            .checkpoint_file_handle
-            .path()
-            .to_string_lossy()
-            .to_string(),
-        database_location: DatabaseLocation::InMemory,
-        rift_exchange_address: auction_config.auction_house_address.to_string(),
-        deploy_block_number: 0,
-        evm_log_chunk_size: 10000,
-        btc_batch_rpc_size: 100,
-        proof_generator: rift_sdk::proof_generator::ProofGeneratorType::Execute,
-        enable_auto_light_client_update: false,
-        auto_light_client_update_block_lag_threshold: 6,
-        auto_light_client_update_check_interval_secs: 30,
-    };
-
-    let handle = tokio::spawn(async move {
-        config
-            .run()
-            .await
-            .map_err(|e| eyre::eyre!("Hypernode failed: {}", e))
-    });
-
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    info!("Hypernode started");
-    Ok(handle)
-}
-
-async fn monitor_workflow_fn(
-    auction_index: u64,
-    auction_config: &AuctionConfig,
-    devnet: &DevnetConfig,
-    mm_handle: &tokio::task::JoinHandle<Result<()>>,
-    hn_handle: &tokio::task::JoinHandle<Result<()>>,
-    _market_maker_evm_address: Address,
-) -> Result<()> {
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-    monitor_workflow(
-        auction_index,
-        auction_config,
-        devnet,
-        mm_handle,
-        hn_handle,
-        _market_maker_evm_address,
-    )
-    .await
-}
-
 async fn create_auction(
-    accounts: &TestAccounts,
-    devnet: &DevnetConfig,
-    auction_config: &AuctionConfig,
+    fixture: &TestFixture,
 ) -> Result<u64> {
-    let provider = create_websocket_wallet_provider(
-        devnet.devnet.ethereum.anvil.ws_endpoint_url().as_str(),
-        accounts.auction_creator.secret_bytes,
-    )
-    .await?;
+    let provider = fixture.create_provider_for(&fixture.accounts.maker).await;
 
-    let current_timestamp = devnet
+    let current_timestamp = fixture
         .devnet
         .ethereum
         .funded_provider
         .get_block(
-            devnet
+            fixture
                 .devnet
                 .ethereum
                 .funded_provider
@@ -455,19 +301,20 @@ async fn create_auction(
         .header
         .timestamp;
 
-    let (safe_leaf, _, _) = devnet.devnet.rift_indexer.get_tip_proof().await?;
+    let (safe_leaf, _, _) = fixture.devnet.rift_indexer.get_tip_proof().await?;
 
     let dutch_params = DutchAuctionParams {
         startBtcOut: U256::from(50_000_000u64),
         endBtcOut: U256::from(40_000_000u64),
         decayBlocks: U256::from(15u64),
         deadline: U256::from(current_timestamp + 3600),
-        fillerWhitelistContract: auction_config.whitelist_address,
+        fillerWhitelistContract: Address::from([0x00; 20]),
     };
 
     let base_params = sol_bindings::BTCDutchAuctionHouse::BaseCreateOrderParams {
-        owner: accounts.auction_creator.ethereum_address,
-        bitcoinScriptPubKey: accounts
+        owner: fixture.accounts.maker.ethereum_address,
+        bitcoinScriptPubKey: fixture
+            .accounts
             .taker
             .bitcoin_wallet
             .get_p2wpkh_script()
@@ -483,8 +330,8 @@ async fn create_auction(
     };
 
     let auction_house = BTCDutchAuctionHouse::BTCDutchAuctionHouseInstance::new(
-        auction_config.auction_house_address,
-        provider.erased(),
+        *fixture.devnet.ethereum.rift_exchange_contract.address(),
+        Box::new(provider),
     );
 
     let receipt = auction_house
@@ -509,10 +356,9 @@ async fn create_auction(
 
 async fn monitor_workflow(
     auction_index: u64,
-    auction_config: &AuctionConfig,
-    devnet: &DevnetConfig,
+    fixture: &TestFixture,
     mm_handle: &tokio::task::JoinHandle<Result<()>>,
-    hn_handle: &tokio::task::JoinHandle<Result<()>>,
+    hn_handle: &tokio::task::JoinHandle<()>,
     _market_maker_evm_address: Address,
 ) -> Result<()> {
     info!(
@@ -555,8 +401,9 @@ async fn monitor_workflow(
             ));
         }
 
-        match auction_config
-            .data_engine
+        match fixture
+            .devnet
+            .rift_indexer
             .get_otc_swap_by_order_index(auction_index)
             .await
         {
@@ -569,7 +416,7 @@ async fn monitor_workflow(
                             info!("Market Maker claimed auction - waiting for Bitcoin payment");
                             payment_sent_time = Some(std::time::Instant::now());
 
-                            devnet
+                            fixture
                                 .devnet
                                 .bitcoin
                                 .mine_blocks(3)
@@ -589,7 +436,7 @@ async fn monitor_workflow(
                                 .challengeExpiryTimestamp
                                 + 1;
 
-                            devnet
+                            fixture
                                 .devnet
                                 .ethereum
                                 .funded_provider
@@ -639,7 +486,7 @@ async fn monitor_workflow(
 
         // Mine an EVM block every 10 iterations (5 seconds) to ensure order processing
         if loop_iteration % 10 == 0 {
-            if let Err(e) = devnet
+            if let Err(e) = fixture
                 .devnet
                 .ethereum
                 .funded_provider
@@ -654,13 +501,13 @@ async fn monitor_workflow(
     }
 }
 
-fn spawn_bitcoin_block_miner(devnet: Arc<DevnetConfig>) -> tokio::task::JoinHandle<()> {
+fn spawn_bitcoin_block_miner(devnet: Arc<devnet::RiftDevnet>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut iteration = 0;
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
             iteration += 1;
-            if let Err(e) = devnet.devnet.bitcoin.mine_blocks(1).await {
+            if let Err(e) = devnet.bitcoin.mine_blocks(1).await {
                 warn!("Failed to mine background Bitcoin block: {}", e);
             } else {
                 info!(
