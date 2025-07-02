@@ -260,6 +260,7 @@ async fn start_market_maker(
         market_maker_btc_address: None,
         cbbtc_contract_address: None,
         minimum_redeem_threshold_sats: 1000000,
+        evm_confirmations: 1,
     };
 
     let handle = tokio::spawn(async move {

@@ -48,6 +48,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
     let _transaction_broadcaster = TransactionBroadcaster::new(
         std::sync::Arc::new(evm_provider),
         devnet.ethereum.anvil.endpoint(),
+        1, // confirmations
         &mut devnet.join_set,
     );
 
@@ -73,6 +74,7 @@ async fn test_light_client_update_watchtower_automatic_update() {
         enable_auto_light_client_update: true,
         auto_light_client_update_block_lag_threshold: block_lag_threshold,
         auto_light_client_update_check_interval_secs: check_interval_secs,
+        confirmations: 1,
     };
 
     // Start hypernode in background task
@@ -232,6 +234,7 @@ async fn test_light_client_update_watchtower_disabled() {
         enable_auto_light_client_update: false, // DISABLED
         auto_light_client_update_block_lag_threshold: 3,
         auto_light_client_update_check_interval_secs: 1,
+        confirmations: 1,
     };
 
     // Start hypernode in background task

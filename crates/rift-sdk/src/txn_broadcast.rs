@@ -71,6 +71,7 @@ struct Request {
     calldata: Bytes,
     transaction_request: AlloyTransactionRequest,
     preflight_check: PreflightCheck,
+    confirmations: u64,
     // the tx part of a oneshot channel
     tx: oneshot::Sender<TransactionExecutionResult>,
 }
@@ -85,6 +86,7 @@ pub struct TransactionStatusUpdate {
 pub struct TransactionBroadcaster {
     request_sender: Sender<Request>,
     status_broadcaster: broadcast::Sender<TransactionStatusUpdate>,
+    confirmations: u64,
 }
 
 impl TransactionBroadcaster {
@@ -117,6 +119,7 @@ impl TransactionBroadcaster {
     pub fn new(
         wallet_rpc: Arc<WebsocketWalletProvider>,
         debug_rpc_url: String,
+        confirmations: u64,
         join_set: &mut JoinSet<eyre::Result<()>>,
     ) -> Self {
         // single-consumer channel is important here b/c nonce management is difficult and basically impossible to do concurrently - would love for this to not be true
@@ -138,6 +141,7 @@ impl TransactionBroadcaster {
         Self {
             request_sender,
             status_broadcaster,
+            confirmations,
         }
     }
 
@@ -159,6 +163,7 @@ impl TransactionBroadcaster {
             calldata,
             transaction_request,
             preflight_check,
+            confirmations: self.confirmations,
             tx,
         };
 
@@ -270,7 +275,10 @@ impl TransactionBroadcaster {
                     Ok(tx_broadcast) => {
                         tx_hash = *tx_broadcast.tx_hash();
 
-                        let tx_receipt = tx_broadcast.get_receipt().await;
+                        let tx_receipt = tx_broadcast
+                            .with_required_confirmations(request.confirmations)
+                            .get_receipt()
+                            .await;
 
                         match tx_receipt {
                             Ok(tx_receipt) => {

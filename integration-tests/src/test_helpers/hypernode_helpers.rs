@@ -57,6 +57,7 @@ pub async fn spawn_hypernode(fixture: &TestFixture, config: HypernodeConfig) -> 
                 .auto_light_client_update_block_lag_threshold,
             auto_light_client_update_check_interval_secs: config
                 .auto_light_client_update_check_interval_secs,
+            confirmations: 1,
         };
 
         hypernode_args.run().await.expect("Hypernode crashed");

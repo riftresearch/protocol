@@ -544,6 +544,7 @@ async fn test_data_engine_handles_block_reorg() {
     let _transaction_broadcaster = TransactionBroadcaster::new(
         std::sync::Arc::new(hypernode_evm_provider),
         devnet.ethereum.anvil.endpoint(),
+        1, // confirmations
         &mut devnet.join_set,
     );
 
@@ -562,6 +563,7 @@ async fn test_data_engine_handles_block_reorg() {
         enable_auto_light_client_update: true,
         auto_light_client_update_block_lag_threshold: 3, // Trigger after 3 blocks behind
         auto_light_client_update_check_interval_secs: 1, // Check every 1 second
+        confirmations: 1,
     };
 
     // Start hypernode in background

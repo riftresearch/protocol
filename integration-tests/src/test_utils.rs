@@ -38,6 +38,7 @@ pub async fn create_deposit(
     let transaction_broadcaster = TransactionBroadcaster::new(
         maker_evm_provider.clone(),
         devnet.ethereum.anvil.endpoint(),
+        1, // confirmations
         &mut devnet.join_set,
     );
 

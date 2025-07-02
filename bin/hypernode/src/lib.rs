@@ -84,6 +84,10 @@ pub struct HypernodeArgs {
     /// Interval in seconds between checking for light client lag
     #[arg(long, env, default_value = "30")]
     pub auto_light_client_update_check_interval_secs: u64,
+
+    /// Number of confirmations to wait for before considering a transaction confirmed
+    #[arg(long, env, default_value = "1")]
+    pub confirmations: u64,
 }
 
 const BITCOIN_RPC_TIMEOUT: Duration = Duration::from_secs(1);
@@ -201,6 +205,7 @@ impl HypernodeArgs {
         let transaction_broadcaster = Arc::new(TransactionBroadcaster::new(
             evm_rpc_with_wallet.clone(),
             self.evm_ws_rpc.clone(),
+            self.confirmations,
             &mut join_set,
         ));
 

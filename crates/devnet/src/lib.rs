@@ -941,6 +941,7 @@ impl RiftDevnetBuilder {
             enable_auto_light_client_update: false,
             auto_light_client_update_block_lag_threshold: 6,
             auto_light_client_update_check_interval_secs: 30,
+            confirmations: 1,
         };
 
         join_set.spawn(async move {
@@ -992,6 +993,7 @@ impl RiftDevnetBuilder {
             market_maker_btc_address: None,
             cbbtc_contract_address: None,
             minimum_redeem_threshold_sats: 1000000,
+            evm_confirmations: 1,
         };
 
         join_set.spawn(async move {

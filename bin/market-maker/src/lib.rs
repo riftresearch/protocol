@@ -151,6 +151,10 @@ pub struct MakerConfig {
     /// Minimum amount of cbBTC in sats to trigger redemption
     #[arg(long, env, default_value = "1000000")]
     pub minimum_redeem_threshold_sats: u64,
+
+    /// Number of confirmations to wait for before considering an EVM transaction confirmed
+    #[arg(long, env, default_value = "1")]
+    pub evm_confirmations: u64,
 }
 
 fn parse_network(s: &str) -> Result<Network, String> {
@@ -224,6 +228,7 @@ impl MakerConfig {
         let evm_tx_broadcaster = Arc::new(TransactionBroadcaster::new(
             wallet_provider,
             self.evm_ws_rpc.clone(),
+            self.evm_confirmations,
             &mut join_set,
         ));
 
