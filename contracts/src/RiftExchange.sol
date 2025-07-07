@@ -276,7 +276,9 @@ abstract contract RiftExchange is IRiftExchange, EIP712, Ownable, BitcoinLightCl
 
     /// @inheritdoc IRiftExchange
     function verifyProof(ProofPublicInput memory proofPublicInput, bytes calldata proof) public view {
-        ISP1Verifier(verifier).verifyProof(circuitVerificationKey, abi.encode(proofPublicInput), proof);
+        try ISP1Verifier(verifier).verifyProof(circuitVerificationKey, abi.encode(proofPublicInput), proof) {} catch {
+            revert InvalidProof();
+        }
     }
 
     // -----------------------------------------------------------------------

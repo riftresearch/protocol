@@ -165,6 +165,10 @@ impl RiftIndexer {
             return Err(eyre::eyre!("Server already started"));
         }
 
+        let mut log_rx = spawn_contract_log_stream(&provider, rift_exchange_address, join_set);
+
+        spawn_reorg_detection(&provider, &self.swap_database_connection, join_set);
+
         let checkpointed_block_tree_clone = self.checkpointed_block_tree.clone();
         let swap_database_connection_clone = self.swap_database_connection.clone();
         let initial_sync_complete_clone = self.initial_sync_complete.clone();
@@ -175,15 +179,16 @@ impl RiftIndexer {
             async move {
                 info!("Starting contract data engine event listener");
                 listen_for_events(
-                    provider,
+                    &provider,
                     &swap_database_connection_clone,
-                    checkpointed_block_tree_clone,
+                    &checkpointed_block_tree_clone,
                     rift_exchange_address,
                     deploy_block_number,
                     initial_sync_complete_clone,
                     initial_sync_broadcaster_clone,
                     chunk_size,
                     &self_clone,
+                    &mut log_rx,
                 )
                 .await
             }
@@ -429,6 +434,54 @@ async fn validate_stored_events_on_startup(
     Ok(())
 }
 
+pub fn spawn_contract_log_stream(
+    provider: &DynProvider,
+    rift_exchange_address: Address,
+    join_set: &mut JoinSet<eyre::Result<()>>,
+) -> broadcast::Receiver<Log> {
+    let (tx, rx) = broadcast::channel(128);
+
+    let log_provider = provider.clone();
+    join_set.spawn(async move {
+        let sub = log_provider
+            .subscribe_logs(&Filter::new().address(rift_exchange_address))
+            .await?;
+        let mut live_stream = sub.into_stream();
+        while let Some(log) = live_stream.next().await {
+            let sent_tx = tx.send(log);
+            if sent_tx.is_err() {
+                return Err(eyre::eyre!(
+                    "Log live stream closed with error {:?}",
+                    sent_tx.err()
+                ));
+            }
+        }
+        Ok(())
+    });
+
+    rx
+}
+
+pub fn spawn_reorg_detection(
+    provider: &DynProvider,
+    db_conn: &Arc<tokio_rusqlite::Connection>,
+    join_set: &mut JoinSet<eyre::Result<()>>,
+) {
+    let provider = provider.clone();
+    let db_conn = db_conn.clone();
+    join_set.spawn(async move {
+        if let Err(e) = monitor_blocks_for_reorg(db_conn, provider).await {
+            return Err(eyre::eyre!(
+                "Block monitoring for reorg detection failed: {:?}",
+                e
+            ));
+        }
+        Err(eyre::eyre!(
+            "Block monitoring for reorg detection closed unexpectedly"
+        ))
+    });
+}
+
 /// Process every past + future event for `rift_exchange_address` without gaps.
 ///
 /// 1.  Start the Web-socket subscription *first* (race-free).
@@ -439,61 +492,23 @@ async fn validate_stored_events_on_startup(
 /// 4.  Drain whatever accumulated in the channel while back-filling.
 /// 5.  Mark initial sync done, then forever `recv` from the channel.
 ///
-/// Safety notes:
-/// * No log loss, no double processing (checkpoint tree dedupes reorgs).
-/// * Memory is the only buffer; high-traffic contracts + slow back-fills
-///   can eat GBs of RAM.  Instrument `BACKLOG.store(len)` if you want alerts.
+
 pub async fn listen_for_events(
-    provider: DynProvider,
+    provider: &DynProvider,
     db_conn: &Arc<tokio_rusqlite::Connection>,
-    checkpointed_block_tree: Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
+    checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
     rift_exchange_address: Address,
     deploy_block_number: u64,
     initial_sync_complete: Arc<AtomicBool>,
     initial_sync_broadcaster: broadcast::Sender<bool>,
     chunk_size: u64,
     rift_indexer: &Arc<RiftIndexer>,
+    rx: &mut broadcast::Receiver<Log>,
 ) -> Result<()> {
-    use std::sync::atomic::Ordering;
-    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
-
-    // ---------------------------------------------------------------------
-    // 1. Live subscription first (race-free)
-    // ---------------------------------------------------------------------
-    let sub = provider
-        .subscribe_logs(&Filter::new().address(rift_exchange_address))
-        .await?;
-    let mut live_stream = sub.into_stream();
-
-    // Subscribe to block headers for reorg detection
-    let block_sub = provider.subscribe_blocks().await?;
-    let block_stream = block_sub.into_stream();
-
-    // 2. Unbounded buffer for live logs
-    let (tx, mut rx): (_, UnboundedReceiver<Log>) = unbounded_channel();
-    tokio::spawn(async move {
-        while let Some(log) = live_stream.next().await {
-            if tx.send(log).is_err() {
-                break;
-            }
-        }
-    });
-
-    // Start reorg detection task
-    let reorg_db_conn = db_conn.clone();
-    let reorg_provider = provider.clone();
-    tokio::spawn(async move {
-        if let Err(e) = monitor_blocks_for_reorg(block_stream, reorg_db_conn, reorg_provider).await
-        {
-            warn!("Block monitoring for reorg detection failed: {:?}", e);
-        }
-    });
-
-    // ---------------------------------------------------------------------
-    // 3. Historical back-fill
-    // ---------------------------------------------------------------------
     let head = provider.get_block_number().await?; // single snapshot
     let mut from = deploy_block_number;
+
+    info!("Processing events from block {} to block {}", from, head);
 
     while from <= head {
         let to = head.min(from + chunk_size - 1);
@@ -506,12 +521,11 @@ pub async fn listen_for_events(
             )
             .await?;
 
-        // Synchronous / ordered processing
         for log in logs {
             process_log(
                 &log,
                 db_conn,
-                &checkpointed_block_tree,
+                checkpointed_block_tree,
                 provider.clone(),
                 rift_exchange_address,
                 rift_indexer,
@@ -520,38 +534,31 @@ pub async fn listen_for_events(
         }
         from = to + 1;
     }
+    info!("Finished processing past events");
 
-    // ---------------------------------------------------------------------
-    // 4. Drain buffered live events emitted during back-fill
-    // ---------------------------------------------------------------------
     while let Ok(log) = rx.try_recv() {
         process_log(
             &log,
             db_conn,
-            &checkpointed_block_tree,
+            checkpointed_block_tree,
             provider.clone(),
             rift_exchange_address,
             rift_indexer,
         )
         .await?;
     }
+    info!("Finished processing events that occured during backfill");
 
-    // ---------------------------------------------------------------------
-    // 5. Signal initial sync complete
-    // ---------------------------------------------------------------------
     initial_sync_complete.store(true, Ordering::SeqCst);
     {
         let _ = initial_sync_broadcaster.send(true);
     }
-
-    // ---------------------------------------------------------------------
-    // 6. Tail the unbounded channel forever
-    // ---------------------------------------------------------------------
-    while let Some(log) = rx.recv().await {
+    info!("Subscribed to live events...");
+    while let Ok(log) = rx.recv().await {
         process_log(
             &log,
             db_conn,
-            &checkpointed_block_tree,
+            checkpointed_block_tree,
             provider.clone(),
             rift_exchange_address,
             rift_indexer,
@@ -559,8 +566,9 @@ pub async fn listen_for_events(
         .await?;
     }
 
-    // If the subscription closes we exit the function gracefully
-    Ok(())
+    Err(eyre::eyre!(
+        "[listen_for_events] Log stream closed unexpectedly"
+    ))
 }
 
 async fn process_log(
@@ -933,9 +941,8 @@ async fn extract_compressed_block_leaves_from_light_client_updating_tx(
 /// Detects reorgs by checking for blocks with the same or earlier block numbers
 /// Also periodically polls for block number regression (for Anvil compatibility)
 async fn monitor_blocks_for_reorg(
-    mut block_stream: impl futures_util::Stream<Item = alloy::rpc::types::Header> + Unpin,
     db_conn: Arc<tokio_rusqlite::Connection>,
-    _provider: DynProvider,
+    provider: DynProvider,
 ) -> Result<()> {
     use futures_util::StreamExt;
 
@@ -944,6 +951,10 @@ async fn monitor_blocks_for_reorg(
         std::collections::HashMap::new();
 
     info!("Starting block monitoring for reorg detection");
+
+    // Subscribe to block headers for reorg detection
+    let block_sub = provider.subscribe_blocks().await?;
+    let mut block_stream = block_sub.into_stream();
 
     while let Some(block) = block_stream.next().await {
         let current_block_number = block.number;

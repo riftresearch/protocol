@@ -171,6 +171,7 @@ interface IRiftExchange is IBitcoinLightClient {
     error PaymentNotProved();
     error NoPaymentsToSubmit();
     error NotHypernode();
+    error InvalidProof();
 
     event OrderCreated(Order order);
     event OrderRefunded(Order order);

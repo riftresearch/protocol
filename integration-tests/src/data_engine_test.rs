@@ -500,6 +500,14 @@ async fn test_data_engine_handles_block_reorg() {
     let order = order_created_log.data.order;
     println!("Order submitted with index: {}", order.index);
 
+    // smoke check to see if independent data engine is down 
+    let ret = join_set.try_join_next();
+    if ret.is_some() {
+        println!("Data engine is down with error: {:?}", ret);
+        panic!("Independent data engine is not running after order was submitted");
+    }
+
+
     // Poll our independent data engine to verify it sees the order
     let order_seen = timeout(Duration::from_secs(30), async {
         loop {

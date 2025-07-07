@@ -14,14 +14,14 @@ library DataIntegrityLib {
     using HashLib for Payment;
     using HashLib for DutchAuction;
 
-    error OrderDoesNotExist();
-    error PaymentDoesNotExist();
-    error DutchAuctionDoesNotExist();
+    error OrderDoesNotExist(uint256 index);
+    error PaymentDoesNotExist(uint256 index);
+    error DutchAuctionDoesNotExist(uint256 index);
 
     function checkIntegrity(Order calldata order, bytes32[] storage orderHashes) internal view returns (bytes32) {
         bytes32 orderHash = order.hash();
         if (orderHash != orderHashes[order.index]) {
-            revert OrderDoesNotExist();
+            revert OrderDoesNotExist(order.index);
         }
         return orderHash;
     }
@@ -29,7 +29,7 @@ library DataIntegrityLib {
     function checkIntegrity(Payment calldata payment, bytes32[] storage paymentHashes) internal view returns (bytes32) {
         bytes32 paymentHash = payment.hash();
         if (paymentHash != paymentHashes[payment.index]) {
-            revert PaymentDoesNotExist();
+            revert PaymentDoesNotExist(payment.index);
         }
         return paymentHash;
     }
@@ -40,7 +40,7 @@ library DataIntegrityLib {
     ) internal view returns (bytes32) {
         bytes32 auctionHash = auction.hash();
         if (auctionHash != auctionHashes[auction.index]) {
-            revert DutchAuctionDoesNotExist();
+            revert DutchAuctionDoesNotExist(auction.index);
         }
         return auctionHash;
     }

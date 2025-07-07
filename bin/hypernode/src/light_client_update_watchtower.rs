@@ -239,6 +239,10 @@ impl LightClientUpdateWatchtower {
         // Calculate block height difference
         let light_client_height = light_client_tip.height;
         let bitcoin_height = bitcoin_tip.height;
+        info!(
+            "[light_client_update_watchtower] checking lag, light_client_height: {}, bitcoin_height: {}",
+            light_client_height, bitcoin_height
+        );
 
         if bitcoin_height <= light_client_height {
             // Light client is up to date or ahead (shouldn't happen)

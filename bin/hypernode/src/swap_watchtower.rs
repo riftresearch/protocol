@@ -31,10 +31,12 @@ use rift_sdk::{
     get_retarget_height_from_block_height,
     indexed_mmr::IndexedMMR,
     proof_generator::RiftProofGenerator,
+    txn_broadcast::TransactionExecutionResult,
     txn_builder::serialize_no_segwit,
 };
 use sol_bindings::{
-    BlockProofParams, Order, RiftExchangeHarnessInstance, SubmitPaymentProofParams,
+    BlockProofParams, Order, RiftExchangeHarnessErrors, RiftExchangeHarnessInstance,
+    SubmitPaymentProofParams,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
@@ -56,6 +58,7 @@ struct PendingPayment {
     group_confirmation_blocks: u32,
 }
 
+#[derive(Clone)]
 struct ConfirmedPayment {
     paid_orders: Vec<Order>,
     committed_order_indices: Vec<usize>,
@@ -65,6 +68,57 @@ struct ConfirmedPayment {
 }
 
 // const MAX_CONFIRMED_PAYMENT_RETRIES: u32 = 3;
+
+/// Handles light client race conditions by waiting for MMR root updates.
+///
+/// This function manages the case where a light client update occurred during proof generation,
+/// causing a race condition. It either sends swaps back immediately if the root has already changed,
+/// or waits (with timeout) for the next root update.
+async fn handle_light_client_race_condition(
+    rift_indexer: Arc<RiftIndexer>,
+    btc_light_client_root: [u8; 32],
+    confirmed_swaps: Vec<ConfirmedPayment>,
+    confirmed_swaps_tx: UnboundedSender<Vec<ConfirmedPayment>>,
+) -> eyre::Result<()> {
+    let mut root_subscription = rift_indexer.subscribe_to_mmr_root_updates();
+
+    // Before we wait, make sure the current root is not the same as the one we saw when we generated the proof
+    let current_root = rift_indexer
+        .checkpointed_block_tree
+        .read()
+        .await
+        .get_root()
+        .await?;
+
+    if current_root != btc_light_client_root {
+        // Send the swaps back immediately
+        info!(
+            message = "Light client root is not the same as the one we saw when we generated the proof, sending swaps back to pending swaps queue",
+            operation = "handle_light_client_race_condition",
+        );
+        confirmed_swaps_tx.send(confirmed_swaps)?;
+    } else {
+        tokio::time::timeout(
+            tokio::time::Duration::from_secs(60),
+            async {
+                while let Ok(root) = root_subscription.recv().await {
+                    if root != btc_light_client_root {
+                        info!(
+                            message = "Light client root has been updated, sending swaps back to pending swaps queue",
+                            operation = "handle_light_client_race_condition",
+                        );
+                        confirmed_swaps_tx.send(confirmed_swaps)?;
+                        break;
+                    }
+                }
+                Ok::<(), eyre::Error>(())
+            }
+        ).await
+        .map_err(|_| eyre::eyre!("Timeout waiting for light client root update after 60 seconds"))??;
+    }
+
+    Ok(())
+}
 
 pub struct SwapWatchtower;
 
@@ -88,6 +142,7 @@ impl SwapWatchtower {
         let rift_indexer_clone = rift_indexer.clone();
         let bitcoin_data_engine_clone = bitcoin_data_engine.clone();
 
+        let confirmed_swaps_tx_clone = confirmed_swaps_tx.clone();
         join_set.spawn(
             async move {
                 Self::search_for_swap_payments(
@@ -96,7 +151,7 @@ impl SwapWatchtower {
                     rift_indexer_clone,
                     bitcoin_data_engine_clone,
                     bitcoin_concurrency_limit,
-                    confirmed_swaps_tx,
+                    confirmed_swaps_tx_clone.clone(),
                 )
                 .await
             }
@@ -113,6 +168,7 @@ impl SwapWatchtower {
             async move {
                 Self::finalize_confirmed_swaps(
                     confirmed_swaps_rx,
+                    confirmed_swaps_tx,
                     btc_rpc_clone,
                     bitcoin_data_engine_clone,
                     rift_indexer_clone,
@@ -238,6 +294,7 @@ impl SwapWatchtower {
 
     async fn finalize_confirmed_swaps(
         mut confirmed_swaps_rx: UnboundedReceiver<Vec<ConfirmedPayment>>,
+        confirmed_swaps_tx: UnboundedSender<Vec<ConfirmedPayment>>,
         btc_rpc: Arc<AsyncBitcoinClient>,
         bitcoin_data_engine: Arc<BitcoinDataEngine>,
         rift_indexer: Arc<RiftIndexer>,
@@ -375,31 +432,131 @@ impl SwapWatchtower {
                 }
             };
 
-            let (transaction_request, calldata) = if let Some(block_proof_params) =
-                block_proof_params
-            {
-                let call = rift_exchange.submitPaymentProofs(
-                    swap_params,
-                    block_proof_params,
-                    proof_bytes.into(),
-                );
-                let calldata = call.calldata().to_owned();
-                let transaction_request = call.into_transaction_request();
-                (transaction_request, calldata)
-            } else {
-                let call = rift_exchange.submitPaymentProofsOnly(swap_params, proof_bytes.into());
-                let calldata = call.calldata().to_owned();
-                let transaction_request = call.into_transaction_request();
-                (transaction_request, calldata)
-            };
+            let (transaction_request, calldata, includes_light_client_update) =
+                if let Some(block_proof_params) = block_proof_params {
+                    let call = rift_exchange.submitPaymentProofs(
+                        swap_params,
+                        block_proof_params,
+                        proof_bytes.into(),
+                    );
+                    let calldata = call.calldata().to_owned();
+                    let transaction_request = call.into_transaction_request();
+                    (transaction_request, calldata, true)
+                } else {
+                    let call =
+                        rift_exchange.submitPaymentProofsOnly(swap_params, proof_bytes.into());
+                    let calldata = call.calldata().to_owned();
+                    let transaction_request = call.into_transaction_request();
+                    (transaction_request, calldata, false)
+                };
 
             let txn = transaction_broadcaster
                 .broadcast_transaction(calldata, transaction_request, PreflightCheck::Simulate)
                 .await?;
-            info!("Submitted swap proof with txn exeuction result: {:?}", txn);
-            // TODO: Handle txn failure cases, and retry logic
+
+            info!("Submitted swap proof with txn exeuction result: {:?}", &txn);
+
+            match &txn {
+                TransactionExecutionResult::Success(_) => {
+                    info!("Swap proof submitted successfully");
+                }
+                TransactionExecutionResult::Revert(revert) => {
+                    let decoded_err = revert
+                        .error_payload
+                        .as_decoded_interface_error::<RiftExchangeHarnessErrors>();
+
+                    if decoded_err.is_none() {
+                        return Err(eyre::eyre!(
+                            "Unknown revert error submitting swap proof: {:?}",
+                            &txn
+                        ));
+                    }
+
+                    let decoded_err = decoded_err.unwrap();
+
+                    match decoded_err {
+                        // Only match on errors we can recover from
+                        RiftExchangeHarnessErrors::ChainworkTooLow(_)
+                        | RiftExchangeHarnessErrors::BlockNotInChain(_)
+                        | RiftExchangeHarnessErrors::BlockNotConfirmed(_) => {
+                            info!(
+                                message = "Caught Revert: Light client was updated during proof generation",
+                                operation = "finalize_confirmed_swaps",
+                                decoded_error = format!("{:?}", decoded_err),
+                                includes_light_client_update = includes_light_client_update
+                            );
+                            // All of these errors imply light client was updated very recently (race condition)
+                            // Note ChainworkTooLow will happen when includes_light_client_update is true, the other two will happen when it's false
+
+                            // We have what we thought the light client was at the time of proof generation (btc_light_client_root)
+                            // we need a way to wait until our data engine sees the update that caused the revert
+                            // note that this will freeze this subcomponent of the watchtower until the light client is updated
+                            // but this should not cause any issues b/c we will only wait here because we KNOW theres a
+                            // light client update that caused the revert
+                            handle_light_client_race_condition(
+                                rift_indexer.clone(),
+                                btc_light_client_root,
+                                confirmed_swaps.clone(),
+                                confirmed_swaps_tx.clone(),
+                            )
+                            .await?;
+                        }
+                        RiftExchangeHarnessErrors::OrderDoesNotExist(order_err) => {
+                            let invalidated_order_index = order_err.index.to::<usize>();
+                            let swaps_to_rebroadcast =
+                                remove_invalidated_order_index_from_confirmed_swaps(
+                                    &confirmed_swaps,
+                                    invalidated_order_index,
+                                );
+                            if !swaps_to_rebroadcast.is_empty() {
+                                info!(
+                                    message = "Rebroadcasting confirmed swaps after updated order removal",
+                                    operation = "finalize_confirmed_swaps",
+                                    swap_count = swaps_to_rebroadcast.len(),
+                                    removed_index = invalidated_order_index
+                                );
+                                confirmed_swaps_tx.send(swaps_to_rebroadcast)?;
+                            } else {
+                                info!(
+                                    message = "No confirmed swaps left to rebroadcast",
+                                    operation = "finalize_confirmed_swaps",
+                                    removed_index = invalidated_order_index
+                                );
+                            }
+                        }
+                        _ => {
+                            return Err(eyre::eyre!(
+                                "Catastrphic unknown revert error submitting swap proof: {:?}",
+                                &revert
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(eyre::eyre!(
+                        "Catastrophic uncaught error submitting swap proof: {:?}",
+                        &txn
+                    ));
+                }
+            }
         }
     }
+}
+
+fn remove_invalidated_order_index_from_confirmed_swaps(
+    confirmed_swaps: &[ConfirmedPayment],
+    invalidated_order_index: usize,
+) -> Vec<ConfirmedPayment> {
+    let mut swaps_to_rebroadcast = Vec::new();
+    for confirmed_swap in confirmed_swaps {
+        let mut swap = confirmed_swap.clone();
+        swap.committed_order_indices
+            .retain(|index| *index != invalidated_order_index);
+        if !swap.committed_order_indices.is_empty() {
+            swaps_to_rebroadcast.push(swap);
+        }
+    }
+    swaps_to_rebroadcast
 }
 
 // Computes how far back in terms of bitcoin blocks to search for swaps based on the oldest active deposit
