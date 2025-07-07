@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use alloy::primitives::Address;
 use alloy::providers::DynProvider;
-use alloy::sol_types::SolError;
 use backoff::backoff::Backoff;
 use backoff::exponential::ExponentialBackoff;
 use bitcoin_data_engine::BitcoinDataEngine;
@@ -14,9 +13,7 @@ use rift_core::giga::{RiftProgramInput, RustProofType};
 use rift_indexer::engine::RiftIndexer;
 use rift_sdk::bitcoin_utils::AsyncBitcoinClient;
 use rift_sdk::proof_generator::{Proof, RiftProofGenerator};
-use sol_bindings::{
-    BlockProofParams, ChainworkTooLow, CheckpointNotEstablished, RiftExchangeHarnessInstance,
-};
+use sol_bindings::{BlockProofParams, RiftExchangeHarnessInstance};
 use thiserror::Error;
 use tokio::sync::{mpsc, Mutex, RwLockReadGuard};
 use tokio::task::JoinSet;
@@ -671,45 +668,39 @@ impl ForkWatchtower {
             revert_info.error_payload, revert_info.debug_cli_command
         );
 
-        if let Some(data_raw) = &revert_info.error_payload.data {
-            let data_str = data_raw.to_string();
-            info!("data_str: {:?}", data_str);
-            // Remove quotes and 0x prefix, format -> "0x..."
-            let hex_str = &data_str[3..data_str.len() - 1];
-            info!("hex_str: {:?}", hex_str);
-            if let Ok(data) = hex::decode(hex_str) {
-                // Matching with Error Selector
-                // /// The error selector: `keccak256(SIGNATURE)[0..4]`
-                // const SELECTOR: [u8; 4];
-                if data.len() >= 4 {
-                    let selector = &data[0..4];
-                    info!("selector: {:?}", selector);
-                    info!(
-                        "code for Checkpoint not established: {:?}",
-                        CheckpointNotEstablished::SELECTOR
-                    );
-                    info!(
-                        "code for Chainwork too low: {:?}",
-                        ChainworkTooLow::SELECTOR
-                    );
+        let decoded_err = revert_info
+            .error_payload
+            .as_decoded_interface_error::<sol_bindings::RiftExchangeHarnessErrors>();
 
-                    if selector == CheckpointNotEstablished::SELECTOR {
-                        info!("Checkpoint not established");
-                        // Dont retry if check not established
-                        return false;
-                    }
-
-                    if selector == ChainworkTooLow::SELECTOR {
-                        info!("Chainwork too low");
-                        // Dont retry if chainwork is too low
-                        // The fork watchtower will automatically try again when it detects the next update
-                        return false;
-                    }
-                }
-            }
+        if decoded_err.is_none() {
+            info!(
+                "Unknown revert error, will not attempt retry: {:?}",
+                revert_info.error_payload
+            );
+            return false;
         }
 
-        info!("Unknown revert reason, will not attempt retry");
-        false
+        let decoded_err = decoded_err.unwrap();
+
+        match decoded_err {
+            sol_bindings::RiftExchangeHarnessErrors::CheckpointNotEstablished(_) => {
+                info!("Checkpoint not established - will not retry");
+                // Don't retry if checkpoint not established
+                false
+            }
+            sol_bindings::RiftExchangeHarnessErrors::ChainworkTooLow(_) => {
+                info!("Chainwork too low - will not retry");
+                // Don't retry if chainwork is too low
+                // The fork watchtower will automatically try again when it detects the next update
+                false
+            }
+            _ => {
+                info!(
+                    "Unknown revert reason: {:?} - will not attempt retry",
+                    decoded_err
+                );
+                false
+            }
+        }
     }
 }

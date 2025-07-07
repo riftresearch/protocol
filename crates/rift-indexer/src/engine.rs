@@ -178,7 +178,7 @@ impl RiftIndexer {
         join_set.spawn(
             async move {
                 info!("Starting contract data engine event listener");
-                listen_for_events(
+                process_events(
                     &provider,
                     &swap_database_connection_clone,
                     &checkpointed_block_tree_clone,
@@ -482,18 +482,7 @@ pub fn spawn_reorg_detection(
     });
 }
 
-/// Process every past + future event for `rift_exchange_address` without gaps.
-///
-/// 1.  Start the Web-socket subscription *first* (race-free).
-/// 2.  Push every live log into an **unbounded** MPSC channel; it will grow
-///     in RAM for as long as the synchronous back-fill lasts.
-/// 3.  Snapshot the chain head once, then walk `[deploy_block … head]`
-///     in `CHUNK_SIZE` windows.
-/// 4.  Drain whatever accumulated in the channel while back-filling.
-/// 5.  Mark initial sync done, then forever `recv` from the channel.
-///
-
-pub async fn listen_for_events(
+pub async fn process_events(
     provider: &DynProvider,
     db_conn: &Arc<tokio_rusqlite::Connection>,
     checkpointed_block_tree: &Arc<RwLock<CheckpointedBlockTree<Keccak256Hasher>>>,
@@ -503,7 +492,7 @@ pub async fn listen_for_events(
     initial_sync_broadcaster: broadcast::Sender<bool>,
     chunk_size: u64,
     rift_indexer: &Arc<RiftIndexer>,
-    rx: &mut broadcast::Receiver<Log>,
+    log_rx: &mut broadcast::Receiver<Log>,
 ) -> Result<()> {
     let head = provider.get_block_number().await?; // single snapshot
     let mut from = deploy_block_number;
@@ -536,7 +525,7 @@ pub async fn listen_for_events(
     }
     info!("Finished processing past events");
 
-    while let Ok(log) = rx.try_recv() {
+    while let Ok(log) = log_rx.try_recv() {
         process_log(
             &log,
             db_conn,
@@ -554,7 +543,7 @@ pub async fn listen_for_events(
         let _ = initial_sync_broadcaster.send(true);
     }
     info!("Subscribed to live events...");
-    while let Ok(log) = rx.recv().await {
+    while let Ok(log) = log_rx.recv().await {
         process_log(
             &log,
             db_conn,
@@ -567,7 +556,7 @@ pub async fn listen_for_events(
     }
 
     Err(eyre::eyre!(
-        "[listen_for_events] Log stream closed unexpectedly"
+        "[process_events] Log stream closed unexpectedly"
     ))
 }
 
@@ -623,8 +612,8 @@ async fn process_log(
                 })
                 .await?;
         }
-        _ => {
-            warn!("Unknown event topic");
+        event => {
+            warn!("Unknown event topic: {:?}", hex::encode(event));
         }
     }
 
