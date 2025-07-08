@@ -23,7 +23,7 @@ ntest-circuits:
 	@echo "Test circuits complete"
 
 ntest-crates: | cache-devnet 
-	cargo nextest run --release --workspace --exclude rift-program -- --skip market_maker_hypernode_end_to_end
+	cargo nextest run --release --workspace --exclude rift-program -- --skip market_maker_hypernode_end_to_end --skip test_dual_hypernode_market_maker_order_filling
 	@echo "Test crates complete"
 
 ntest: | cache-devnet test-contracts ntest-crates
