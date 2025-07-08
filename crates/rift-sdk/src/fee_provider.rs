@@ -2,9 +2,7 @@ use crate::errors::RiftSdkError;
 use crate::quote::fetch_weth_cbbtc_conversion_rates;
 use alloy::providers::DynProvider;
 use alloy::providers::Provider;
-use alloy::providers::ProviderBuilder;
 use esplora_client::r#async::AsyncClient;
-use esplora_client::MempoolInfo;
 use reqwest::Url;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,7 +10,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
-const BTC_FEE_UPDATE_INTERVAL: Duration = Duration::from_secs(30); // Update every 30 seconds
+const BTC_FEE_UPDATE_INTERVAL: Duration = Duration::from_secs(15); // Update every 15 seconds
 const DEFAULT_BTC_FEE_SATS_PER_VB: u64 = 10; // A fallback default
 const TARGET_BLOCK_VSIZE: u64 = 1_000_000; // Target virtual size for simulated block (1M vBytes)
 
@@ -23,6 +21,7 @@ const DEFAULT_ETH_SATS_PER_GAS: u64 = 1; // Fallback: 1 satoshi per gas unit
 #[async_trait::async_trait]
 pub trait BtcFeeProvider: Send + Sync {
     async fn get_fee_rate_sats_per_vb(&self) -> u64;
+    async fn get_fee_rate_by_percentile(&self, percentile: u8) -> u64;
 }
 
 #[derive(Debug)]
@@ -35,6 +34,8 @@ pub struct BtcFeeOracle {
 struct CachedFee {
     fee_sats_per_vb: u64,
     last_updated: Instant,
+    // Store the fee tiers for percentile calculations
+    fee_tiers: Vec<(f32, u64)>, // (fee_rate, vsize)
 }
 
 impl BtcFeeOracle {
@@ -48,6 +49,7 @@ impl BtcFeeOracle {
                 last_updated: Instant::now()
                     .checked_sub(BTC_FEE_UPDATE_INTERVAL)
                     .unwrap_or_else(Instant::now),
+                fee_tiers: Vec::new(),
             }),
             esplora_client: Arc::new(client),
         }
@@ -114,9 +116,9 @@ impl BtcFeeOracle {
                 let mut current_vsize_sum: u64 = 0;
                 let mut median_fee_rate = DEFAULT_BTC_FEE_SATS_PER_VB;
 
-                for (fee_rate, vsize_in_tier) in tiers_in_block {
+                for (fee_rate, vsize_in_tier) in &tiers_in_block {
                     if current_vsize_sum + vsize_in_tier >= median_vsize_mark {
-                        median_fee_rate = (fee_rate as f64).max(1.0).round() as u64;
+                        median_fee_rate = (*fee_rate as f64).max(1.0).round() as u64;
                         break;
                     }
                     current_vsize_sum += vsize_in_tier;
@@ -125,6 +127,7 @@ impl BtcFeeOracle {
                 let mut cached = self.cached_fee.write().await;
                 cached.fee_sats_per_vb = median_fee_rate;
                 cached.last_updated = Instant::now();
+                cached.fee_tiers = tiers_in_block;
                 info!("Updated BTC fee rate to: {} sats/vB", median_fee_rate);
                 Ok(median_fee_rate)
             }
@@ -180,6 +183,74 @@ impl BtcFeeProvider for BtcFeeOracle {
         } else {
             self.cached_fee.read().await.fee_sats_per_vb
         }
+    }
+
+    async fn get_fee_rate_by_percentile(&self, percentile: u8) -> u64 {
+        let percentile = percentile.min(100);
+
+        let (stale_median_fee, needs_update, fee_tiers) = {
+            let cached = self.cached_fee.read().await;
+            (
+                cached.fee_sats_per_vb,
+                cached.last_updated.elapsed() >= BTC_FEE_UPDATE_INTERVAL,
+                cached.fee_tiers.clone(),
+            )
+        };
+
+        // Update cache if needed
+        if needs_update {
+            info!(
+                "BTC fee cache is stale. Attempting synchronous update for percentile calculation."
+            );
+            if let Err(e) = self.update_fee_cache().await {
+                warn!(
+                    "Synchronous BTC fee update failed: {:?}. Using cached data.",
+                    e
+                );
+            }
+        }
+
+        // Get the latest fee tiers after potential update
+        let fee_tiers = if needs_update {
+            self.cached_fee.read().await.fee_tiers.clone()
+        } else {
+            fee_tiers
+        };
+
+        // If no tiers available, return the median fee with some adjustment
+        if fee_tiers.is_empty() {
+            let adjustment = match percentile {
+                0..=25 => 0.8,
+                26..=50 => 1.0,
+                51..=75 => 1.2,
+                _ => 1.5,
+            };
+            return ((stale_median_fee as f64) * adjustment).round().max(1.0) as u64;
+        }
+
+        // Calculate total vsize in the simulated block
+        let total_vsize: u64 = fee_tiers.iter().map(|(_, vsize)| vsize).sum();
+
+        if total_vsize == 0 {
+            return stale_median_fee;
+        }
+
+        // Find the fee rate at the requested percentile
+        let target_vsize = (total_vsize as f64 * (percentile as f64 / 100.0)).round() as u64;
+        let mut cumulative_vsize: u64 = 0;
+
+        for (fee_rate, vsize_in_tier) in &fee_tiers {
+            cumulative_vsize += vsize_in_tier;
+            if cumulative_vsize >= target_vsize {
+                return (*fee_rate as f64).max(1.0).round() as u64;
+            }
+        }
+
+        // Fallback to the lowest fee rate in the block
+        fee_tiers
+            .last()
+            .map(|(fee_rate, _)| (*fee_rate as f64).max(1.0).round() as u64)
+            .unwrap_or(stale_median_fee)
     }
 }
 
@@ -288,7 +359,7 @@ impl EthFeeOracle {
     }
 
     async fn updater_loop(&self) -> eyre::Result<()> {
-        let chain_id = self.provider.get_chain_id().await?;
+        let _chain_id = self.provider.get_chain_id().await?;
         loop {
             if let Err(e) = self.update_fee_cache().await {
                 if self.chain_id != 1337 {

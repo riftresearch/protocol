@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 crypto-bigint = { workspace = true }
 sp1-sdk = { workspace = true }
 tokio = { workspace = true }
+tokio-rusqlite = { workspace = true }
 backoff.workspace = true
 bitcoincore-rpc-async = { workspace = true }
 futures = { workspace = true }
@@ -34,6 +35,9 @@ bitcoin-coin-selection = { workspace = true}
 
 [dev-dependencies]
 tempfile = { workspace = true }
+bitcoin-data-engine = { workspace = true }
+tracing-subscriber = "0.3"
+ureq = "2.9"
 
 [build-dependencies]
 sp1-build = {workspace = true} 

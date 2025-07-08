@@ -1,14 +1,21 @@
 pub mod bitcoin_utils;
+pub mod block_watcher;
 pub mod btc_txn_broadcaster;
+pub mod btc_txn_broadcaster_db;
 pub mod chains;
 pub mod checkpoint_mmr;
-mod errors;
+pub mod cpfp_analyzer;
+pub mod cpfp_builder;
+pub mod errors;
 pub mod fee_provider;
 pub mod indexed_mmr;
 pub mod proof_generator;
 pub mod quote;
+pub mod rbf_builder;
+pub mod transaction_monitor;
 pub mod txn_broadcast;
 pub mod txn_builder;
+pub mod utxo_manager;
 
 use alloy::network::EthereumWallet;
 use alloy::primitives::{keccak256, Address};
