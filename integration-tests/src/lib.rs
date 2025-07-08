@@ -19,6 +19,8 @@ mod light_client_update_watchtower_test;
 #[cfg(test)]
 mod market_maker_hypernode_e2e_test;
 #[cfg(test)]
+mod dual_hypernode_market_maker_test;
+#[cfg(test)]
 mod quote_test;
 #[cfg(test)]
 mod test_helpers;

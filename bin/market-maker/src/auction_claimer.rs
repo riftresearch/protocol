@@ -414,6 +414,8 @@ impl AuctionClaimer {
                 Err(e) => {
                     error!("Error receiving block: {:?}", e);
                     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    block_subscription = provider.subscribe_blocks().await
+                        .map_err(|e| eyre!("Failed to subscribe to new blocks: {}", e))?;
                 }
             }
         }

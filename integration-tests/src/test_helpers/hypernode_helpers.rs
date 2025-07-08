@@ -12,6 +12,7 @@ pub struct HypernodeConfig {
     pub auto_light_client_update_check_interval_secs: u64,
     pub btc_batch_rpc_size: usize,
     pub evm_log_chunk_size: u64,
+    pub private_key: Option<String>,
 }
 
 impl Default for HypernodeConfig {
@@ -23,6 +24,7 @@ impl Default for HypernodeConfig {
             auto_light_client_update_check_interval_secs: 30,
             btc_batch_rpc_size: 100,
             evm_log_chunk_size: 10000,
+            private_key: None,
         }
     }
 }
@@ -38,7 +40,9 @@ pub async fn spawn_hypernode(fixture: &TestFixture, config: HypernodeConfig) -> 
         .address()
         .to_string();
     let checkpoint_file = fixture.checkpoint_file_path();
-    let private_key = hex::encode(fixture.accounts.hypernode_operator.secret_bytes);
+    let private_key = config.private_key.unwrap_or_else(|| {
+        hex::encode(fixture.accounts.hypernode_operator.secret_bytes)
+    });
 
     tokio::spawn(async move {
         let hypernode_args = HypernodeArgs {
