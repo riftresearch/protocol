@@ -27,7 +27,7 @@ forge script --chain arbitrum scripts/DeployRiftExchange.s.sol:DeployRiftExchang
 ### Development Workflow  
 *Execute all commands from the project root.*
 
-- **When contract code changes (unneccessary if only tests are updated):**  
+- **When contract code changes (unnecessary if only tests are updated):**  
   ```bash
   make sync
   ```
