@@ -526,7 +526,7 @@ impl SwapWatchtower {
                         }
                         _ => {
                             return Err(eyre::eyre!(
-                                "Catastrphic unknown revert error submitting swap proof: {:?}",
+                                "Catastrophic unknown revert error submitting swap proof: {:?}",
                                 &revert
                             ));
                         }
